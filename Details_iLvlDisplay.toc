@@ -1,0 +1,10 @@
+## Interface: 120000
+## Title: Details! iLvl Display
+## Notes: Shows item level next to player names on Details! damage meter bars
+## Author: HK2084
+## Version: 1.0.0
+## Dependencies: Details
+## OptionalDeps: QuickItemLevel
+## SavedVariables: Details_iLvlDisplayDB
+
+core.lua
