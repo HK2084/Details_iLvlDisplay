@@ -14,6 +14,7 @@ local isInspecting = false
 local detailsReady = false
 local hookedFontStrings = {} -- track which FontStrings we already hooked
 local isOurSetText = false -- prevent recursion in SetText hook
+local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 
 ---------------------------------------------------------------
 -- iLvl color by gear tier
@@ -209,15 +210,19 @@ local function RefreshAllBarTexts()
 end
 
 ---------------------------------------------------------------
--- Periodic update: rebuild map + ensure hooks are set
+-- Periodic update: hook new bars + rebuild map only if dirty
 ---------------------------------------------------------------
 local function OnTick()
     if not db or not db.enabled then return end
     if not Details then return end
 
-    RebuildNameIlvlMap()
     HookAllBars()
-    RefreshAllBarTexts()
+
+    if mapDirty then
+        mapDirty = false
+        RebuildNameIlvlMap()
+        RefreshAllBarTexts()
+    end
 end
 
 ---------------------------------------------------------------
@@ -307,12 +312,13 @@ frame:SetScript("OnEvent", function(self, event, ...)
             C_Timer.After(3, function()
                 if Details then
                     detailsReady = true
-                    -- Initial hook + map build
                     RebuildNameIlvlMap()
                     HookAllBars()
-                    -- Periodic refresh (rebuild map + hook new bars)
+                    -- Tick only hooks new bars + rebuilds map when dirty (cheap)
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.3 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.4 loaded. /dilvl")
+                    -- Queue inspects early so data is ready before first pull
+                    C_Timer.After(5, QueueGroupInspect)
                 end
             end)
         end
@@ -342,9 +348,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        -- Immediately refresh bars with new data (don't wait for next OnTick)
-        RebuildNameIlvlMap()
-        C_Timer.After(0.1, RefreshAllBarTexts)
+        -- Mark dirty so next OnTick rebuilds the map and refreshes bars
+        mapDirty = true
         C_Timer.After(0.3, ProcessNextInspect)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
