@@ -354,6 +354,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         if db and db.enabled then
+            mapDirty = true -- rebuild nameToIlvl from cached data after every fight
             C_Timer.After(2, QueueGroupInspect)
         end
 
