@@ -261,9 +261,8 @@ local function QueueGroupInspect()
             if guid then
                 local cached = ilvlCache[guid]
                 if not cached or (time() - cached.time >= CACHE_EXPIRE) then
-                    if CanInspect(unit, true) then
-                        table.insert(inspectQueue, {guid = guid, unit = unit})
-                    end
+                    -- Queue unconditionally, range check happens at inspect time
+                    table.insert(inspectQueue, {guid = guid, unit = unit})
                 end
             end
         end
