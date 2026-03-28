@@ -221,8 +221,10 @@ local function OnTick()
     if mapDirty then
         mapDirty = false
         RebuildNameIlvlMap()
-        RefreshAllBarTexts()
     end
+
+    -- Always run, cheap: early exits if bars already tagged or nameToIlvl empty
+    RefreshAllBarTexts()
 end
 
 ---------------------------------------------------------------
