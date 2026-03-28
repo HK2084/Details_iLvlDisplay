@@ -71,6 +71,16 @@ end
 ---------------------------------------------------------------
 -- Build name->ilvl map from combat actors
 ---------------------------------------------------------------
+local function StoreNameIlvl(name, ilvl)
+    if not name or not ilvl then return end
+    nameToIlvl[name] = ilvl
+    -- Also store without realm suffix for cross-realm players ("Name-Server" -> "Name")
+    local shortName = name:match("^([^%-]+%-[^%-]+)$") and name:match("^(.+)%-[^%-]+$")
+    if shortName and shortName ~= name then
+        nameToIlvl[shortName] = ilvl
+    end
+end
+
 local function RebuildNameIlvlMap()
     wipe(nameToIlvl)
     if not Details then return end
@@ -86,12 +96,8 @@ local function RebuildNameIlvlMap()
                 if actor:IsPlayer() and actor.serial then
                     local ilvl = GetIlvlForGuid(actor.serial)
                     if ilvl then
-                        if actor.displayName then
-                            nameToIlvl[actor.displayName] = ilvl
-                        end
-                        if actor.nome then
-                            nameToIlvl[actor.nome] = ilvl
-                        end
+                        StoreNameIlvl(actor.displayName, ilvl)
+                        StoreNameIlvl(actor.nome, ilvl)
                     end
                 end
             end
@@ -171,6 +177,38 @@ local function HookAllBars()
 end
 
 ---------------------------------------------------------------
+-- Force-update bar texts that are already visible but missing iLvl
+-- Needed when inspect data arrives after Details already drew the bars
+---------------------------------------------------------------
+local function RefreshAllBarTexts()
+    if InCombatLockdown() then return end
+    if not next(nameToIlvl) then return end
+
+    isOurSetText = true
+    for fontString in pairs(hookedFontStrings) do
+        if fontString:IsShown() then
+            local text = fontString:GetText()
+            if text and not text:find("%[%d+%]") then
+                local name = ExtractName(text)
+                if name then
+                    local ilvl = nameToIlvl[name]
+                    if not ilvl then
+                        -- Fallback: try without realm suffix
+                        local shortName = name:match("^(.+)%-[^%-]+$")
+                        ilvl = shortName and nameToIlvl[shortName]
+                    end
+                    if ilvl then
+                        local tag = db.colorIlvl and (" " .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r") or (" [" .. ilvl .. "]")
+                        fontString:SetText(text .. tag)
+                    end
+                end
+            end
+        end
+    end
+    isOurSetText = false
+end
+
+---------------------------------------------------------------
 -- Periodic update: rebuild map + ensure hooks are set
 ---------------------------------------------------------------
 local function OnTick()
@@ -179,6 +217,7 @@ local function OnTick()
 
     RebuildNameIlvlMap()
     HookAllBars()
+    RefreshAllBarTexts()
 end
 
 ---------------------------------------------------------------
@@ -303,6 +342,9 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
+        -- Immediately refresh bars with new data (don't wait for next OnTick)
+        RebuildNameIlvlMap()
+        C_Timer.After(0.1, RefreshAllBarTexts)
         C_Timer.After(0.3, ProcessNextInspect)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
