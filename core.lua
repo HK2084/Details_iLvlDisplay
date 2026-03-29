@@ -3,10 +3,12 @@ local addonName = ...
 local defaults = {
     enabled = true,
     colorIlvl = true,
+    showSetBonus = true,
 }
 
 local db
 local ilvlCache -- points to db.ilvlCache after ADDON_LOADED (persistent SavedVariables)
+local setBonusCache = {} -- guid -> "2P" / "4P" / nil
 local nameToIlvl = {} -- "PlayerName" -> ilvl
 local CACHE_EXPIRE = 7200 -- 2 hours; stale entries purged on new instance or after boss
 local lastMapID = nil -- track zone changes to detect new instances
@@ -44,6 +46,40 @@ local function GetIlvlColor(ilvl)
     elseif ilvl >= 242 then return "|cFF1EFF00"
     else return "|cFF9D9D9D"
     end
+end
+
+---------------------------------------------------------------
+-- Set bonus detection for an inspected unit
+-- Reads item links from all equipment slots, counts pieces per setID.
+-- Returns "4P", "2P", or nil.
+-- Must be called synchronously during INSPECT_READY while data is loaded.
+---------------------------------------------------------------
+local EQUIP_SLOTS = {1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17}
+
+local function GetSetBonusForUnit(unit)
+    local setPieces = {} -- setID -> count
+
+    for _, slotID in ipairs(EQUIP_SLOTS) do
+        local link = GetInventoryItemLink(unit, slotID)
+        if link then
+            -- Item link format: |Hitem:itemID:...:setID:...|h
+            -- setID is at position 15 in the colon-separated fields
+            local setID = tonumber(select(15, strsplit(":", link:match("item:([^|]+)"))))
+            if setID and setID > 0 then
+                setPieces[setID] = (setPieces[setID] or 0) + 1
+            end
+        end
+    end
+
+    local best = 0
+    for _, count in pairs(setPieces) do
+        if count > best then best = count end
+    end
+
+    if best >= 4 then return "4P"
+    elseif best >= 2 then return "2P"
+    end
+    return nil
 end
 
 ---------------------------------------------------------------
@@ -142,6 +178,38 @@ local function ExtractName(text)
 end
 
 ---------------------------------------------------------------
+-- Build the iLvl tag string for a given player name
+-- Returns e.g. " |cFF0070DD[252]|r |cFF00FF00[2P]|r" or nil
+---------------------------------------------------------------
+local function BuildTag(name)
+    local ilvl = nameToIlvl[name]
+    if not ilvl then return nil end
+
+    local tag
+    if db.colorIlvl then
+        tag = " " .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r"
+    else
+        tag = " [" .. ilvl .. "]"
+    end
+
+    -- Append set bonus if we have it (look up by name via ilvlCache)
+    if db.showSetBonus then
+        -- Find guid for this name
+        for guid, data in pairs(ilvlCache) do
+            if data.name == name or data.name == (name:match("^(.+)%-[^%-]+$")) then
+                local sb = setBonusCache[guid]
+                if sb then
+                    tag = tag .. " |cFF00FF00[" .. sb .. "]|r"
+                end
+                break
+            end
+        end
+    end
+
+    return tag
+end
+
+---------------------------------------------------------------
 -- Hook a bar's lineText1 SetText to inject iLvl
 -- This avoids reading GetText() which returns secret strings
 ---------------------------------------------------------------
@@ -170,17 +238,13 @@ local function HookBarTextIfNeeded(bar)
         barCleanText[self] = text
 
         local name = ExtractName(text)
-        if name and nameToIlvl[name] then
-            local ilvl = nameToIlvl[name]
-            local tag
-            if db.colorIlvl then
-                tag = " " .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r"
-            else
-                tag = " [" .. ilvl .. "]"
+        if name then
+            local tag = BuildTag(name)
+            if tag then
+                isOurSetText = true
+                self:SetText(text .. tag)
+                isOurSetText = false
             end
-            isOurSetText = true
-            self:SetText(text .. tag)
-            isOurSetText = false
         end
     end)
 end
@@ -222,9 +286,8 @@ local function RefreshAllBarTexts()
                 if text then
                     local name = ExtractName(text)
                     if name then
-                        local ilvl = nameToIlvl[name]
-                        if ilvl then
-                            local tag = db.colorIlvl and (" " .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r") or (" [" .. ilvl .. "]")
+                        local tag = BuildTag(name)
+                        if tag then
                             fontString:SetText(text .. tag)
                         end
                     end
@@ -401,6 +464,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     for guid in pairs(ilvlCache) do
                         if not keepGuids[guid] then
                             ilvlCache[guid] = nil
+                            setBonusCache[guid] = nil
                         end
                     end
                     wipe(nameToIlvl)
@@ -430,6 +494,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     local name, realm = UnitName(u)
                     local ilvlFloor = math.floor(ilvl)
                     local fullName = name and (realm and realm ~= "") and (name .. "-" .. realm) or name
+                    local setBonus = GetSetBonusForUnit(u)
+                    setBonusCache[guid] = setBonus
                     ilvlCache[guid] = {ilvl = ilvlFloor, time = time(), name = fullName or name}
                     -- Populate nameToIlvl directly — don't rely on Details! combat
                     -- actors (player may not have dealt damage/healed yet).
@@ -497,6 +563,9 @@ SlashCmdList["DILVL"] = function(msg)
     elseif msg == "color" then
         db.colorIlvl = not db.colorIlvl
         print("|cFF00FF00Details! iLvl Display:|r Color " .. (db.colorIlvl and "ON" or "OFF"))
+    elseif msg == "setbonus" then
+        db.showSetBonus = not db.showSetBonus
+        print("|cFF00FF00Details! iLvl Display:|r Set Bonus " .. (db.showSetBonus and "ON" or "OFF"))
     elseif msg == "inspect" then
         print("|cFF00FF00Details! iLvl Display:|r Inspecting group...")
         QueueGroupInspect()
@@ -531,6 +600,6 @@ SlashCmdList["DILVL"] = function(msg)
         print("  Cached GUIDs: " .. cacheCount)
         print("  Inspect queue: " .. #inspectQueue)
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.6 - /dilvl [on|off|color|inspect|cache|map|debug]")
+        print("|cFF00FF00Details! iLvl Display|r v1.6 - /dilvl [on|off|color|setbonus|inspect|cache|map|debug]")
     end
 end
