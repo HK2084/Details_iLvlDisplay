@@ -604,7 +604,8 @@ SlashCmdList["DILVL"] = function(msg)
         print("|cFF00FF00Details! iLvl Display:|r Inspecting group...")
         QueueGroupInspect()
     elseif msg == "cache" then
-        local count = 0
+        local count, expired = 0, 0
+        local now = time()
         for guid, data in pairs(ilvlCache) do
             local name = data.name or "Unknown"
             if guid == UnitGUID("player") then
@@ -613,29 +614,62 @@ SlashCmdList["DILVL"] = function(msg)
             if name == "Unknown" and Details and Details.item_level_pool and Details.item_level_pool[guid] then
                 name = Details.item_level_pool[guid].name or name
             end
-            print(string.format("  %s: |cFFFFD900%d|r iLvl (cached %ds ago)", name, data.ilvl, time() - data.time))
+            local age = now - data.time
+            local sb = setBonusCache[guid] and ("|cFF00FF00[" .. setBonusCache[guid] .. "]|r ") or ""
+            local ageColor = age > CACHE_EXPIRE and "|cFFFF4444" or "|cFF888888"
+            local expiredNote = age > CACHE_EXPIRE and " |cFFFF4444[EXPIRED]|r" or ""
+            print(string.format("  %s: %s|cFFFFD900%d|r iLvl %s(%ds ago)%s",
+                name, sb, data.ilvl, ageColor, age, expiredNote))
             count = count + 1
+            if age > CACHE_EXPIRE then expired = expired + 1 end
         end
-        print(string.format("|cFF00FF00Details! iLvl Display:|r %d cached", count))
+        print(string.format("|cFF00FF00Details! iLvl Display:|r %d cached, %d expired", count, expired))
+
     elseif msg == "map" then
-        print("|cFF00FF00Details! iLvl Display:|r Name->iLvl map:")
+        print("|cFF00FF00Details! iLvl Display:|r Name->iLvl map (" .. (next(nameToIlvl) and "" or "empty") .. "):")
         for name, ilvl in pairs(nameToIlvl) do
             print(string.format("  %s: |cFFFFD900%d|r", name, ilvl))
         end
+
     elseif msg == "debug" then
         local cacheCount, mapCount, hookCount, setBonusCount = 0, 0, 0, 0
         for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
         for _ in pairs(nameToIlvl) do mapCount = mapCount + 1 end
         for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
         for _ in pairs(setBonusCache) do setBonusCount = setBonusCount + 1 end
-        print("|cFF00FF00Details! iLvl Display:|r Debug v1.6:")
-        print("  Ticker: " .. tostring(detailsReady))
-        print("  Hooked bars: " .. hookCount)
-        print("  nameToIlvl entries: " .. mapCount)
-        print("  Cached GUIDs: " .. cacheCount)
+
+        local prefix, count, numGroup = GetGroupInfo()
+        local inCombat = InCombatLockdown() and "|cFFFF4444yes|r" or "no"
+        local inspectFrameOpen = (InspectFrame and InspectFrame:IsShown()) and "|cFFFFD900yes|r" or "no"
+        local pending = pendingInspectGuid and ("|cFFFFD900" .. pendingInspectGuid:sub(1,8) .. "..|r") or "none"
+
+        print("|cFF00FF00Details! iLvl Display:|r Debug v1.7:")
+        print("  Addon: " .. (db.enabled and "|cFF00FF00ON|r" or "|cFFFF4444OFF|r")
+            .. "  Color: " .. (db.colorIlvl and "ON" or "OFF")
+            .. "  SetBonus: " .. (db.showSetBonus and "ON" or "OFF"))
+        print("  Ticker started: " .. tostring(tickerStarted)
+            .. "  Details ready: " .. tostring(detailsReady)
+            .. "  MapDirty: " .. tostring(mapDirty))
+        print("  In combat: " .. inCombat
+            .. "  InspectFrame open: " .. inspectFrameOpen)
+        print("  Group: " .. prefix .. " (" .. numGroup .. " members)")
+        print("  Hooked bars: " .. hookCount
+            .. "  nameToIlvl: " .. mapCount
+            .. "  Cache: " .. cacheCount)
         print("  Set bonus cached: " .. setBonusCount)
-        print("  Inspect queue: " .. #inspectQueue)
+        print("  Inspect queue: " .. #inspectQueue
+            .. "  isInspecting: " .. tostring(isInspecting)
+            .. "  pending: " .. pending)
+        if #inspectQueue > 0 then
+            print("  Queue contents:")
+            for i, entry in ipairs(inspectQueue) do
+                local qname = UnitName(entry.unit) or entry.unit
+                local retries = entry.retries or 0
+                print(string.format("    [%d] %s (retries: %d)", i, qname, retries))
+            end
+        end
+
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.6 - /dilvl [on|off|color|setbonus|inspect|cache|map|debug]")
+        print("|cFF00FF00Details! iLvl Display|r v1.7 - /dilvl [on|off|color|setbonus|inspect|cache|map|debug]")
     end
 end
