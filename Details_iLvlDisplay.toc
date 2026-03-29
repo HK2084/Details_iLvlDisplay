@@ -2,7 +2,7 @@
 ## Title: Details! iLvl Display
 ## Notes: Shows item level next to player names on Details! damage meter bars
 ## Author: HK2084
-## Version: 1.4
+## Version: 1.5
 ## IconTexture: Interface\AddOns\Details_iLvlDisplay\icon
 ## Dependencies: Details
 ## OptionalDeps: QuickItemLevel

@@ -340,7 +340,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.4 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.5 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -431,7 +431,7 @@ SlashCmdList["DILVL"] = function(msg)
             print(string.format("  %s: |cFFFFD900%d|r", name, ilvl))
         end
     elseif msg == "debug" then
-        print("|cFF00FF00Details! iLvl Display:|r Debug v1.4:")
+        print("|cFF00FF00Details! iLvl Display:|r Debug v1.5:")
         print("  Ticker: " .. tostring(detailsReady))
         print("  Hooked FontStrings: " .. tostring(next(hookedFontStrings) and "yes" or "none"))
         print("  nameToIlvl: " .. tostring(next(nameToIlvl) and "yes" or "empty"))
@@ -439,6 +439,6 @@ SlashCmdList["DILVL"] = function(msg)
         for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
         print("  Total hooks: " .. hookCount)
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.4 - /dilvl [on|off|color|inspect|cache|map|debug]")
+        print("|cFF00FF00Details! iLvl Display|r v1.5 - /dilvl [on|off|color|inspect|cache|map|debug]")
     end
 end
