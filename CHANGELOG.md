@@ -3,6 +3,9 @@
 ## [1.4] - 2026-03-29
 - Added custom HK icon for addon list
 - Version strings unified across .toc and slash commands
+- Fix: `CanInspect(unit, true)` → `false` — verhindert Error-Message-Spam beim stillen Inspect-Check
+- Fix: `ClearInspectPlayer()` nach INSPECT_READY hinzugefügt — gibt Inspect-State frei, WoW monitored Spieler nicht mehr unnötig weiter
+- Fix: Inspect-Delay nach INSPECT_READY von 0.3s auf 1.0s erhöht — verhindert Server-Throttle in größeren Raids (throttled Requests feuern kein Event)
 
 ## [1.3] - 2026-03-29
 - Fix: RefreshAllBarTexts now always runs on tick, not only when map is dirty
