@@ -3,7 +3,6 @@ local addonName = ...
 local defaults = {
     enabled = true,
     colorIlvl = true,
-    ilvlCache = {}, -- persistent cache: guid -> {ilvl, time, name}
 }
 
 local db
@@ -19,6 +18,21 @@ local barCleanText = {}    -- fontString -> last clean text set by Details! (nev
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- guard against multiple tickers on repeated PLAYER_ENTERING_WORLD
+
+---------------------------------------------------------------
+-- Group info helper (handles normal party/raid + LFR/LFD)
+-- Returns: prefix ("raid"/"party"), count, numGroup
+---------------------------------------------------------------
+local function GetGroupInfo()
+    local isInstance = IsInRaid(LE_PARTY_CATEGORY_INSTANCE) or IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
+    local numGroup = isInstance
+        and GetNumGroupMembers(LE_PARTY_CATEGORY_INSTANCE)
+        or GetNumGroupMembers()
+    local isRaid = isInstance and IsInRaid(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid()
+    local prefix = isRaid and "raid" or "party"
+    local count = isRaid and numGroup or (numGroup - 1)
+    return prefix, count, numGroup
+end
 
 ---------------------------------------------------------------
 -- iLvl color by gear tier
@@ -200,7 +214,7 @@ local function RefreshAllBarTexts()
 
     isOurSetText = true
     for fontString in pairs(hookedFontStrings) do
-        local ok, err = pcall(function()
+        local ok = pcall(function()
             if fontString:IsShown() then
                 -- Use our cached clean text — never GetText(), which returns our
                 -- injected secret string and causes taint errors on string ops.
@@ -209,10 +223,6 @@ local function RefreshAllBarTexts()
                     local name = ExtractName(text)
                     if name then
                         local ilvl = nameToIlvl[name]
-                        if not ilvl then
-                            local shortName = name:match("^(.+)%-[^%-]+$")
-                            ilvl = shortName and nameToIlvl[shortName]
-                        end
                         if ilvl then
                             local tag = db.colorIlvl and (" " .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r") or (" [" .. ilvl .. "]")
                             fontString:SetText(text .. tag)
@@ -222,8 +232,8 @@ local function RefreshAllBarTexts()
             end
         end)
         if not ok then
-            -- On any error reset the flag immediately so the hook stays functional
-            isOurSetText = false
+            -- Restore guard so subsequent iterations still block re-entry
+            isOurSetText = true
         end
     end
     isOurSetText = false
@@ -277,17 +287,8 @@ local function QueueGroupInspect()
 
     wipe(inspectQueue)
 
-    -- GetNumGroupMembers() returns 0 in LFR/LFD instance groups.
-    -- Use GetNumGroupMembers(LE_PARTY_CATEGORY_INSTANCE) for those.
-    local isInstance = IsInRaid(LE_PARTY_CATEGORY_INSTANCE) or IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
-    local numGroup = isInstance
-        and GetNumGroupMembers(LE_PARTY_CATEGORY_INSTANCE)
-        or GetNumGroupMembers()
+    local prefix, count, numGroup = GetGroupInfo()
     if numGroup <= 1 then return end
-
-    local isRaid = IsInRaid(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid()
-    local prefix = isRaid and "raid" or "party"
-    local count = isRaid and numGroup or (numGroup - 1)
 
     for i = 1, count do
         local unit = prefix .. i
@@ -339,12 +340,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
             db = Details_iLvlDisplayDB
             for k, v in pairs(defaults) do
-                if db[k] == nil then
-                    db[k] = type(v) == "table" and {} or v
-                end
+                if db[k] == nil then db[k] = v end
             end
 
-            -- Point ilvlCache at the persistent SavedVariables table
+            -- Persistent cache stored separately (not in defaults to avoid confusion)
+            if not db.ilvlCache then db.ilvlCache = {} end
             ilvlCache = db.ilvlCache
 
             -- Purge entries older than CACHE_EXPIRE on load
@@ -387,29 +387,27 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
         -- Detect new instance: if MapID changed, purge all non-group cache entries
         -- so stale data from previous raid doesn't linger forever.
-        local currentMap = C_Map.GetBestMapForUnit("player")
-        if currentMap and currentMap ~= lastMapID then
-            if lastMapID then
-                -- Build set of current group GUIDs to keep
-                local keepGuids = {}
-                local numGroup = GetNumGroupMembers()
-                local prefix = IsInRaid() and "raid" or "party"
-                local count = IsInRaid() and numGroup or (numGroup - 1)
-                for i = 1, count do
-                    local g = UnitGUID(prefix .. i)
-                    if g then keepGuids[g] = true end
-                end
-                keepGuids[UnitGUID("player")] = true
-                -- Purge everyone not in current group
-                for guid in pairs(ilvlCache) do
-                    if not keepGuids[guid] then
-                        ilvlCache[guid] = nil
+        if ilvlCache then
+            local currentMap = C_Map.GetBestMapForUnit("player")
+            if currentMap and currentMap ~= lastMapID then
+                if lastMapID then
+                    local keepGuids = {}
+                    local prefix, count = GetGroupInfo()
+                    for i = 1, count do
+                        local g = UnitGUID(prefix .. i)
+                        if g then keepGuids[g] = true end
                     end
+                    keepGuids[UnitGUID("player")] = true
+                    for guid in pairs(ilvlCache) do
+                        if not keepGuids[guid] then
+                            ilvlCache[guid] = nil
+                        end
+                    end
+                    wipe(nameToIlvl)
+                    mapDirty = true
                 end
-                wipe(nameToIlvl)
-                mapDirty = true
+                lastMapID = currentMap
             end
-            lastMapID = currentMap
         end
 
         local _, equipped = GetAverageItemLevel()
@@ -422,9 +420,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "INSPECT_READY" then
         local guid = ...
-        local numGroup = GetNumGroupMembers()
-        local prefix = IsInRaid() and "raid" or "party"
-        local count = IsInRaid() and numGroup or (numGroup - 1)
+        local prefix, count = GetGroupInfo()
 
         for i = 1, count do
             local u = prefix .. i
@@ -455,23 +451,19 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         if db and db.enabled then
-            mapDirty = true -- rebuild nameToIlvl from cached data after every fight
+            mapDirty = true
             C_Timer.After(2, QueueGroupInspect)
         end
 
     elseif event == "ENCOUNTER_END" then
         -- After every boss, re-inspect current group only.
         -- Players may have received loot and gained iLvl.
-        -- We force-expire their cache entries so QueueGroupInspect re-inspects them.
-        if db and db.enabled and not InCombatLockdown() then
-            local numGroup = GetNumGroupMembers()
-            local prefix = IsInRaid() and "raid" or "party"
-            local count = IsInRaid() and numGroup or (numGroup - 1)
+        if db and db.enabled then
+            local prefix, count = GetGroupInfo()
             for i = 1, count do
                 local guid = UnitGUID(prefix .. i)
                 if guid and ilvlCache[guid] then
-                    -- Force expire so QueueGroupInspect re-queues them
-                    ilvlCache[guid].time = 0
+                    ilvlCache[guid].time = 0 -- force expire → QueueGroupInspect re-queues
                 end
             end
             C_Timer.After(5, QueueGroupInspect)
@@ -528,13 +520,16 @@ SlashCmdList["DILVL"] = function(msg)
             print(string.format("  %s: |cFFFFD900%d|r", name, ilvl))
         end
     elseif msg == "debug" then
+        local cacheCount, mapCount, hookCount = 0, 0, 0
+        for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
+        for _ in pairs(nameToIlvl) do mapCount = mapCount + 1 end
+        for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
         print("|cFF00FF00Details! iLvl Display:|r Debug v1.6:")
         print("  Ticker: " .. tostring(detailsReady))
-        print("  Hooked FontStrings: " .. tostring(next(hookedFontStrings) and "yes" or "none"))
-        print("  nameToIlvl: " .. tostring(next(nameToIlvl) and "yes" or "empty"))
-        local hookCount = 0
-        for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
-        print("  Total hooks: " .. hookCount)
+        print("  Hooked bars: " .. hookCount)
+        print("  nameToIlvl entries: " .. mapCount)
+        print("  Cached GUIDs: " .. cacheCount)
+        print("  Inspect queue: " .. #inspectQueue)
     else
         print("|cFF00FF00Details! iLvl Display|r v1.6 - /dilvl [on|off|color|inspect|cache|map|debug]")
     end
