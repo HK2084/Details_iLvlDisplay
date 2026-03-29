@@ -195,11 +195,13 @@ local function BuildTag(name)
         tag = " [" .. ilvl .. "]"
     end
 
-    -- Append set bonus if we have it (look up by name via ilvlCache)
+    -- Append set bonus if we have it (look up guid via ilvlCache name)
+    -- data.name may be "Player-Realm" (cross-realm) while name from the bar
+    -- is just "Player" — so compare both full and short name.
     if db.showSetBonus then
-        -- Find guid for this name
         for guid, data in pairs(ilvlCache) do
-            if data.name == name or data.name == (name:match("^(.+)%-[^%-]+$")) then
+            local storedShort = data.name and (data.name:match("^(.+)%-[^%-]+$") or data.name)
+            if data.name == name or storedShort == name then
                 local sb = setBonusCache[guid]
                 if sb then
                     tag = tag .. " |cFF00FF00[" .. sb .. "]|r"
