@@ -16,6 +16,7 @@ local hookedFontStrings = {} -- track which FontStrings we already hooked
 local barCleanText = {}    -- fontString -> last clean text set by Details! (never our injected text)
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
+local tickerStarted = false -- guard against multiple tickers on repeated PLAYER_ENTERING_WORLD
 
 ---------------------------------------------------------------
 -- iLvl color by gear tier
@@ -193,25 +194,30 @@ local function RefreshAllBarTexts()
 
     isOurSetText = true
     for fontString in pairs(hookedFontStrings) do
-        if fontString:IsShown() then
-            -- Use our cached clean text — never GetText(), which returns our
-            -- injected secret string and causes taint errors on string ops.
-            local text = barCleanText[fontString]
-            if text then
-                local name = ExtractName(text)
-                if name then
-                    local ilvl = nameToIlvl[name]
-                    if not ilvl then
-                        -- Fallback: try without realm suffix
-                        local shortName = name:match("^(.+)%-[^%-]+$")
-                        ilvl = shortName and nameToIlvl[shortName]
-                    end
-                    if ilvl then
-                        local tag = db.colorIlvl and (" " .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r") or (" [" .. ilvl .. "]")
-                        fontString:SetText(text .. tag)
+        local ok, err = pcall(function()
+            if fontString:IsShown() then
+                -- Use our cached clean text — never GetText(), which returns our
+                -- injected secret string and causes taint errors on string ops.
+                local text = barCleanText[fontString]
+                if text then
+                    local name = ExtractName(text)
+                    if name then
+                        local ilvl = nameToIlvl[name]
+                        if not ilvl then
+                            local shortName = name:match("^(.+)%-[^%-]+$")
+                            ilvl = shortName and nameToIlvl[shortName]
+                        end
+                        if ilvl then
+                            local tag = db.colorIlvl and (" " .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r") or (" [" .. ilvl .. "]")
+                            fontString:SetText(text .. tag)
+                        end
                     end
                 end
             end
+        end)
+        if not ok then
+            -- On any error reset the flag immediately so the hook stays functional
+            isOurSetText = false
         end
     end
     isOurSetText = false
@@ -317,17 +323,22 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
-        if not detailsReady then
+        -- Guard against multiple tickers: PLAYER_ENTERING_WORLD fires on every
+        -- zone transition. Without this flag, rapid zoning within 3s creates
+        -- multiple tickers and OnTick runs multiple times per interval.
+        if not detailsReady and not tickerStarted then
+            tickerStarted = true
             C_Timer.After(3, function()
                 if Details then
                     detailsReady = true
                     RebuildNameIlvlMap()
                     HookAllBars()
-                    -- Tick only hooks new bars + rebuilds map when dirty (cheap)
                     C_Timer.NewTicker(2, OnTick)
                     print("|cFF00FF00Details! iLvl Display|r v1.4 loaded. /dilvl")
-                    -- Queue inspects early so data is ready before first pull
                     C_Timer.After(5, QueueGroupInspect)
+                else
+                    -- Details not loaded yet, allow retry on next zone
+                    tickerStarted = false
                 end
             end)
         end
