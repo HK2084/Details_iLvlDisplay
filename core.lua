@@ -62,9 +62,12 @@ local function GetSetBonusForUnit(unit)
     for _, slotID in ipairs(EQUIP_SLOTS) do
         local link = GetInventoryItemLink(unit, slotID)
         if link then
-            -- GetItemInfo returns setID as 16th return value
             local itemID = tonumber(link:match("item:(%d+)"))
             if itemID then
+                -- GetItemInfo(itemID) returns 17 values; setID is #16.
+                -- It is synchronous only if the item is already in the client
+                -- cache. During INSPECT_READY the inspected player's equipped
+                -- items are almost always cached; pcall guards the rare miss.
                 local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(GetItemInfo, itemID)
                 if ok and setID and setID > 0 then
                     setPieces[setID] = (setPieces[setID] or 0) + 1
