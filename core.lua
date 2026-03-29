@@ -62,11 +62,13 @@ local function GetSetBonusForUnit(unit)
     for _, slotID in ipairs(EQUIP_SLOTS) do
         local link = GetInventoryItemLink(unit, slotID)
         if link then
-            -- Item link format: |Hitem:itemID:...:setID:...|h
-            -- setID is at position 15 in the colon-separated fields
-            local setID = tonumber(select(15, strsplit(":", link:match("item:([^|]+)"))))
-            if setID and setID > 0 then
-                setPieces[setID] = (setPieces[setID] or 0) + 1
+            -- GetItemInfo returns setID as 16th return value
+            local itemID = tonumber(link:match("item:(%d+)"))
+            if itemID then
+                local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(GetItemInfo, itemID)
+                if ok and setID and setID > 0 then
+                    setPieces[setID] = (setPieces[setID] or 0) + 1
+                end
             end
         end
     end
