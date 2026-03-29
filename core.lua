@@ -334,6 +334,14 @@ local function ProcessNextInspect()
         return
     end
 
+    -- Don't fire our background inspect while the player has the inspect
+    -- window open — NotifyInspect would override their manual inspection.
+    if InspectFrame and InspectFrame:IsShown() then
+        isInspecting = false
+        C_Timer.After(2, ProcessNextInspect) -- retry after player closes it
+        return
+    end
+
     isInspecting = true
     local entry = table.remove(inspectQueue, 1)
 
@@ -515,8 +523,12 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        -- Release inspect data and mark map dirty for next tick
-        ClearInspectPlayer()
+        -- Only release inspect state if the player's own inspect window is
+        -- closed. If it's open, the game manages the state — calling
+        -- ClearInspectPlayer() here would wipe their open inspect panel.
+        if not (InspectFrame and InspectFrame:IsShown()) then
+            ClearInspectPlayer()
+        end
         mapDirty = true
         C_Timer.After(1.0, ProcessNextInspect)
 
