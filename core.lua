@@ -55,12 +55,17 @@ end
 -- Returns "4P", "2P", or nil.
 -- Must be called synchronously during INSPECT_READY while data is loaded.
 ---------------------------------------------------------------
-local EQUIP_SLOTS = {1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17}
+-- Only the 5 slots that can physically hold tier pieces.
+-- Checking all 16 slots causes false positives because rings, trinkets,
+-- weapons, cloaks etc. can also have non-zero setIDs in TWW (cosmetic sets,
+-- crafted item families). Tier bonuses are exclusively Head/Shoulder/Chest/
+-- Legs/Hands — restricting to these 5 slots eliminates false positives.
+local TIER_SLOTS = {1, 3, 5, 7, 10} -- Head, Shoulder, Chest, Legs, Hands
 
 local function GetSetBonusForUnit(unit)
     local setPieces = {} -- setID -> count
 
-    for _, slotID in ipairs(EQUIP_SLOTS) do
+    for _, slotID in ipairs(TIER_SLOTS) do
         -- GetInventoryItemID returns itemID directly as a number — no link
         -- parsing needed, immune to item link format changes (|cnIQ4: etc).
         local itemID = GetInventoryItemID(unit, slotID)
@@ -525,18 +530,23 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        -- Only call ClearInspectPlayer() if WE triggered this inspect.
-        -- If pendingInspectGuid is nil or doesn't match, this INSPECT_READY
-        -- was from the player's manual right-click inspect — don't touch it
-        -- or their inspect panel will show empty item slots (race condition:
-        -- INSPECT_READY fires before InspectFrame:Show(), so IsShown() alone
-        -- is not a reliable guard).
+        -- Only release inspect state and continue the queue if WE triggered
+        -- this INSPECT_READY. If the player manually inspects someone (or
+        -- inspects the same target we queued), we must not:
+        --   a) call ClearInspectPlayer() — wipes their open panel
+        --   b) call ProcessNextInspect  — fires NotifyInspect 1s later,
+        --      overrides the inspect context, tooltips stop working
+        -- Additional guard: never clear while InspectFrame is visible
+        -- (race: our queue and manual inspect can target the same player).
+        mapDirty = true
         if guid == pendingInspectGuid then
             pendingInspectGuid = nil
-            ClearInspectPlayer()
+            if not (InspectFrame and InspectFrame:IsShown()) then
+                ClearInspectPlayer()
+            end
+            C_Timer.After(1.0, ProcessNextInspect)
         end
-        mapDirty = true
-        C_Timer.After(1.0, ProcessNextInspect)
+        -- Manual inspect: data captured above, nothing else to do.
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         if db and db.enabled then
