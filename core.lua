@@ -409,6 +409,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "GROUP_ROSTER_UPDATE" then
         if not InCombatLockdown() and db and db.enabled then
+            -- Wipe nameToIlvl immediately — unit tokens reshuffle on roster
+            -- changes so old name->iLvl mappings are unreliable until we
+            -- re-inspect and re-populate from fresh unit tokens.
+            wipe(nameToIlvl)
+            mapDirty = true
             C_Timer.After(3, QueueGroupInspect)
         end
     end
