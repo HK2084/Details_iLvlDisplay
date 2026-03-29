@@ -7,3 +7,4 @@ ignore:
   - CHANGELOG.md
   - README.md
   - logo.png
+  - LICENSE
