@@ -60,19 +60,16 @@ local function GetSetBonusForUnit(unit)
     local setPieces = {} -- setID -> count
 
     for _, slotID in ipairs(EQUIP_SLOTS) do
-        local link = GetInventoryItemLink(unit, slotID)
-        if link then
-            local itemID = tonumber(link:match("item:(%d+)"))
-            if itemID then
-                -- C_Item.GetItemInfo returns 18 values (17 + itemDescription
-                -- added in 11.x); setID is still at position 16.
-                -- Synchronous only if item is in client cache; during
-                -- INSPECT_READY equipped items are almost always cached.
-                -- pcall guards the rare async-miss (returns nil, no error).
-                local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
-                if ok and setID and setID > 0 then
-                    setPieces[setID] = (setPieces[setID] or 0) + 1
-                end
+        -- GetInventoryItemID returns itemID directly as a number — no link
+        -- parsing needed, immune to item link format changes (|cnIQ4: etc).
+        local itemID = GetInventoryItemID(unit, slotID)
+        if itemID and itemID > 0 then
+            -- C_Item.GetItemInfo returns 18 values; setID is at position 16.
+            -- Synchronous if item is in client cache (it almost always is
+            -- during INSPECT_READY). pcall guards the rare async-miss.
+            local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
+            if ok and setID and setID > 0 then
+                setPieces[setID] = (setPieces[setID] or 0) + 1
             end
         end
     end
