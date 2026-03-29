@@ -256,7 +256,13 @@ local function ProcessNextInspect()
     if UnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, false) then
         NotifyInspect(entry.unit)
     else
-        C_Timer.After(0.2, ProcessNextInspect)
+        -- Can't inspect right now (out of range, throttled, etc.).
+        -- Re-queue up to 3 times so we retry after other players are done.
+        entry.retries = (entry.retries or 0) + 1
+        if entry.retries <= 3 then
+            table.insert(inspectQueue, entry)
+        end
+        C_Timer.After(0.5, ProcessNextInspect)
     end
 end
 
