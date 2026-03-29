@@ -64,11 +64,12 @@ local function GetSetBonusForUnit(unit)
         if link then
             local itemID = tonumber(link:match("item:(%d+)"))
             if itemID then
-                -- GetItemInfo(itemID) returns 17 values; setID is #16.
-                -- It is synchronous only if the item is already in the client
-                -- cache. During INSPECT_READY the inspected player's equipped
-                -- items are almost always cached; pcall guards the rare miss.
-                local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(GetItemInfo, itemID)
+                -- C_Item.GetItemInfo returns 18 values (17 + itemDescription
+                -- added in 11.x); setID is still at position 16.
+                -- Synchronous only if item is in client cache; during
+                -- INSPECT_READY equipped items are almost always cached.
+                -- pcall guards the rare async-miss (returns nil, no error).
+                local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
                 if ok and setID and setID > 0 then
                     setPieces[setID] = (setPieces[setID] or 0) + 1
                 end
@@ -527,9 +528,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "ENCOUNTER_END" then
-        -- After every boss, re-inspect current group only.
-        -- Players may have received loot and gained iLvl.
-        if db and db.enabled then
+        -- ENCOUNTER_END fires on both kills (success=1) AND wipes (success=0).
+        -- Only re-inspect on kills — loot (and potential ilvl gains) only drop on kills.
+        local _, _, _, _, success = ...
+        if db and db.enabled and success == 1 then
             local prefix, count = GetGroupInfo()
             for i = 1, count do
                 local guid = UnitGUID(prefix .. i)
