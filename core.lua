@@ -71,11 +71,16 @@ local function GetSetBonusForUnit(unit)
         local itemID = GetInventoryItemID(unit, slotID)
         if itemID and itemID > 0 then
             -- C_Item.GetItemInfo returns 18 values; setID is at position 16.
-            -- Synchronous if item is in client cache (it almost always is
-            -- during INSPECT_READY). pcall guards the rare async-miss.
+            -- In TWW, setID is also assigned to item *families* (all items
+            -- from the same raid source share a setID). We must verify the
+            -- set actually has gameplay bonuses via GetSetBonusText — returns
+            -- non-nil only for real tier sets, nil for cosmetic/family sets.
             local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
             if ok and setID and setID > 0 then
-                setPieces[setID] = (setPieces[setID] or 0) + 1
+                local ok2, bonusText = pcall(GetSetBonusText, setID, 1)
+                if ok2 and bonusText and bonusText ~= "" then
+                    setPieces[setID] = (setPieces[setID] or 0) + 1
+                end
             end
         end
     end
