@@ -281,7 +281,18 @@ local function QueueGroupInspect()
         if UnitExists(unit) and UnitIsPlayer(unit) and not UnitIsUnit(unit, "player") then
             local guid = UnitGUID(unit)
             if guid then
+                -- Pre-populate nameToIlvl from cache now while we have the unit.
+                -- UnitName() is reliable here; at INSPECT_READY the unit token
+                -- may already be stale if the player moved or reloaded.
                 local cached = ilvlCache[guid]
+                if cached and cached.ilvl then
+                    local name, realm = UnitName(unit)
+                    if name then
+                        local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
+                        StoreNameIlvl(fullName, cached.ilvl)
+                        StoreNameIlvl(name, cached.ilvl)
+                    end
+                end
                 if not cached or (time() - cached.time >= CACHE_EXPIRE) then
                     -- Queue unconditionally, range check happens at inspect time
                     table.insert(inspectQueue, {guid = guid, unit = unit})
@@ -368,11 +379,18 @@ frame:SetScript("OnEvent", function(self, event, ...)
             if UnitGUID(u) == guid then
                 local ilvl = C_PaperDollInfo.GetInspectItemLevel(u)
                 if ilvl and ilvl > 0 then
-                    local name = UnitName(u)
-                    ilvlCache[guid] = {ilvl = math.floor(ilvl), time = time(), name = name}
-                    -- Populate nameToIlvl directly here — don't rely on Details! combat
-                    -- actors having the player yet (they may not have dealt damage/healed).
-                    if name then StoreNameIlvl(name, math.floor(ilvl)) end
+                    local name, realm = UnitName(u)
+                    local ilvlFloor = math.floor(ilvl)
+                    local fullName = name and (realm and realm ~= "") and (name .. "-" .. realm) or name
+                    ilvlCache[guid] = {ilvl = ilvlFloor, time = time(), name = fullName or name}
+                    -- Populate nameToIlvl directly — don't rely on Details! combat
+                    -- actors (player may not have dealt damage/healed yet).
+                    if name then
+                        StoreNameIlvl(name, ilvlFloor)
+                        if fullName and fullName ~= name then
+                            StoreNameIlvl(fullName, ilvlFloor)
+                        end
+                    end
                 end
                 break
             end
