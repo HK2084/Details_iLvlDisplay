@@ -368,7 +368,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
             if UnitGUID(u) == guid then
                 local ilvl = C_PaperDollInfo.GetInspectItemLevel(u)
                 if ilvl and ilvl > 0 then
-                    ilvlCache[guid] = {ilvl = math.floor(ilvl), time = time()}
+                    local name = UnitName(u)
+                    ilvlCache[guid] = {ilvl = math.floor(ilvl), time = time(), name = name}
+                    -- Populate nameToIlvl directly here — don't rely on Details! combat
+                    -- actors having the player yet (they may not have dealt damage/healed).
+                    if name then StoreNameIlvl(name, math.floor(ilvl)) end
                 end
                 break
             end
@@ -414,12 +418,12 @@ SlashCmdList["DILVL"] = function(msg)
     elseif msg == "cache" then
         local count = 0
         for guid, data in pairs(ilvlCache) do
-            local name = "Unknown"
-            if Details and Details.item_level_pool and Details.item_level_pool[guid] then
-                name = Details.item_level_pool[guid].name or name
-            end
+            local name = data.name or "Unknown"
             if guid == UnitGUID("player") then
                 name = UnitName("player") or name
+            end
+            if name == "Unknown" and Details and Details.item_level_pool and Details.item_level_pool[guid] then
+                name = Details.item_level_pool[guid].name or name
             end
             print(string.format("  %s: |cFFFFD900%d|r iLvl (cached %ds ago)", name, data.ilvl, time() - data.time))
             count = count + 1
