@@ -3,12 +3,14 @@ local addonName = ...
 local defaults = {
     enabled = true,
     colorIlvl = true,
+    ilvlCache = {}, -- persistent cache: guid -> {ilvl, time, name}
 }
 
 local db
-local ilvlCache = {} -- guid -> {ilvl = number, time = number}
+local ilvlCache -- points to db.ilvlCache after ADDON_LOADED (persistent SavedVariables)
 local nameToIlvl = {} -- "PlayerName" -> ilvl
-local CACHE_EXPIRE = 600
+local CACHE_EXPIRE = 7200 -- 2 hours; stale entries purged on new instance or after boss
+local lastMapID = nil -- track zone changes to detect new instances
 local inspectQueue = {}
 local isInspecting = false
 local detailsReady = false
@@ -326,6 +328,7 @@ frame:RegisterEvent("INSPECT_READY")
 frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("ENCOUNTER_END")
 
 frame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -337,7 +340,18 @@ frame:SetScript("OnEvent", function(self, event, ...)
             db = Details_iLvlDisplayDB
             for k, v in pairs(defaults) do
                 if db[k] == nil then
-                    db[k] = v
+                    db[k] = type(v) == "table" and {} or v
+                end
+            end
+
+            -- Point ilvlCache at the persistent SavedVariables table
+            ilvlCache = db.ilvlCache
+
+            -- Purge entries older than CACHE_EXPIRE on load
+            local now = time()
+            for guid, data in pairs(ilvlCache) do
+                if (now - data.time) >= CACHE_EXPIRE then
+                    ilvlCache[guid] = nil
                 end
             end
 
@@ -345,7 +359,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
             if equipped and equipped > 0 then
                 local guid = UnitGUID("player")
                 if guid then
-                    ilvlCache[guid] = {ilvl = math.floor(equipped), time = time()}
+                    ilvlCache[guid] = {ilvl = math.floor(equipped), time = now, name = UnitName("player")}
                 end
             end
         end
@@ -362,7 +376,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.5 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.6 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -371,11 +385,38 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end)
         end
 
+        -- Detect new instance: if MapID changed, purge all non-group cache entries
+        -- so stale data from previous raid doesn't linger forever.
+        local currentMap = C_Map.GetBestMapForUnit("player")
+        if currentMap and currentMap ~= lastMapID then
+            if lastMapID then
+                -- Build set of current group GUIDs to keep
+                local keepGuids = {}
+                local numGroup = GetNumGroupMembers()
+                local prefix = IsInRaid() and "raid" or "party"
+                local count = IsInRaid() and numGroup or (numGroup - 1)
+                for i = 1, count do
+                    local g = UnitGUID(prefix .. i)
+                    if g then keepGuids[g] = true end
+                end
+                keepGuids[UnitGUID("player")] = true
+                -- Purge everyone not in current group
+                for guid in pairs(ilvlCache) do
+                    if not keepGuids[guid] then
+                        ilvlCache[guid] = nil
+                    end
+                end
+                wipe(nameToIlvl)
+                mapDirty = true
+            end
+            lastMapID = currentMap
+        end
+
         local _, equipped = GetAverageItemLevel()
         if equipped and equipped > 0 then
             local guid = UnitGUID("player")
             if guid then
-                ilvlCache[guid] = {ilvl = math.floor(equipped), time = time()}
+                ilvlCache[guid] = {ilvl = math.floor(equipped), time = time(), name = UnitName("player")}
             end
         end
 
@@ -416,6 +457,24 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if db and db.enabled then
             mapDirty = true -- rebuild nameToIlvl from cached data after every fight
             C_Timer.After(2, QueueGroupInspect)
+        end
+
+    elseif event == "ENCOUNTER_END" then
+        -- After every boss, re-inspect current group only.
+        -- Players may have received loot and gained iLvl.
+        -- We force-expire their cache entries so QueueGroupInspect re-inspects them.
+        if db and db.enabled and not InCombatLockdown() then
+            local numGroup = GetNumGroupMembers()
+            local prefix = IsInRaid() and "raid" or "party"
+            local count = IsInRaid() and numGroup or (numGroup - 1)
+            for i = 1, count do
+                local guid = UnitGUID(prefix .. i)
+                if guid and ilvlCache[guid] then
+                    -- Force expire so QueueGroupInspect re-queues them
+                    ilvlCache[guid].time = 0
+                end
+            end
+            C_Timer.After(5, QueueGroupInspect)
         end
 
     elseif event == "GROUP_ROSTER_UPDATE" then
@@ -469,7 +528,7 @@ SlashCmdList["DILVL"] = function(msg)
             print(string.format("  %s: |cFFFFD900%d|r", name, ilvl))
         end
     elseif msg == "debug" then
-        print("|cFF00FF00Details! iLvl Display:|r Debug v1.5:")
+        print("|cFF00FF00Details! iLvl Display:|r Debug v1.6:")
         print("  Ticker: " .. tostring(detailsReady))
         print("  Hooked FontStrings: " .. tostring(next(hookedFontStrings) and "yes" or "none"))
         print("  nameToIlvl: " .. tostring(next(nameToIlvl) and "yes" or "empty"))
@@ -477,6 +536,6 @@ SlashCmdList["DILVL"] = function(msg)
         for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
         print("  Total hooks: " .. hookCount)
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.5 - /dilvl [on|off|color|inspect|cache|map|debug]")
+        print("|cFF00FF00Details! iLvl Display|r v1.6 - /dilvl [on|off|color|inspect|cache|map|debug]")
     end
 end

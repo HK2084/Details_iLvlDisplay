@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6] - 2026-03-29
+
+### Persistent cache + smart invalidation
+
+- Feat: iLvl cache is now persistent across sessions via SavedVariables — players you inspected in a previous session are shown immediately without re-inspecting
+- Feat: ENCOUNTER_END event — after every boss kill, all current group members are force-expired and re-inspected (players may have received loot and gained iLvl)
+- Feat: new instance detection via MapID — when you enter a new zone, all cached players not in your current group are purged so stale data from old raids doesn't linger
+- Cache TTL raised from 10min to 2h — entries older than 2h are purged on load
+- Fix: LFR/LFD instance group support — GetNumGroupMembers(LE_PARTY_CATEGORY_INSTANCE) used for instance groups where normal GetNumGroupMembers() returns 0
+- Fix: populate nameToIlvl from cache in QueueGroupInspect — UnitName() now called while unit token is still valid instead of at INSPECT_READY where it can be stale
+- Fix: wipe nameToIlvl on GROUP_ROSTER_UPDATE — unit tokens reshuffle on roster changes, old mappings discarded immediately
+
 ## [1.5] - 2026-03-29
 
 ### Fixes from live testing
