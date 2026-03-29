@@ -239,7 +239,7 @@ local function ProcessNextInspect()
     isInspecting = true
     local entry = table.remove(inspectQueue, 1)
 
-    if UnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, true) then
+    if UnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, false) then
         NotifyInspect(entry.unit)
     else
         C_Timer.After(0.2, ProcessNextInspect)
@@ -349,9 +349,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        -- Mark dirty so next OnTick rebuilds the map and refreshes bars
+        -- Release inspect data and mark map dirty for next tick
+        ClearInspectPlayer()
         mapDirty = true
-        C_Timer.After(0.3, ProcessNextInspect)
+        C_Timer.After(1.0, ProcessNextInspect)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         if db and db.enabled then
