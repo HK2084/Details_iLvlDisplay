@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.7] - 2026-03-29
+
+### Set bonus display (2P/4P) + API correctness + inspect window fix
+
+- Feat: set bonus detection — shows `[2P]` or `[4P]` next to iLvl for players with 2+ or 4+ tier set pieces
+- Feat: `/dilvl setbonus` toggles set bonus display on/off
+- Fix: manual inspect window no longer wiped by our background inspection — queue pauses while `InspectFrame` is open, `ClearInspectPlayer()` skipped while window is visible
+- Fix: replaced `GetInventoryItemLink` + string parsing with `GetInventoryItemID` for set bonus detection — immune to TWW 12.0 item link format changes (`|cnIQ4:` prefix caused "bad argument #2 to tonumber" crash)
+- Fix: migrated `GetItemInfo` (deprecated since 10.2.6) to `C_Item.GetItemInfo`
+- Fix: `ENCOUNTER_END` now only re-inspects on boss kills (`success == 1`), not on wipes
+- Fix: set bonus tag lookup in `BuildTag` now correctly matches cross-realm players (`data.name` = "Player-Realm" vs bar name = "Player")
+- Fix: `/dilvl debug` now shows "Set bonus cached: N" count
+
 ## [1.6] - 2026-03-29
 
 ### Persistent cache + smart invalidation
