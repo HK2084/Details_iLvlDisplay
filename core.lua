@@ -14,6 +14,7 @@ local CACHE_EXPIRE = 7200 -- 2 hours; stale entries purged on new instance or af
 local lastMapID = nil -- track zone changes to detect new instances
 local inspectQueue = {}
 local isInspecting = false
+local pendingInspectGuid = nil -- GUID we requested via NotifyInspect (nil = we didn't trigger current inspect)
 local detailsReady = false
 local hookedFontStrings = {} -- track which FontStrings we already hooked
 local barCleanText = {}    -- fontString -> last clean text set by Details! (never our injected text)
@@ -346,6 +347,7 @@ local function ProcessNextInspect()
     local entry = table.remove(inspectQueue, 1)
 
     if UnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, false) then
+        pendingInspectGuid = entry.guid -- track that WE triggered this inspect
         NotifyInspect(entry.unit)
     else
         -- Can't inspect right now (out of range, throttled, etc.).
@@ -523,10 +525,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        -- Only release inspect state if the player's own inspect window is
-        -- closed. If it's open, the game manages the state — calling
-        -- ClearInspectPlayer() here would wipe their open inspect panel.
-        if not (InspectFrame and InspectFrame:IsShown()) then
+        -- Only call ClearInspectPlayer() if WE triggered this inspect.
+        -- If pendingInspectGuid is nil or doesn't match, this INSPECT_READY
+        -- was from the player's manual right-click inspect — don't touch it
+        -- or their inspect panel will show empty item slots (race condition:
+        -- INSPECT_READY fires before InspectFrame:Show(), so IsShown() alone
+        -- is not a reliable guard).
+        if guid == pendingInspectGuid then
+            pendingInspectGuid = nil
             ClearInspectPlayer()
         end
         mapDirty = true
