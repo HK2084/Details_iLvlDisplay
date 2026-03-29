@@ -596,15 +596,17 @@ SlashCmdList["DILVL"] = function(msg)
             print(string.format("  %s: |cFFFFD900%d|r", name, ilvl))
         end
     elseif msg == "debug" then
-        local cacheCount, mapCount, hookCount = 0, 0, 0
+        local cacheCount, mapCount, hookCount, setBonusCount = 0, 0, 0, 0
         for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
         for _ in pairs(nameToIlvl) do mapCount = mapCount + 1 end
         for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
+        for _ in pairs(setBonusCache) do setBonusCount = setBonusCount + 1 end
         print("|cFF00FF00Details! iLvl Display:|r Debug v1.6:")
         print("  Ticker: " .. tostring(detailsReady))
         print("  Hooked bars: " .. hookCount)
         print("  nameToIlvl entries: " .. mapCount)
         print("  Cached GUIDs: " .. cacheCount)
+        print("  Set bonus cached: " .. setBonusCount)
         print("  Inspect queue: " .. #inspectQueue)
     else
         print("|cFF00FF00Details! iLvl Display|r v1.6 - /dilvl [on|off|color|setbonus|inspect|cache|map|debug]")
