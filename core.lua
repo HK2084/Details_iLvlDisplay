@@ -136,6 +136,10 @@ local function HookBarTextIfNeeded(bar)
     if hookedFontStrings[fontString] then return end
     hookedFontStrings[fontString] = true
 
+    -- When a new bar gets hooked, trigger a map dirty so the next tick
+    -- attempts a refresh — barCleanText will populate on Details!'s next SetText.
+    mapDirty = true
+
     hooksecurefunc(fontString, "SetText", function(self, text)
         if isOurSetText then return end
         if not db or not db.enabled then return end
