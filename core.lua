@@ -13,6 +13,7 @@ local inspectQueue = {}
 local isInspecting = false
 local detailsReady = false
 local hookedFontStrings = {} -- track which FontStrings we already hooked
+local barCleanText = {}    -- fontString -> last clean text set by Details! (never our injected text)
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 
@@ -142,6 +143,11 @@ local function HookBarTextIfNeeded(bar)
         if not text or type(text) ~= "string" then return end
         if text:find("%[%d+%]") then return end
 
+        -- Cache Details!'s clean text before we inject anything.
+        -- GetText() later returns our injected (tainted) string, so we must
+        -- never call GetText() — use barCleanText instead.
+        barCleanText[self] = text
+
         local name = ExtractName(text)
         if name and nameToIlvl[name] then
             local ilvl = nameToIlvl[name]
@@ -188,8 +194,10 @@ local function RefreshAllBarTexts()
     isOurSetText = true
     for fontString in pairs(hookedFontStrings) do
         if fontString:IsShown() then
-            local text = fontString:GetText()
-            if text and not text:find("%[%d+%]") then
+            -- Use our cached clean text — never GetText(), which returns our
+            -- injected secret string and causes taint errors on string ops.
+            local text = barCleanText[fontString]
+            if text then
                 local name = ExtractName(text)
                 if name then
                     local ilvl = nameToIlvl[name]
