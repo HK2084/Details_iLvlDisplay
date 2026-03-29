@@ -405,7 +405,7 @@ SlashCmdList["DILVL"] = function(msg)
             print(string.format("  %s: |cFFFFD900%d|r", name, ilvl))
         end
     elseif msg == "debug" then
-        print("|cFF00FF00Details! iLvl Display:|r Debug v1.3:")
+        print("|cFF00FF00Details! iLvl Display:|r Debug v1.4:")
         print("  Ticker: " .. tostring(detailsReady))
         print("  Hooked FontStrings: " .. tostring(next(hookedFontStrings) and "yes" or "none"))
         print("  nameToIlvl: " .. tostring(next(nameToIlvl) and "yes" or "empty"))
@@ -413,6 +413,6 @@ SlashCmdList["DILVL"] = function(msg)
         for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
         print("  Total hooks: " .. hookCount)
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.3 - /dilvl [on|off|color|inspect|cache|map|debug]")
+        print("|cFF00FF00Details! iLvl Display|r v1.4 - /dilvl [on|off|color|inspect|cache|map|debug]")
     end
 end

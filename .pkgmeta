@@ -1,0 +1,8 @@
+package-as: Details_iLvlDisplay
+
+ignore:
+  - .github
+  - .gitignore
+  - .pkgmeta
+  - CHANGELOG.md
+  - README.md
