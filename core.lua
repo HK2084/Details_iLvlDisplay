@@ -270,11 +270,18 @@ local function QueueGroupInspect()
     if InCombatLockdown() then return end
 
     wipe(inspectQueue)
-    local numGroup = GetNumGroupMembers()
+
+    -- GetNumGroupMembers() returns 0 in LFR/LFD instance groups.
+    -- Use GetNumGroupMembers(LE_PARTY_CATEGORY_INSTANCE) for those.
+    local isInstance = IsInRaid(LE_PARTY_CATEGORY_INSTANCE) or IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
+    local numGroup = isInstance
+        and GetNumGroupMembers(LE_PARTY_CATEGORY_INSTANCE)
+        or GetNumGroupMembers()
     if numGroup <= 1 then return end
 
-    local prefix = IsInRaid() and "raid" or "party"
-    local count = IsInRaid() and numGroup or (numGroup - 1)
+    local isRaid = IsInRaid(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid()
+    local prefix = isRaid and "raid" or "party"
+    local count = isRaid and numGroup or (numGroup - 1)
 
     for i = 1, count do
         local unit = prefix .. i
