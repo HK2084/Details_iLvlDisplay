@@ -373,6 +373,11 @@ end
 local function QueueGroupInspect()
     if InCombatLockdown() then return end
 
+    -- Reset inspect state: if a previous NotifyInspect was throttled and
+    -- INSPECT_READY never fired, isInspecting stays true and the queue
+    -- would never start. Always reset here since we're rebuilding from scratch.
+    isInspecting = false
+    pendingInspectGuid = nil
     wipe(inspectQueue)
 
     local prefix, count, numGroup = GetGroupInfo()
@@ -621,10 +626,13 @@ SlashCmdList["DILVL"] = function(msg)
             end
             local age = now - data.time
             local sb = setBonusCache[guid] and ("|cFF00FF00[" .. setBonusCache[guid] .. "]|r ") or ""
-            local ageColor = age > CACHE_EXPIRE and "|cFFFF4444" or "|cFF888888"
-            local expiredNote = age > CACHE_EXPIRE and " |cFFFF4444[EXPIRED]|r" or ""
-            print(string.format("  %s: %s|cFFFFD900%d|r iLvl %s(%ds ago)%s",
-                name, sb, data.ilvl, ageColor, age, expiredNote))
+            -- time=0 means force-expired (set by ENCOUNTER_END to trigger re-inspect)
+            local ageStr = data.time == 0 and "force-expired" or (age .. "s ago")
+            local isExpired = data.time == 0 or age > CACHE_EXPIRE
+            local ageColor = isExpired and "|cFFFF4444" or "|cFF888888"
+            local expiredNote = isExpired and " |cFFFF4444[EXPIRED]|r" or ""
+            print(string.format("  %s: %s|cFFFFD900%d|r iLvl %s(%s)%s",
+                name, sb, data.ilvl, ageColor, ageStr, expiredNote))
             count = count + 1
             if age > CACHE_EXPIRE then expired = expired + 1 end
         end
