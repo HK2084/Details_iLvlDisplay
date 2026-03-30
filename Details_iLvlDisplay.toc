@@ -1,4 +1,4 @@
-## Interface: 120000
+## Interface: 120001
 ## Title: Details! iLvl Display
 ## Notes: Shows item level and tier set bonus (2P/4P) next to player names on Details! bars
 ## Author: HK2084
