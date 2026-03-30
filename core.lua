@@ -241,8 +241,14 @@ local function HookBarTextIfNeeded(bar)
     if hookedFontStrings[fontString] then return end
     hookedFontStrings[fontString] = true
 
-    -- When a new bar gets hooked, trigger a map dirty so the next tick
-    -- attempts a refresh — barCleanText will populate on Details!'s next SetText.
+    -- Seed barCleanText immediately with the current text — safe because we
+    -- haven't injected into this FontString yet, so GetText() is clean.
+    -- Without this, RefreshAllBarTexts has nothing to work with until Details!
+    -- calls SetText again (e.g. never, if the window was just resized).
+    local currentText = fontString:GetText()
+    if currentText and type(currentText) == "string" and not currentText:find("%[%d+%]") then
+        barCleanText[fontString] = currentText
+    end
     mapDirty = true
 
     hooksecurefunc(fontString, "SetText", function(self, text)
@@ -535,7 +541,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     local fullName = name and (realm and realm ~= "") and (name .. "-" .. realm) or name
                     local setBonus = GetSetBonusForUnit(u)
                     setBonusCache[guid] = setBonus
-                    ilvlCache[guid] = {ilvl = ilvlFloor, time = time(), name = fullName or name}
+                    -- Fallback to existing cached name if UnitName() returned nil
+                    -- (unit token can go stale between queue and INSPECT_READY)
+                    local cachedName = ilvlCache[guid] and ilvlCache[guid].name
+                    ilvlCache[guid] = {ilvl = ilvlFloor, time = time(), name = fullName or name or cachedName}
                     -- Populate nameToIlvl directly — don't rely on Details! combat
                     -- actors (player may not have dealt damage/healed yet).
                     if name then
