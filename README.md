@@ -50,12 +50,16 @@ The addon inspects your group members **outside of combat** to read their gear.
 
 ## Installation
 
-1. Extract the `Details_iLvlDisplay` folder into:
+1. Download the ZIP from GitHub → **Code → Download ZIP**
+2. Extract — you'll get a folder named `Details_iLvlDisplay-master`
+3. **Rename it to `Details_iLvlDisplay`** (WoW requires the folder name to match exactly)
+4. Move the renamed folder into:
    ```
    World of Warcraft\_retail_\Interface\AddOns\
    ```
-2. Make sure **Details!** is installed and enabled
-3. Log in or `/reload`
+5. Start WoW → **AddOns** button on the character select screen → enable **Details! iLvl Display**
+6. Make sure **Details!** is also installed and enabled
+7. Log in — done. `/dilvl` to check status.
 
 ---
 
@@ -69,6 +73,10 @@ The addon inspects your group members **outside of combat** to read their gear.
 | `/dilvl setbonus` | Toggle 2P/4P display |
 | `/dilvl inspect` | Manually trigger group inspect |
 | `/dilvl debug` | Full status report (paste this when reporting a bug) |
+| `/dilvl cache` | Show all cached iLvl entries with age |
+| `/dilvl map` | Show current name→iLvl map |
+| `/dilvl tier` | Scan own tier slots and setIDs |
+| `/dilvl auras` | List own buffs with spellIDs (developer debug) |
 
 ---
 

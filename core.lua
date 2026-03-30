@@ -752,6 +752,15 @@ SlashCmdList["DILVL"] = function(msg)
         end
 
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.0 — /dilvl [on|off|color|setbonus|inspect|debug]")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.0")
+        print("  /dilvl on|off          — Enable / disable")
+        print("  /dilvl color           — Toggle color-coded iLvl")
+        print("  /dilvl setbonus        — Toggle 2P/4P display")
+        print("  /dilvl inspect         — Manually trigger group inspect")
+        print("  /dilvl debug           — Full status report (paste when reporting a bug)")
+        print("  /dilvl cache           — Show cached iLvl entries")
+        print("  /dilvl map             — Show name→iLvl map")
+        print("  /dilvl tier            — Scan own tier slots")
+        print("  /dilvl auras           — Show own auras (spellID debug)")
     end
 end
