@@ -664,7 +664,7 @@ SlashCmdList["DILVL"] = function(msg)
         local manualPause = (GetTime() - lastManualInspectTime) < 60 and "yes" or "no"
         local pending = pendingInspectGuid and pendingInspectGuid:sub(1,8) .. ".." or "none"
         local wowBuild = select(4, GetBuildInfo())
-        local detailsVer = Details and Details.cur_version or "n/a"
+        local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
         print("=== Details! iLvl Display v1.0.0 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
