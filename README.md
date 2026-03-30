@@ -1,102 +1,103 @@
 # Details! iLvl Display
 
-Shows item level and tier set bonus next to player names on the **Details! Damage Meter** bars.
+Shows **item level** and **tier set bonus** next to every player name on [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) bars.
 
-> **Requires:** [Details! Damage Meter](https://www.curseforge.com/wow/addons/details)
+Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item levels in Midnight — this addon brings that back.
 
 ---
 
-## What it looks like
+## Features
 
-```
+- Item level displayed in brackets next to each player name: `Quinroth [252]`
+- Color-coded by gear tier (see table below)
+- **2P / 4P tier set bonus** detection for Midnight Season 1 tier pieces
+- Automatic background inspection of group and raid members outside of combat
+- 2-hour persistent cache — survives `/reload`, loads instantly on re-login
+- Automatic re-inspection after boss kills (catches loot upgrades)
+- Your own iLvl and set bonus update instantly on gear swap — no inspect needed
+- Cross-realm and LFR/LFD support
+- Manual inspect protection — background queue pauses when you inspect someone
+
+---
+
+## Preview
+
+```text
 1. Quinroth     [252] [2P]     298K
-2. Tankplayer   [265] [4P]     —
-3. Healsalot    [248]          95K
+2. Tankplayer   [265] [4P]     210K
+3. Healsalot    [248]           95K
 ```
 
-- `[252]` — item level, color-coded by tier
-- `[2P]` / `[4P]` — Midnight Season 1 tier set bonus (2-piece or 4-piece)
+### iLvl Colors
 
-### Colors
-
-| Color | Meaning |
-|---|---|
-| 🟠 Orange | BiS / top tier |
-| 🟣 Purple | High end |
-| 🔵 Blue | Mid |
-| 🟢 Green | Low |
-| ⚫ Grey | Base |
+| Color | Range |
+| --- | --- |
+| Orange | BiS / top tier |
+| Purple | High end |
+| Blue | Mid |
+| Green | Low |
+| Grey | Base |
 
 ---
 
-## When does it show up?
+## Requirements
 
-The addon inspects your group members **outside of combat** to read their gear.
-
-**Expected behavior — this is not a bug:**
-
-- **First pull:** iLvl may not show yet — inspection happens after you join the group, takes a few seconds
-- **In combat:** nothing updates, tags stay as-is (WoW restricts addon actions in combat)
-- **After the first fight:** everyone should be fully tagged
-- **After a boss kill:** the group gets re-inspected automatically (someone may have gotten loot)
-- **On `/reload`:** cached data loads instantly, new players get inspected in the background
-
-**Set bonus `[2P]`/`[4P]`:**
-- Only shows for players with **Midnight Season 1** tier pieces (raid/M+ drops)
-- Your own set bonus appears immediately on load — no inspect needed
-- For other players it appears after their inspect completes
+- [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) — required
 
 ---
 
-## Installation
+## How it works
 
-1. Download the ZIP from GitHub → **Code → Download ZIP**
-2. Extract — you'll get a folder named `Details_iLvlDisplay-master`
-3. **Rename it to `Details_iLvlDisplay`** (WoW requires the folder name to match exactly)
-4. Move the renamed folder into:
-   ```
-   World of Warcraft\_retail_\Interface\AddOns\
-   ```
-5. Start WoW → **AddOns** button on the character select screen → enable **Details! iLvl Display**
-6. Make sure **Details!** is also installed and enabled
-7. Log in — done. `/dilvl` to check status.
+The addon inspects group members **outside of combat** using WoW's native inspect API. iLvl data is cached for 2 hours per player.
+
+**Expected behavior — not bugs:**
+
+- **First pull:** iLvl may not show for all players yet. Inspection runs after you join the group and takes a few seconds per player.
+- **In combat:** no updates. Tags stay as-is until combat ends.
+- **After the first fight:** everyone should be fully tagged.
+- **After a boss kill:** the whole group gets re-inspected automatically.
+- **On `/reload`:** cached data is restored instantly. Only new or uncached players get re-inspected.
+
+**Tier set bonus `[2P]` / `[4P]`:**
+
+- Only Midnight Season 1 tier pieces are detected (raid and M+ drops)
+- Crafted gear, previous expansion tier, and PvP gear are not counted
+- Your own set bonus appears immediately — other players appear after their inspect completes
 
 ---
 
 ## Slash Commands
 
 | Command | What it does |
-|---|---|
-| `/dilvl` | Show help |
-| `/dilvl on` / `off` | Enable / disable |
-| `/dilvl color` | Toggle color-coded iLvl |
-| `/dilvl setbonus` | Toggle 2P/4P display |
-| `/dilvl inspect` | Manually trigger group inspect |
-| `/dilvl debug` | Full status report (paste this when reporting a bug) |
+| --- | --- |
+| `/dilvl` | Show all commands |
+| `/dilvl on` / `off` | Enable / disable the addon |
+| `/dilvl color` | Toggle color-coded iLvl display |
+| `/dilvl setbonus` | Toggle 2P/4P tier set bonus display |
+| `/dilvl inspect` | Manually trigger a full group re-inspect |
+| `/dilvl debug` | Full status report — paste this when reporting a bug |
 | `/dilvl cache` | Show all cached iLvl entries with age |
-| `/dilvl map` | Show current name→iLvl map |
-| `/dilvl tier` | Scan own tier slots and setIDs |
-| `/dilvl auras` | List own buffs with spellIDs (developer debug) |
+| `/dilvl map` | Show current name → iLvl map |
+| `/dilvl tier` | Scan your own tier slots and set IDs |
+| `/dilvl auras` | List your current buffs with spell IDs |
 
 ---
 
-## Something looks wrong?
-
-Run `/dilvl debug` and paste the output. It contains everything needed to diagnose the issue.
-
-**Common questions:**
+## Troubleshooting
 
 **"iLvl is missing for some players"**
-→ They were out of range when the inspect ran. Wait until after the first fight, or run `/dilvl inspect` manually.
+→ They were likely out of range when the inspect ran. Wait until after the first pull, or run `/dilvl inspect` to trigger a manual re-inspect.
 
 **"Set bonus not showing"**
-→ Only Midnight Season 1 tier pieces are detected. Crafted gear, previous expansion tier, and PvP gear are not counted.
+→ Only Midnight Season 1 tier pieces are supported. Crafted, PvP, and previous-expansion gear are not counted.
 
-**"It stopped showing anything"**
-→ Run `/dilvl on` to make sure it's enabled, then `/dilvl inspect`.
+**"Nothing is showing at all"**
+→ Run `/dilvl on` to ensure the addon is enabled, then `/dilvl inspect`.
+
+**Reporting a bug:** run `/dilvl debug` and include the full output in your report.
 
 ---
 
 ## License
 
-MIT — [github.com/HK2084/Details_iLvlDisplay](https://github.com/HK2084/Details_iLvlDisplay)
+MIT — see [LICENSE](LICENSE)
