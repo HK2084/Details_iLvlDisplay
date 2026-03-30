@@ -159,10 +159,38 @@ local function RebuildNameIlvlMap()
     wipe(nameToIlvl)
     if not Details then return end
 
+    -- Populate from ilvlCache for current group members.
+    -- This covers the out-of-combat case (e.g. after a Details! resize) where
+    -- combat actors are empty but we already have inspect data in the cache.
+    if ilvlCache then
+        local prefix, count = GetGroupInfo()
+        for i = 1, count do
+            local unit = prefix .. i
+            if UnitExists(unit) and UnitIsPlayer(unit) then
+                local guid = UnitGUID(unit)
+                local cached = guid and ilvlCache[guid]
+                if cached and cached.ilvl then
+                    local name, realm = UnitName(unit)
+                    if name then
+                        local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
+                        StoreNameIlvl(name, cached.ilvl)
+                        if fullName ~= name then StoreNameIlvl(fullName, cached.ilvl) end
+                    end
+                end
+            end
+        end
+        -- Own player
+        local pguid = UnitGUID("player")
+        local pcached = pguid and ilvlCache[pguid]
+        if pcached and pcached.ilvl then
+            StoreNameIlvl(UnitName("player"), pcached.ilvl)
+        end
+    end
+
+    -- Also scan Details! combat actors (picks up players no longer in group)
     local ok, combat = pcall(Details.GetCurrentCombat, Details)
     if not ok or not combat then return end
 
-    -- Scan damage + heal actors
     for _, attrId in ipairs({DETAILS_ATTRIBUTE_DAMAGE, DETAILS_ATTRIBUTE_HEAL}) do
         local ok2, container = pcall(combat.GetContainer, combat, attrId)
         if ok2 and container then
