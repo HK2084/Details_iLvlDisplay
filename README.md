@@ -1,49 +1,94 @@
 # Details! iLvl Display
 
-A lightweight plugin for [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) that shows item level next to each player's name on the damage meter bars.
+Shows item level and tier set bonus next to player names on the **Details! Damage Meter** bars.
 
-## Features
+> **Requires:** [Details! Damage Meter](https://www.curseforge.com/wow/addons/details)
 
-- Shows item level in brackets next to every player name: `Quinroth [487]`
-- Color-coded by gear tier (orange = BiS, purple = heroic, blue = normal, green = LFR, grey = below)
-- Inspects all group/raid members automatically outside of combat
-- LRU cache (10 min) — no repeated inspects for the same player
-- Cross-realm support (strips realm suffix for matching)
-- Zero UI changes — hooks directly into Details! bar text
-- `/dilvl` slash command for control and debugging
+---
 
-## Requirements
+## What it looks like
 
-- [Details! Damage Meter](https://www.curseforge.com/wow/addons/details)
+```
+1. Quinroth     [252] [2P]     298K
+2. Tankplayer   [265] [4P]     —
+3. Healsalot    [248]          95K
+```
 
-## Optional
+- `[252]` — item level, color-coded by tier
+- `[2P]` / `[4P]` — Midnight Season 1 tier set bonus (2-piece or 4-piece)
 
-- [Quick Item Level](https://www.curseforge.com/wow/addons/quick-item-level) — not required, but pairs well
+### Colors
+
+| Color | Meaning |
+|---|---|
+| 🟠 Orange | BiS / top tier |
+| 🟣 Purple | High end |
+| 🔵 Blue | Mid |
+| 🟢 Green | Low |
+| ⚫ Grey | Base |
+
+---
+
+## When does it show up?
+
+The addon inspects your group members **outside of combat** to read their gear.
+
+**Expected behavior — this is not a bug:**
+
+- **First pull:** iLvl may not show yet — inspection happens after you join the group, takes a few seconds
+- **In combat:** nothing updates, tags stay as-is (WoW restricts addon actions in combat)
+- **After the first fight:** everyone should be fully tagged
+- **After a boss kill:** the group gets re-inspected automatically (someone may have gotten loot)
+- **On `/reload`:** cached data loads instantly, new players get inspected in the background
+
+**Set bonus `[2P]`/`[4P]`:**
+- Only shows for players with **Midnight Season 1** tier pieces (raid/M+ drops)
+- Your own set bonus appears immediately on load — no inspect needed
+- For other players it appears after their inspect completes
+
+---
 
 ## Installation
 
-1. Download the latest release
-2. Extract to `World of Warcraft\_retail_\Interface\AddOns\`
-3. Make sure **Details!** is installed and enabled
-4. Reload UI or log in
+1. Extract the `Details_iLvlDisplay` folder into:
+   ```
+   World of Warcraft\_retail_\Interface\AddOns\
+   ```
+2. Make sure **Details!** is installed and enabled
+3. Log in or `/reload`
+
+---
 
 ## Slash Commands
 
-| Command | Description |
+| Command | What it does |
 |---|---|
 | `/dilvl` | Show help |
-| `/dilvl on` | Enable |
-| `/dilvl off` | Disable |
+| `/dilvl on` / `off` | Enable / disable |
 | `/dilvl color` | Toggle color-coded iLvl |
+| `/dilvl setbonus` | Toggle 2P/4P display |
 | `/dilvl inspect` | Manually trigger group inspect |
-| `/dilvl cache` | Show cached iLvl values |
-| `/dilvl map` | Show current name→iLvl map |
-| `/dilvl debug` | Show debug info |
+| `/dilvl debug` | Full status report (paste this when reporting a bug) |
 
-## How It Works
+---
 
-On `INSPECT_READY`, the addon reads item level via `C_PaperDollInfo.GetInspectItemLevel()` and caches it per GUID. After combat ends, the cache is refreshed. A lightweight ticker (every 2s) hooks new Details! bars and injects iLvl tags into bar text — only outside combat to avoid taint.
+## Something looks wrong?
+
+Run `/dilvl debug` and paste the output. It contains everything needed to diagnose the issue.
+
+**Common questions:**
+
+**"iLvl is missing for some players"**
+→ They were out of range when the inspect ran. Wait until after the first fight, or run `/dilvl inspect` manually.
+
+**"Set bonus not showing"**
+→ Only Midnight Season 1 tier pieces are detected. Crafted gear, previous expansion tier, and PvP gear are not counted.
+
+**"It stopped showing anything"**
+→ Run `/dilvl on` to make sure it's enabled, then `/dilvl inspect`.
+
+---
 
 ## License
 
-MIT
+MIT — [github.com/HK2084/Details_iLvlDisplay](https://github.com/HK2084/Details_iLvlDisplay)

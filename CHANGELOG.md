@@ -1,69 +1,78 @@
 # Changelog
 
-## [1.7] - 2026-03-29
+Versioning: `MAJOR.MINOR.PATCH`
+- **PATCH** — bug fix, tier IDs update for new season
+- **MINOR** — new user-facing feature
+- **MAJOR** — core rewrite or new WoW expansion (API breaking)
 
-### Set bonus display (2P/4P) + API correctness + inspect window fix
+---
 
-- Feat: set bonus detection — shows `[2P]` or `[4P]` next to iLvl for players with 2+ or 4+ tier set pieces
-- Feat: `/dilvl setbonus` toggles set bonus display on/off
-- Fix: manual inspect window no longer wiped by our background inspection — queue pauses while `InspectFrame` is open, `ClearInspectPlayer()` skipped while window is visible
-- Fix: replaced `GetInventoryItemLink` + string parsing with `GetInventoryItemID` for set bonus detection — immune to TWW 12.0 item link format changes (`|cnIQ4:` prefix caused "bad argument #2 to tonumber" crash)
-- Fix: migrated `GetItemInfo` (deprecated since 10.2.6) to `C_Item.GetItemInfo`
-- Fix: `ENCOUNTER_END` now only re-inspects on boss kills (`success == 1`), not on wipes
-- Fix: set bonus tag lookup in `BuildTag` now correctly matches cross-realm players (`data.name` = "Player-Realm" vs bar name = "Player")
-- Fix: `/dilvl debug` now shows "Set bonus cached: N" count
+## [1.0.0] - 2026-03-30 — First Public Release
 
-## [1.6] - 2026-03-29
+### Features
+- Shows item level in brackets next to every player name on Details! damage meter bars: `Quinroth [252]`
+- Color-coded by gear tier (orange = BiS, purple = high, blue = normal, green = low, grey = base)
+- **2P/4P tier set bonus display** — `[2P]` or `[4P]` tag for players with Midnight Season 1 tier pieces
+- Automatic group/raid inspect outside of combat with 2-hour persistent cache
+- After boss kill: all group members re-inspected (potential loot/iLvl gains)
+- Cross-realm player support
+- LFR/LFD instance group support
+- Manual inspect protection — background queue pauses after player manually inspects someone
+- `/dilvl` slash command for control and debug
 
-### Persistent cache + smart invalidation
+### Technical
+- Set bonus detection via `C_Item.GetItemInfo` setID whitelist (Midnight S1: 1978–1990)
+- Player self-detection without inspect via `GetInventoryItemID("player", slot)`
+- `PLAYER_EQUIPMENT_CHANGED` event updates own set bonus on gear swap
+- UI-mod-agnostic manual inspect guard (`lastManualInspectTime` — works with ElvUI etc.)
 
-- Feat: iLvl cache is now persistent across sessions via SavedVariables — players you inspected in a previous session are shown immediately without re-inspecting
-- Feat: ENCOUNTER_END event — after every boss kill, all current group members are force-expired and re-inspected (players may have received loot and gained iLvl)
-- Feat: new instance detection via MapID — when you enter a new zone, all cached players not in your current group are purged so stale data from old raids doesn't linger
-- Cache TTL raised from 10min to 2h — entries older than 2h are purged on load
-- Fix: LFR/LFD instance group support — GetNumGroupMembers(LE_PARTY_CATEGORY_INSTANCE) used for instance groups where normal GetNumGroupMembers() returns 0
-- Fix: populate nameToIlvl from cache in QueueGroupInspect — UnitName() now called while unit token is still valid instead of at INSPECT_READY where it can be stale
-- Fix: wipe nameToIlvl on GROUP_ROSTER_UPDATE — unit tokens reshuffle on roster changes, old mappings discarded immediately
+---
 
-## [1.5] - 2026-03-29
+## Pre-release History (internal, 2026-03-28 – 2026-03-30)
 
-### Fixes from live testing
+Development history before public release. Preserved for reference.
 
-- Fix: players out of inspect range at dungeon start now retry up to 3 times (re-queued to end of inspect queue). Previously they were silently dropped until after the first fight.
-- Fix: taint crash "attempt to index secret string" in RefreshAllBarTexts — GetText() returns our own injected text which WoW marks as tainted. Now caching Details!'s original clean text in the SetText hook (barCleanText table) and never calling GetText() again.
-- Fix: multiple ticker bug — PLAYER_ENTERING_WORLD fires on every zone transition. Without a guard, rapid zoning within 3s created multiple C_Timer.NewTicker instances and OnTick ran multiple times per interval. Fixed with tickerStarted flag.
-- Fix: isOurSetText could get stuck as true if SetText raised an error mid-loop, permanently disabling the injection hook. Wrapped in pcall with guaranteed reset.
+<details>
+<summary>Show internal changelog (v1.1 – v1.8)</summary>
 
-## [1.4] - 2026-03-29
+### [1.8] - 2026-03-30
+- Fix: off-by-one in pcall return — was reading `expansionID` (=11) instead of `setID` (=1988) from `C_Item.GetItemInfo`
+- Fix: player self set-bonus detection (`UpdatePlayerCache` + `PLAYER_EQUIPMENT_CHANGED`)
+- Fix: re-queue players if `setBonusCache` missing even when iLvl cache is fresh (session-only cache)
+- Fix: manual inspect guard rewritten to be UI-mod-agnostic (`lastManualInspectTime` replaces `InspectFrame:IsShown()`)
+- Fix: replaced Details internal `item_level_pool` with public `Details.ilevel:GetIlvl()`
 
-### Release preparation
+### [1.7] - 2026-03-29
+- Feat: set bonus detection (2P/4P) via INSPECT_READY + tier slot scan
+- Feat: `/dilvl setbonus` toggle
+- Fix: manual inspect window no longer wiped by background queue
 
-- Added custom HK icon for addon list
-- Version strings unified across .toc and slash commands
-- Fix: `CanInspect(unit, true)` → `false` — verhindert Error-Message-Spam beim stillen Inspect-Check
-- Fix: `ClearInspectPlayer()` nach INSPECT_READY hinzugefügt — gibt Inspect-State frei, WoW monitored Spieler nicht mehr unnötig weiter
-- Fix: Inspect-Delay nach INSPECT_READY von 0.3s auf 1.0s erhöht — verhindert Server-Throttle in größeren Raids (throttled Requests feuern kein Event)
+### [1.6] - 2026-03-29
+- Feat: persistent iLvl cache via SavedVariables (2h TTL)
+- Feat: ENCOUNTER_END re-inspect after boss kills
+- Feat: MapID-based cache invalidation on zone change
 
-## [1.3] - 2026-03-29
+### [1.5] - 2026-03-29
+- Fix: inspect retry (up to 3x) for out-of-range players
+- Fix: taint crash in RefreshAllBarTexts — cache Details! clean text, never call GetText()
+- Fix: multiple ticker bug on rapid zone transitions
 
-- Fix: RefreshAllBarTexts now always runs on tick, not only when map is dirty
-- Fix: Inspect queue no longer skips players outside CanInspect range at queue time (range check deferred to inspect time)
-- Fix: mapDirty flag now set on PLAYER_REGEN_ENABLED to rebuild iLvl map after every fight
+### [1.4] - 2026-03-29
+- Fix: CanInspect(unit, false) — no error message spam
+- Fix: ClearInspectPlayer() after INSPECT_READY
+- Fix: inspect delay raised to 1.0s (server throttle)
 
-## [1.2] - 2026-03-28
+### [1.3] - 2026-03-29
+- Fix: RefreshAllBarTexts always runs on tick
+- Fix: inspect range check deferred to inspect time
+- Fix: mapDirty on PLAYER_REGEN_ENABLED
 
-- Perf: lazy map rebuild via mapDirty flag — RebuildNameIlvlMap only called when new inspect data arrives
-- Perf: early instance loop exit if Details instance not found
+### [1.2] - 2026-03-28
+- Perf: lazy map rebuild via mapDirty flag
+- Perf: early Details instance loop exit
 
-## [1.1] - 2026-03-28
+### [1.1] - 2026-03-28
+- Fix: cross-realm iLvl display
+- Fix: iLvl tags refresh after combat ends
 
-- Fix: cross-realm player iLvl display (strips realm suffix for name matching)
-- Fix: iLvl tags now refresh correctly after combat ends
-
-## [1.0] - 2026-03-28
-
-- Initial release
-- Shows item level next to player names on Details! bars
-- Color-coded by gear tier
-- Automatic group/raid inspect with 10-minute cache
-- `/dilvl` slash command
+</details>
