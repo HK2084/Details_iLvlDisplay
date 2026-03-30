@@ -15,6 +15,7 @@ local lastMapID = nil -- track zone changes to detect new instances
 local inspectQueue = {}
 local isInspecting = false
 local pendingInspectGuid = nil -- GUID we requested via NotifyInspect (nil = we didn't trigger current inspect)
+local lastManualInspectTime = 0 -- GetTime() of last INSPECT_READY we didn't trigger (ElvUI-safe guard)
 local detailsReady = false
 local hookedFontStrings = {} -- track which FontStrings we already hooked
 local barCleanText = {}    -- fontString -> last clean text set by Details! (never our injected text)
@@ -57,30 +58,42 @@ end
 ---------------------------------------------------------------
 -- Only the 5 slots that can physically hold tier pieces.
 -- Checking all 16 slots causes false positives because rings, trinkets,
--- weapons, cloaks etc. can also have non-zero setIDs in TWW (cosmetic sets,
--- crafted item families). Tier bonuses are exclusively Head/Shoulder/Chest/
--- Legs/Hands — restricting to these 5 slots eliminates false positives.
+-- weapons, cloaks etc. can also have non-zero setIDs in Midnight (cosmetic
+-- sets, crafted item families). Tier bonuses are exclusively Head/Shoulder/
+-- Chest/Legs/Hands — restricting to these 5 slots eliminates false positives.
 local TIER_SLOTS = {1, 3, 5, 7, 10} -- Head, Shoulder, Chest, Legs, Hands
+
+-- Midnight Season 1 tier setIDs per class (confirmed in-game via item tooltip).
+-- GetSetBonusText() was removed in 12.0 — hardcoded whitelist replaces it.
+-- Update this table when a new raid tier is added.
+local MIDNIGHT_TIER_SETS = {
+    [1978] = true, -- Death Knight   (Relentless Rider's Lament)
+    [1979] = true, -- Demon Hunter   (Devouring Reaver's Sheathe)
+    [1980] = true, -- Druid          (Sprouts of the Luminous Bloom)
+    [1981] = true, -- Evoker         (Livery of the Black Talon)
+    [1982] = true, -- Hunter         (Primal Sentry's Camouflage)
+    [1983] = true, -- Mage           (Voidbreaker's Accordance)
+    [1984] = true, -- Monk           (Way of Ra-den's Chosen)
+    [1985] = true, -- Paladin        (Luminant Verdict's Vestments)
+    [1986] = true, -- Priest         (Blind Oath's Burden)
+    [1987] = true, -- Rogue          (Motley of the Grim Jest)
+    [1988] = true, -- Shaman         (Mantle of the Primal Core) ← confirmed
+    [1989] = true, -- Warlock        (Reign of the Abyssal Immolator)
+    [1990] = true, -- Warrior        (Rage of the Night Ender)
+}
 
 local function GetSetBonusForUnit(unit)
     local setPieces = {} -- setID -> count
 
     for _, slotID in ipairs(TIER_SLOTS) do
         -- GetInventoryItemID returns itemID directly as a number — no link
-        -- parsing needed, immune to item link format changes (|cnIQ4: etc).
+        -- parsing needed, immune to item link format changes.
         local itemID = GetInventoryItemID(unit, slotID)
         if itemID and itemID > 0 then
             -- C_Item.GetItemInfo returns 18 values; setID is at position 16.
-            -- In TWW, setID is also assigned to item *families* (all items
-            -- from the same raid source share a setID). We must verify the
-            -- set actually has gameplay bonuses via GetSetBonusText — returns
-            -- non-nil only for real tier sets, nil for cosmetic/family sets.
-            local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
-            if ok and setID and setID > 0 then
-                local ok2, bonusText = pcall(GetSetBonusText, setID, 1)
-                if ok2 and bonusText and bonusText ~= "" then
-                    setPieces[setID] = (setPieces[setID] or 0) + 1
-                end
+            local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
+            if ok and setID and MIDNIGHT_TIER_SETS[setID] then
+                setPieces[setID] = (setPieces[setID] or 0) + 1
             end
         end
     end
@@ -107,15 +120,7 @@ local function GetIlvlForGuid(guid)
         return cached.ilvl
     end
 
-    if Details and Details.item_level_pool then
-        local data = Details.item_level_pool[guid]
-        if data and data.ilvl and data.ilvl > 0 then
-            local ilvl = math.floor(data.ilvl)
-            ilvlCache[guid] = {ilvl = ilvl, time = time()}
-            return ilvl
-        end
-    end
-
+    -- Details public API (preferred over internal item_level_pool)
     if Details and Details.ilevel and Details.ilevel.GetIlvl then
         local ok, data = pcall(Details.ilevel.GetIlvl, Details.ilevel, guid)
         if ok and data and data.ilvl and data.ilvl > 0 then
@@ -345,11 +350,13 @@ local function ProcessNextInspect()
         return
     end
 
-    -- Don't fire our background inspect while the player has the inspect
-    -- window open — NotifyInspect would override their manual inspection.
-    if InspectFrame and InspectFrame:IsShown() then
+    -- Don't fire our background inspect while the player is manually inspecting.
+    -- InspectFrame:IsShown() is unreliable with ElvUI (replaces the Blizzard frame).
+    -- Instead: if we received an INSPECT_READY we didn't trigger within the last 30s,
+    -- assume the player is still using the inspect window and wait.
+    if (GetTime() - lastManualInspectTime) < 60 then
         isInspecting = false
-        C_Timer.After(2, ProcessNextInspect) -- retry after player closes it
+        C_Timer.After(5, ProcessNextInspect)
         return
     end
 
@@ -400,8 +407,8 @@ local function QueueGroupInspect()
                         StoreNameIlvl(name, cached.ilvl)
                     end
                 end
-                if not cached or (time() - cached.time >= CACHE_EXPIRE) then
-                    -- Queue unconditionally, range check happens at inspect time
+                -- Queue if iLvl is stale OR set bonus is missing (setBonusCache is session-only)
+                if not cached or (time() - cached.time >= CACHE_EXPIRE) or setBonusCache[guid] == nil then
                     table.insert(inspectQueue, {guid = guid, unit = unit})
                 end
             end
@@ -416,12 +423,26 @@ end
 ---------------------------------------------------------------
 -- Events
 ---------------------------------------------------------------
+---------------------------------------------------------------
+-- Cache own iLvl + set bonus (no inspect needed for "player")
+---------------------------------------------------------------
+local function UpdatePlayerCache()
+    if not ilvlCache then return end
+    local _, equipped = GetAverageItemLevel()
+    if not equipped or equipped <= 0 then return end
+    local guid = UnitGUID("player")
+    if not guid then return end
+    ilvlCache[guid] = {ilvl = math.floor(equipped), time = time(), name = UnitName("player")}
+    setBonusCache[guid] = GetSetBonusForUnit("player")
+end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("INSPECT_READY")
 frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("ENCOUNTER_END")
 
 frame:SetScript("OnEvent", function(self, event, ...)
@@ -448,13 +469,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 end
             end
 
-            local _, equipped = GetAverageItemLevel()
-            if equipped and equipped > 0 then
-                local guid = UnitGUID("player")
-                if guid then
-                    ilvlCache[guid] = {ilvl = math.floor(equipped), time = now, name = UnitName("player")}
-                end
-            end
+            UpdatePlayerCache()
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
@@ -469,7 +484,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.6 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.0 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -504,13 +519,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        local _, equipped = GetAverageItemLevel()
-        if equipped and equipped > 0 then
-            local guid = UnitGUID("player")
-            if guid then
-                ilvlCache[guid] = {ilvl = math.floor(equipped), time = time(), name = UnitName("player")}
-            end
-        end
+        UpdatePlayerCache()
 
     elseif event == "INSPECT_READY" then
         local guid = ...
@@ -540,23 +549,21 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        -- Only release inspect state and continue the queue if WE triggered
-        -- this INSPECT_READY. If the player manually inspects someone (or
-        -- inspects the same target we queued), we must not:
-        --   a) call ClearInspectPlayer() — wipes their open panel
-        --   b) call ProcessNextInspect  — fires NotifyInspect 1s later,
-        --      overrides the inspect context, tooltips stop working
-        -- Additional guard: never clear while InspectFrame is visible
-        -- (race: our queue and manual inspect can target the same player).
+        -- Only advance the queue if WE triggered this INSPECT_READY.
+        -- If the player manually inspects someone, set a 60s pause so our
+        -- background queue doesn't override their inspection.
         mapDirty = true
         if guid == pendingInspectGuid then
             pendingInspectGuid = nil
-            if not (InspectFrame and InspectFrame:IsShown()) then
-                ClearInspectPlayer()
-            end
+            ClearInspectPlayer()
             C_Timer.After(1.0, ProcessNextInspect)
+        else
+            -- Manual inspect by the player — pause our queue for 30s.
+            lastManualInspectTime = GetTime()
         end
-        -- Manual inspect: data captured above, nothing else to do.
+
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        UpdatePlayerCache()
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         if db and db.enabled then
@@ -645,6 +652,7 @@ SlashCmdList["DILVL"] = function(msg)
         end
 
     elseif msg == "debug" then
+        -- Full bug-report output — user can paste this entire block
         local cacheCount, mapCount, hookCount, setBonusCount = 0, 0, 0, 0
         for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
         for _ in pairs(nameToIlvl) do mapCount = mapCount + 1 end
@@ -652,37 +660,89 @@ SlashCmdList["DILVL"] = function(msg)
         for _ in pairs(setBonusCache) do setBonusCount = setBonusCount + 1 end
 
         local prefix, count, numGroup = GetGroupInfo()
-        local inCombat = InCombatLockdown() and "|cFFFF4444yes|r" or "no"
-        local inspectFrameOpen = (InspectFrame and InspectFrame:IsShown()) and "|cFFFFD900yes|r" or "no"
-        local pending = pendingInspectGuid and ("|cFFFFD900" .. pendingInspectGuid:sub(1,8) .. "..|r") or "none"
+        local inCombat = InCombatLockdown() and "yes" or "no"
+        local manualPause = (GetTime() - lastManualInspectTime) < 60 and "yes" or "no"
+        local pending = pendingInspectGuid and pendingInspectGuid:sub(1,8) .. ".." or "none"
+        local wowBuild = select(4, GetBuildInfo())
+        local detailsVer = Details and Details.cur_version or "n/a"
 
-        print("|cFF00FF00Details! iLvl Display:|r Debug v1.7:")
-        print("  Addon: " .. (db.enabled and "|cFF00FF00ON|r" or "|cFFFF4444OFF|r")
-            .. "  Color: " .. (db.colorIlvl and "ON" or "OFF")
-            .. "  SetBonus: " .. (db.showSetBonus and "ON" or "OFF"))
-        print("  Ticker started: " .. tostring(tickerStarted)
-            .. "  Details ready: " .. tostring(detailsReady)
-            .. "  MapDirty: " .. tostring(mapDirty))
-        print("  In combat: " .. inCombat
-            .. "  InspectFrame open: " .. inspectFrameOpen)
-        print("  Group: " .. prefix .. " (" .. numGroup .. " members)")
-        print("  Hooked bars: " .. hookCount
-            .. "  nameToIlvl: " .. mapCount
-            .. "  Cache: " .. cacheCount)
-        print("  Set bonus cached: " .. setBonusCount)
-        print("  Inspect queue: " .. #inspectQueue
-            .. "  isInspecting: " .. tostring(isInspecting)
-            .. "  pending: " .. pending)
-        if #inspectQueue > 0 then
-            print("  Queue contents:")
-            for i, entry in ipairs(inspectQueue) do
-                local qname = UnitName(entry.unit) or entry.unit
-                local retries = entry.retries or 0
-                print(string.format("    [%d] %s (retries: %d)", i, qname, retries))
+        print("=== Details! iLvl Display v1.0.0 — Bug Report ===")
+        print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
+        print(string.format("  Addon: %s  Color: %s  SetBonus: %s",
+            db.enabled and "ON" or "OFF",
+            db.colorIlvl and "ON" or "OFF",
+            db.showSetBonus and "ON" or "OFF"))
+        print(string.format("  Group: %s (%d members)  InCombat: %s",
+            prefix, numGroup, inCombat))
+        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d hooks",
+            cacheCount, setBonusCount, mapCount, hookCount))
+        print(string.format("  Queue: %d pending  inspecting: %s  manualPause: %s  pending: %s",
+            #inspectQueue, tostring(isInspecting), manualPause, pending))
+        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s",
+            tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty)))
+
+        -- Cache: show all entries with iLvl + set bonus
+        if cacheCount > 0 then
+            print("  --- iLvl Cache ---")
+            local now = time()
+            for guid, data in pairs(ilvlCache) do
+                local name = data.name or "?"
+                local age = data.time == 0 and "force-exp" or (now - data.time) .. "s"
+                local sb = setBonusCache[guid] and ("[" .. setBonusCache[guid] .. "] ") or ""
+                print(string.format("    %s: %s%d iLvl (%s)", name, sb, data.ilvl, age))
+            end
+        end
+
+        -- Tier slots: own gear
+        print("  --- Own Tier Slots ---")
+        local slotNames = {[1]="Head",[3]="Shoulder",[5]="Chest",[7]="Legs",[10]="Hands"}
+        for _, slotID in ipairs(TIER_SLOTS) do
+            local itemID = GetInventoryItemID("player", slotID)
+            if itemID and itemID > 0 then
+                local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
+                local setStr = (ok and setID and setID > 0) and tostring(setID) or "nil"
+                local inList = (ok and setID and MIDNIGHT_TIER_SETS[setID]) and "YES" or "no"
+                print(string.format("    %s: itemID=%d setID=%s whitelist=%s",
+                    slotNames[slotID], itemID, setStr, inList))
+            else
+                print(string.format("    %s: empty", slotNames[slotID]))
+            end
+        end
+        print("=== end ===")
+
+
+    elseif msg == "auras" then
+        print("|cFF00FF00Details! iLvl Display:|r Player auras (looking for tier bonus):")
+        local found = 0
+        for i = 1, 60 do
+            local aura = C_UnitAuras.GetBuffDataByIndex("player", i)
+            if not aura then break end
+            local sid = aura.spellId
+            local name = aura.name or "?"
+            if sid then
+                print(string.format("  [%d] %s (spellID=%d)", i, name, sid))
+                found = found + 1
+            end
+        end
+        if found == 0 then print("  (none found or spellIds are secret)") end
+
+    elseif msg == "tier" then
+        local slotNames = {[1]="Head",[3]="Shoulder",[5]="Chest",[7]="Legs",[10]="Hands"}
+        print("|cFF00FF00Details! iLvl Display:|r Tier slot scan (player):")
+        for _, slotID in ipairs(TIER_SLOTS) do
+            local itemID = GetInventoryItemID("player", slotID)
+            if itemID and itemID > 0 then
+                local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
+                local setStr = (ok and setID and setID > 0) and tostring(setID) or "nil"
+                local inList = (ok and setID and MIDNIGHT_TIER_SETS[setID]) and "|cFF00FF00YES|r" or "|cFFFF4444no|r"
+                print(string.format("  %s (slot %d): itemID=%d  setID=%s  inWhitelist=%s",
+                    slotNames[slotID], slotID, itemID, setStr, inList))
+            else
+                print(string.format("  %s (slot %d): empty", slotNames[slotID], slotID))
             end
         end
 
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.7 - /dilvl [on|off|color|setbonus|inspect|cache|map|debug]")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.0 — /dilvl [on|off|color|setbonus|inspect|debug]")
     end
 end
