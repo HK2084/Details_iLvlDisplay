@@ -87,6 +87,19 @@ The addon inspects group members **outside of combat** using WoW's native inspec
 
 ---
 
+## ElvUI Integration (Optional)
+
+If you use ElvUI, you can display iLvl directly on party/raid frames:
+
+1. Run `/dilvl elvui` to enable the tag
+2. In ElvUI → Unit Frames → Party (or Raid/Player) → Name text, add `[dilvl]`
+3. Example name text: `[name] [dilvl]`
+
+The tag updates every 3 seconds and respects your `/dilvl color` and `/dilvl setbonus` settings.
+**No ElvUI installed? This does nothing — no errors, no performance cost.**
+
+---
+
 ## Troubleshooting
 
 **"iLvl is missing for some players"**
@@ -94,18 +107,6 @@ The addon inspects group members **outside of combat** using WoW's native inspec
 
 **"Set bonus not showing"**
 → Only Midnight Season 1 tier pieces are supported. Crafted, PvP, and previous-expansion gear are not counted.
-
-## ElvUI Integration (Optional)
-
-If you use ElvUI, you can display iLvl directly on party/raid frames:
-
-1. Run `/dilvl elvui` to enable the tag
-2. In ElvUI → Unit Frames → Party (or Raid/Player) → Name or Health text, add `[dilvl]`
-3. Example: set name text to `[name]  [dilvl]`
-
-The tag respects your `/dilvl color` and `/dilvl setbonus` settings. **No ElvUI installed? This does nothing — no errors, no performance cost.**
-
----
 
 **"iLvl disappeared after resizing the Details! window"**
 → Fixed in v1.0.1. Tags re-appear automatically within 0.3s after you stop resizing.

@@ -25,12 +25,12 @@ if not API then return end -- core.lua didn't load (shouldn't happen)
 -- Returns "" (empty string) if: ElvUI tag is disabled, unit has no cached data.
 -- Update events: fires on gear changes and after inspect completes.
 ---------------------------------------------------------------
--- Use a throttled update (2 seconds) instead of event-based:
--- INSPECT_READY is a global event with no unit argument — ElvUI's tag
--- system cannot route it to specific unit frames. A 2s poll is cheap
--- (just a cache lookup) and matches our ticker interval in core.lua.
--- UNIT_INVENTORY_CHANGED fires per-unit on gear swaps (own player instant).
-E:AddTag("dilvl", "UNIT_INVENTORY_CHANGED", function(unit)
+-- Throttle-based update (3 seconds) rather than event-based.
+-- oUF routes unit events only when frame.unit == the fired unit, so
+-- UNIT_INVENTORY_CHANGED would miss party members after our background
+-- inspect completes (inspect fires no unit event we can hook here).
+-- A 3s poll is a plain cache lookup — negligible cost even in 40-man.
+E:AddTag("dilvl", 3, function(unit)
     local db = API.GetDb()
     if not db or not db.elvuiTag then return "" end
 
