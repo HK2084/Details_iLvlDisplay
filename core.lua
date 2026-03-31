@@ -9,7 +9,8 @@ local defaults = {
 local db
 local ilvlCache -- points to db.ilvlCache after ADDON_LOADED (persistent SavedVariables)
 local setBonusCache = {} -- guid -> "2P" / "4P" / nil
-local nameToIlvl = {} -- "PlayerName" -> ilvl
+local nameToIlvl = {}    -- "PlayerName" -> ilvl
+local nameToSetBonus = {} -- "PlayerName" -> "2P" / "4P" / nil (mirrors nameToIlvl, O(1) BuildTag lookup)
 local CACHE_EXPIRE = 7200 -- 2 hours; stale entries purged on new instance or after boss
 local lastMapID = nil -- track zone changes to detect new instances
 local inspectQueue = {}
@@ -68,6 +69,8 @@ local TIER_SLOTS = {1, 3, 5, 7, 10} -- Head, Shoulder, Chest, Legs, Hands
 -- Midnight Season 1 tier setIDs per class (confirmed in-game via item tooltip).
 -- GetSetBonusText() was removed in 12.0 — hardcoded whitelist replaces it.
 -- Update this table when a new raid tier is added.
+-- PvP gear (honor/conquest) has its own setIDs outside this range — whitelist
+-- approach means they are automatically ignored regardless of their setID values.
 local MIDNIGHT_TIER_SETS = {
     [1978] = true, -- Death Knight   (Relentless Rider's Lament)
     [1979] = true, -- Demon Hunter   (Devouring Reaver's Sheathe)
@@ -157,8 +160,19 @@ local function StoreNameIlvl(name, ilvl)
     end
 end
 
+-- Mirror of StoreNameIlvl for set bonus. sb may be nil (clears entry).
+local function StoreNameBonus(name, sb)
+    if not name then return end
+    nameToSetBonus[name] = sb
+    local shortName = name:match("^([^%-]+%-[^%-]+)$") and name:match("^(.+)%-[^%-]+$")
+    if shortName and shortName ~= name then
+        nameToSetBonus[shortName] = sb
+    end
+end
+
 local function RebuildNameIlvlMap()
     wipe(nameToIlvl)
+    wipe(nameToSetBonus)
     if not Details then return end
 
     -- Populate from ilvlCache for current group members.
@@ -176,7 +190,11 @@ local function RebuildNameIlvlMap()
                     if name then
                         local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
                         StoreNameIlvl(name, cached.ilvl)
-                        if fullName ~= name then StoreNameIlvl(fullName, cached.ilvl) end
+                        StoreNameBonus(name, setBonusCache[guid])
+                        if fullName ~= name then
+                            StoreNameIlvl(fullName, cached.ilvl)
+                            StoreNameBonus(fullName, setBonusCache[guid])
+                        end
                     end
                 end
             end
@@ -185,7 +203,9 @@ local function RebuildNameIlvlMap()
         local pguid = UnitGUID("player")
         local pcached = pguid and ilvlCache[pguid]
         if pcached and pcached.ilvl then
-            StoreNameIlvl(UnitName("player"), pcached.ilvl)
+            local pname = UnitName("player")
+            StoreNameIlvl(pname, pcached.ilvl)
+            StoreNameBonus(pname, setBonusCache[pguid])
         end
     end
 
@@ -200,8 +220,15 @@ local function RebuildNameIlvlMap()
                 if actor:IsPlayer() and actor.serial then
                     local ilvl = GetIlvlForGuid(actor.serial)
                     if ilvl then
+                        -- Patch name into cache entry if Details! API wrote it without one
+                        local entry = ilvlCache[actor.serial]
+                        if entry and not entry.name then
+                            entry.name = actor.displayName or actor.nome
+                        end
                         StoreNameIlvl(actor.displayName, ilvl)
                         StoreNameIlvl(actor.nome, ilvl)
+                        StoreNameBonus(actor.displayName, setBonusCache[actor.serial])
+                        StoreNameBonus(actor.nome, setBonusCache[actor.serial])
                     end
                 end
             end
@@ -241,19 +268,12 @@ local function BuildTag(name)
         tag = " [" .. ilvl .. "]"
     end
 
-    -- Append set bonus if we have it (look up guid via ilvlCache name)
-    -- data.name may be "Player-Realm" (cross-realm) while name from the bar
-    -- is just "Player" — so compare both full and short name.
+    -- O(1) set bonus lookup — nameToSetBonus is kept in sync with nameToIlvl.
+    -- Previously this iterated the full ilvlCache (O(N) per bar, O(N²) in 40-man raids).
     if db.showSetBonus then
-        for guid, data in pairs(ilvlCache) do
-            local storedShort = data.name and (data.name:match("^(.+)%-[^%-]+$") or data.name)
-            if data.name == name or storedShort == name then
-                local sb = setBonusCache[guid]
-                if sb then
-                    tag = tag .. " |cFF00FF00[" .. sb .. "]|r"
-                end
-                break
-            end
+        local sb = nameToSetBonus[name]
+        if sb then
+            tag = tag .. " |cFF00FF00[" .. sb .. "]|r"
         end
     end
 
@@ -463,7 +483,7 @@ local function QueueGroupInspect()
         if UnitExists(unit) and UnitIsPlayer(unit) and not UnitIsUnit(unit, "player") then
             local guid = UnitGUID(unit)
             if guid then
-                -- Pre-populate nameToIlvl from cache now while we have the unit.
+                -- Pre-populate nameToIlvl/nameToSetBonus from cache now while we have the unit.
                 -- UnitName() is reliable here; at INSPECT_READY the unit token
                 -- may already be stale if the player moved or reloaded.
                 local cached = ilvlCache[guid]
@@ -473,6 +493,8 @@ local function QueueGroupInspect()
                         local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
                         StoreNameIlvl(fullName, cached.ilvl)
                         StoreNameIlvl(name, cached.ilvl)
+                        StoreNameBonus(fullName, setBonusCache[guid])
+                        StoreNameBonus(name, setBonusCache[guid])
                     end
                 end
                 -- Queue if iLvl is stale OR set bonus is missing (setBonusCache is session-only)
@@ -489,9 +511,6 @@ local function QueueGroupInspect()
 end
 
 ---------------------------------------------------------------
--- Events
----------------------------------------------------------------
----------------------------------------------------------------
 -- Cache own iLvl + set bonus (no inspect needed for "player")
 ---------------------------------------------------------------
 local function UpdatePlayerCache()
@@ -500,8 +519,11 @@ local function UpdatePlayerCache()
     if not equipped or equipped <= 0 then return end
     local guid = UnitGUID("player")
     if not guid then return end
-    ilvlCache[guid] = {ilvl = math.floor(equipped), time = time(), name = UnitName("player")}
-    setBonusCache[guid] = GetSetBonusForUnit("player")
+    local pname = UnitName("player")
+    local sb = GetSetBonusForUnit("player")
+    ilvlCache[guid] = {ilvl = math.floor(equipped), time = time(), name = pname}
+    setBonusCache[guid] = sb
+    if pname then StoreNameBonus(pname, sb) end
 end
 
 local frame = CreateFrame("Frame")
@@ -581,6 +603,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                         end
                     end
                     wipe(nameToIlvl)
+                    wipe(nameToSetBonus)
                     mapDirty = true
                 end
                 lastMapID = currentMap
@@ -611,8 +634,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     -- actors (player may not have dealt damage/healed yet).
                     if name then
                         StoreNameIlvl(name, ilvlFloor)
+                        StoreNameBonus(name, setBonus)
                         if fullName and fullName ~= name then
                             StoreNameIlvl(fullName, ilvlFloor)
+                            StoreNameBonus(fullName, setBonus)
                         end
                     end
                 end
@@ -659,10 +684,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "GROUP_ROSTER_UPDATE" then
         if not InCombatLockdown() and db and db.enabled then
-            -- Wipe nameToIlvl immediately — unit tokens reshuffle on roster
+            -- Wipe name maps immediately — unit tokens reshuffle on roster
             -- changes so old name->iLvl mappings are unreliable until we
             -- re-inspect and re-populate from fresh unit tokens.
             wipe(nameToIlvl)
+            wipe(nameToSetBonus)
             mapDirty = true
             C_Timer.After(3, QueueGroupInspect)
         end
@@ -724,11 +750,12 @@ SlashCmdList["DILVL"] = function(msg)
 
     elseif msg == "debug" then
         -- Full bug-report output — user can paste this entire block
-        local cacheCount, mapCount, hookCount, setBonusCount = 0, 0, 0, 0
+        local cacheCount, mapCount, hookCount, setBonusCount, bonusMapCount = 0, 0, 0, 0, 0
         for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
         for _ in pairs(nameToIlvl) do mapCount = mapCount + 1 end
         for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
         for _ in pairs(setBonusCache) do setBonusCount = setBonusCount + 1 end
+        for _ in pairs(nameToSetBonus) do bonusMapCount = bonusMapCount + 1 end
 
         local prefix, count, numGroup = GetGroupInfo()
         local inCombat = InCombatLockdown() and "yes" or "no"
@@ -745,8 +772,8 @@ SlashCmdList["DILVL"] = function(msg)
             db.showSetBonus and "ON" or "OFF"))
         print(string.format("  Group: %s (%d members)  InCombat: %s",
             prefix, numGroup, inCombat))
-        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d hooks",
-            cacheCount, setBonusCount, mapCount, hookCount))
+        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d bonusMap  %d hooks",
+            cacheCount, setBonusCount, mapCount, bonusMapCount, hookCount))
         print(string.format("  Queue: %d pending  inspecting: %s  manualPause: %s  pending: %s",
             #inspectQueue, tostring(isInspecting), manualPause, pending))
         print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s",
