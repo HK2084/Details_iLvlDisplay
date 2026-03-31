@@ -18,6 +18,8 @@ local pendingInspectGuid = nil -- GUID we requested via NotifyInspect (nil = we 
 local lastManualInspectTime = 0 -- GetTime() of last INSPECT_READY we didn't trigger (ElvUI-safe guard)
 local detailsReady = false
 local hookedFontStrings = {} -- track which FontStrings we already hooked
+local hookedInstances = {}   -- track which Details! instance frames have OnSizeChanged hooked
+local HookInstanceResize     -- forward declaration (assigned after OnDetailsResize is defined)
 local barCleanText = {}    -- fontString -> last clean text set by Details! (never our injected text)
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
@@ -284,7 +286,7 @@ local function HookBarTextIfNeeded(bar)
         if not db or not db.enabled then return end
         -- Skip during combat - text is secret/tainted AND we don't need it mid-fight
         if InCombatLockdown() then return end
-        if not text or type(text) ~= "string" then return end
+        if not text or type(text) ~= "string" or text:match("^%s*$") then return end
         if text:find("%[%d+%]") then return end
 
         -- Cache Details!'s clean text before we inject anything.
@@ -313,6 +315,8 @@ local function HookAllBars()
     for instanceId = 1, 10 do
         local ok, instance = pcall(Details.GetInstance, Details, instanceId)
         if not ok or not instance then break end
+
+        HookInstanceResize(instance) -- hook resize event on the Details! window
 
         local bars = instance.barras
         if not bars then break end
@@ -355,6 +359,36 @@ local function RefreshAllBarTexts()
         end
     end
     isOurSetText = false
+end
+
+---------------------------------------------------------------
+-- React to Details! window resize: re-hook bars + refresh immediately.
+-- Debounced so drag-resize doesn't spam rebuilds while dragging.
+-- This is the "permanent hook" for resize: fires whenever Details! resizes
+-- its window, regardless of whether it calls SetText again.
+---------------------------------------------------------------
+local resizeDebounce = nil
+local function OnDetailsResize()
+    if resizeDebounce then
+        resizeDebounce:Cancel()
+    end
+    resizeDebounce = C_Timer.NewTimer(0.3, function()
+        resizeDebounce = nil
+        if not db or not db.enabled then return end
+        mapDirty = true
+        HookAllBars()         -- pick up any new bar FontStrings created on resize
+        RebuildNameIlvlMap()  -- re-populate name->ilvl from cache (cache is intact)
+        RefreshAllBarTexts()  -- inject tags immediately, don't wait for next ticker
+    end)
+end
+
+-- Details! instance frames expose their main window as baseFrame (preferred) or frame.
+-- We hook OnSizeChanged once per instance so resize triggers an immediate refresh.
+HookInstanceResize = function(instance)
+    local frame = instance.baseFrame or instance.frame
+    if not frame or hookedInstances[frame] then return end
+    hookedInstances[frame] = true
+    pcall(frame.HookScript, frame, "OnSizeChanged", OnDetailsResize)
 end
 
 ---------------------------------------------------------------
