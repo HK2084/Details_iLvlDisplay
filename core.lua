@@ -26,6 +26,7 @@ local barCleanText = {}    -- fontString -> last clean text set by Details! (nev
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- guard against multiple tickers on repeated PLAYER_ENTERING_WORLD
+local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI is built
 
 ---------------------------------------------------------------
 -- Group info helper (handles normal party/raid + LFR/LFD)
@@ -176,10 +177,15 @@ local function RebuildNameIlvlMap()
     wipe(nameToSetBonus)
     if not Details then return end
 
-    -- Populate from ilvlCache for current group members.
-    -- This covers the out-of-combat case (e.g. after a Details! resize) where
-    -- combat actors are empty but we already have inspect data in the cache.
+    -- Populate from ilvlCache.
+    -- Primary: use live unit tokens (reliable names + realms).
+    -- Fallback: iterate cache directly for players no longer in group
+    -- (e.g. left after dungeon, or solo viewing old segment) — name
+    -- field was stored at inspect time so it's still valid.
     if ilvlCache then
+        local seenGuids = {}
+
+        -- Live unit tokens first (most reliable)
         local prefix, count = GetGroupInfo()
         for i = 1, count do
             local unit = prefix .. i
@@ -187,6 +193,7 @@ local function RebuildNameIlvlMap()
                 local guid = UnitGUID(unit)
                 local cached = guid and ilvlCache[guid]
                 if cached and cached.ilvl then
+                    seenGuids[guid] = true
                     local name, realm = UnitName(unit)
                     if name then
                         local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
@@ -200,6 +207,15 @@ local function RebuildNameIlvlMap()
                 end
             end
         end
+
+        -- Fallback: cache entries whose unit token is gone (left group, solo, etc.)
+        for guid, cached in pairs(ilvlCache) do
+            if not seenGuids[guid] and cached.ilvl and cached.name then
+                StoreNameIlvl(cached.name, cached.ilvl)
+                StoreNameBonus(cached.name, setBonusCache[guid])
+            end
+        end
+
         -- Own player
         local pguid = UnitGUID("player")
         local pcached = pguid and ilvlCache[pguid]
@@ -576,7 +592,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.5 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.6 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -768,7 +784,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.1.5 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.1.6 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Color: %s  SetBonus: %s",
             db.enabled and "ON" or "OFF",
@@ -851,7 +867,7 @@ SlashCmdList["DILVL"] = function(msg)
         db.elvuiTag = false
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.1.5")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.1.6")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
@@ -888,7 +904,8 @@ Details_iLvlDisplayAPI = {
 }
 
 -- Internal helper — call once after any cache write that should update UI.
-local function NotifyElvUI()
+-- Forward-declared at top of file so event handlers can reference it.
+NotifyElvUI = function()
     local cb = Details_iLvlDisplayAPI.OnDataChanged
     if cb then pcall(cb) end
 end

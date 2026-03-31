@@ -2,7 +2,7 @@
 ## Title: Details! iLvl Display
 ## Notes: Shows item level and tier set bonus (2P/4P) next to player names on Details! bars
 ## Author: HK2084
-## Version: 1.0.1.5
+## Version: 1.0.1.6
 ## IconTexture: Interface\AddOns\Details_iLvlDisplay\icon
 ## Dependencies: Details
 ## OptionalDeps: QuickItemLevel, ElvUI
