@@ -17,6 +17,7 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 - Your own iLvl and set bonus update instantly on gear swap — no inspect needed
 - Cross-realm and LFR/LFD support
 - Manual inspect protection — background queue pauses when you inspect someone
+- iLvl tags re-appear immediately after resizing the Details! window
 
 ---
 
@@ -90,6 +91,9 @@ The addon inspects group members **outside of combat** using WoW's native inspec
 
 **"Set bonus not showing"**
 → Only Midnight Season 1 tier pieces are supported. Crafted, PvP, and previous-expansion gear are not counted.
+
+**"iLvl disappeared after resizing the Details! window"**
+→ Fixed in v1.0.1. Tags re-appear automatically within 0.3s after you stop resizing.
 
 **"Nothing is showing at all"**
 → Run `/dilvl on` to ensure the addon is enabled, then `/dilvl inspect`.
