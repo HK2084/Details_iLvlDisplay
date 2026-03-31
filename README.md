@@ -18,6 +18,7 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 - Cross-realm and LFR/LFD support
 - Manual inspect protection — background queue pauses when you inspect someone
 - iLvl tags re-appear immediately after resizing the Details! window
+- Optional **ElvUI integration**: adds a `[dilvl]` tag for party/raid unit frames
 
 ---
 
@@ -80,6 +81,8 @@ The addon inspects group members **outside of combat** using WoW's native inspec
 | `/dilvl cache` | Show all cached iLvl entries with age |
 | `/dilvl map` | Show current name → iLvl map |
 | `/dilvl tier` | Scan your own tier slots and set IDs |
+| `/dilvl elvui on` | Enable ElvUI `[dilvl]` party frame tag |
+| `/dilvl elvui off` | Disable ElvUI `[dilvl]` party frame tag |
 | `/dilvl auras` | List your current buffs with spell IDs |
 
 ---
@@ -91,6 +94,18 @@ The addon inspects group members **outside of combat** using WoW's native inspec
 
 **"Set bonus not showing"**
 → Only Midnight Season 1 tier pieces are supported. Crafted, PvP, and previous-expansion gear are not counted.
+
+## ElvUI Integration (Optional)
+
+If you use ElvUI, you can display iLvl directly on party/raid frames:
+
+1. Run `/dilvl elvui` to enable the tag
+2. In ElvUI → Unit Frames → Party (or Raid/Player) → Name or Health text, add `[dilvl]`
+3. Example: set name text to `[name]  [dilvl]`
+
+The tag respects your `/dilvl color` and `/dilvl setbonus` settings. **No ElvUI installed? This does nothing — no errors, no performance cost.**
+
+---
 
 **"iLvl disappeared after resizing the Details! window"**
 → Fixed in v1.0.1. Tags re-appear automatically within 0.3s after you stop resizing.

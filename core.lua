@@ -4,6 +4,7 @@ local defaults = {
     enabled = true,
     colorIlvl = true,
     showSetBonus = true,
+    elvuiTag = false, -- opt-in: enable via /dilvl elvui (requires ElvUI)
 }
 
 local db
@@ -840,11 +841,18 @@ SlashCmdList["DILVL"] = function(msg)
             end
         end
 
+    elseif msg == "elvui" or msg == "elvui on" then
+        db.elvuiTag = true
+        print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r enabled. Add it to your ElvUI name/health tag.")
+    elseif msg == "elvui off" then
+        db.elvuiTag = false
+        print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
         print("|cFF00FF00Details! iLvl Display|r v1.0.1.1")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
+        print("  /dilvl elvui on|off    — Toggle ElvUI [dilvl] party frame tag")
         print("  /dilvl inspect         — Manually trigger group inspect")
         print("  /dilvl debug           — Full status report (paste when reporting a bug)")
         print("  /dilvl cache           — Show cached iLvl entries")
@@ -853,3 +861,20 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl auras           — Show own auras (spellID debug)")
     end
 end
+
+---------------------------------------------------------------
+-- Public API — used by elvui_tags.lua (and future integrations)
+-- Keeps inter-file coupling minimal: only expose what's needed.
+---------------------------------------------------------------
+Details_iLvlDisplayAPI = {
+    -- Returns cached iLvl entry + set bonus string for a GUID.
+    -- Both may be nil if the player hasn't been inspected yet.
+    GetCacheData = function(guid)
+        if not guid or not ilvlCache then return nil, nil end
+        return ilvlCache[guid], setBonusCache[guid]
+    end,
+    -- Shared color function so ElvUI tag uses the same tier colors.
+    GetIlvlColor = GetIlvlColor,
+    -- Live db reference — elvui_tags.lua checks db.elvuiTag at call time.
+    GetDb = function() return db end,
+}

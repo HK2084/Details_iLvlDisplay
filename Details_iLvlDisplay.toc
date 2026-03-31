@@ -5,7 +5,8 @@
 ## Version: 1.0.1.1
 ## IconTexture: Interface\AddOns\Details_iLvlDisplay\icon
 ## Dependencies: Details
-## OptionalDeps: QuickItemLevel
+## OptionalDeps: QuickItemLevel, ElvUI
 ## SavedVariables: Details_iLvlDisplayDB
 
 core.lua
+elvui_tags.lua
