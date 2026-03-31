@@ -6,10 +6,16 @@
 -- does nothing — no errors, no prints, no performance cost.
 --
 -- USAGE (after enabling via /dilvl elvui):
---   In ElvUI → Unit Frames → Party → Name/Health text, add: [dilvl]
---   Example name text: "[name]  [dilvl]"
+--   In ElvUI → Unit Frames → Party/Raid/Player → Name text, add: [dilvl]
+--   Example name text: "[name] [dilvl]"
 --
 -- TOGGLE: /dilvl elvui on|off  (saved between sessions)
+--
+-- UPDATE STRATEGY: event-driven, no polling timer.
+-- core.lua calls API.OnDataChanged after: INSPECT_READY, gear swap,
+-- GROUP_ROSTER_UPDATE. This calls Tags:RefreshMethods("dilvl") which
+-- re-renders all frames using [dilvl] immediately.
+-- During 3h farming with no group changes: zero extra calls.
 
 if not ElvUI then return end -- no ElvUI installed → silent exit
 
@@ -20,16 +26,11 @@ local API = Details_iLvlDisplayAPI
 if not API then return end -- core.lua didn't load (shouldn't happen)
 
 ---------------------------------------------------------------
--- Tag: [dilvl]
--- Shows colored iLvl + set bonus for the unit, e.g. "|cFF0070DD[252]|r [2P]"
--- Returns "" (empty string) if: ElvUI tag is disabled, unit has no cached data.
--- Update events: fires on gear changes and after inspect completes.
+-- Tag function: [dilvl]
+-- Pure cache lookup — no API calls, runs only when core.lua signals
+-- a data change or when the frame is first shown.
 ---------------------------------------------------------------
--- 30s throttle: iLvl changes at most once per boss kill.
--- oUF cannot route INSPECT_READY (no unit arg) to specific frames,
--- so event-based updates for party members are not possible here.
--- 30s is plenty — nobody watches iLvl in real time during a fight.
-E:AddTag("dilvl", 30, function(unit)
+E:AddTag("dilvl", "UNIT_INVENTORY_CHANGED", function(unit)
     local db = API.GetDb()
     if not db or not db.elvuiTag then return "" end
 
@@ -56,3 +57,13 @@ end)
 E:AddTagInfo("dilvl", "Details! iLvl Display",
     "Shows item level and tier set bonus. Enable with /dilvl elvui. " ..
     "Respects your /dilvl color and setbonus settings.")
+
+---------------------------------------------------------------
+-- Register callback: core.lua calls API.OnDataChanged whenever
+-- cached iLvl data changes. We respond by calling RefreshMethods
+-- which re-renders every visible frame using [dilvl] immediately.
+-- This is the official oUF API for forcing a tag re-evaluation.
+---------------------------------------------------------------
+API.OnDataChanged = function()
+    pcall(E.oUF.Tags.RefreshMethods, E.oUF.Tags, "dilvl")
+end

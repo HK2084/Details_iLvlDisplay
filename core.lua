@@ -525,6 +525,7 @@ local function UpdatePlayerCache()
     ilvlCache[guid] = {ilvl = math.floor(equipped), time = time(), name = pname}
     setBonusCache[guid] = sb
     if pname then StoreNameBonus(pname, sb) end
+    NotifyElvUI()
 end
 
 local frame = CreateFrame("Frame")
@@ -575,7 +576,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.4 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.5 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -650,6 +651,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- If the player manually inspects someone, set a 60s pause so our
         -- background queue doesn't override their inspection.
         mapDirty = true
+        NotifyElvUI()
         if guid == pendingInspectGuid then
             pendingInspectGuid = nil
             ClearInspectPlayer()
@@ -691,6 +693,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
             wipe(nameToIlvl)
             wipe(nameToSetBonus)
             mapDirty = true
+            NotifyElvUI()
             C_Timer.After(3, QueueGroupInspect)
         end
     end
@@ -765,7 +768,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.1.4 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.1.5 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Color: %s  SetBonus: %s",
             db.enabled and "ON" or "OFF",
@@ -848,7 +851,7 @@ SlashCmdList["DILVL"] = function(msg)
         db.elvuiTag = false
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.1.4")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.1.5")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
@@ -877,4 +880,15 @@ Details_iLvlDisplayAPI = {
     GetIlvlColor = GetIlvlColor,
     -- Live db reference — elvui_tags.lua checks db.elvuiTag at call time.
     GetDb = function() return db end,
+    -- Callback set by elvui_tags.lua — called whenever cached data changes.
+    -- Fires on: INSPECT_READY, UpdatePlayerCache, GROUP_ROSTER_UPDATE.
+    -- elvui_tags.lua uses this to call Tags:RefreshMethods("dilvl") so
+    -- frames update immediately instead of waiting for a poll timer.
+    OnDataChanged = nil,
 }
+
+-- Internal helper — call once after any cache write that should update UI.
+local function NotifyElvUI()
+    local cb = Details_iLvlDisplayAPI.OnDataChanged
+    if cb then pcall(cb) end
+end

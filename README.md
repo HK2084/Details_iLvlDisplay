@@ -95,7 +95,7 @@ If you use ElvUI, you can display iLvl directly on party/raid frames:
 2. In ElvUI → Unit Frames → Party (or Raid/Player) → Name text, add `[dilvl]`
 3. Example name text: `[name] [dilvl]`
 
-The tag updates every 30 seconds and respects your `/dilvl color` and `/dilvl setbonus` settings.
+The tag updates instantly when inspect data arrives, on gear swaps, or when the group changes — no polling timer. Zero performance cost during idle time.
 **No ElvUI installed? This does nothing — no errors, no performance cost.**
 
 ---
