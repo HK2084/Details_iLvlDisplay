@@ -574,7 +574,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.1 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.1 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -764,7 +764,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.1 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.1.1 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Color: %s  SetBonus: %s",
             db.enabled and "ON" or "OFF",
@@ -841,7 +841,7 @@ SlashCmdList["DILVL"] = function(msg)
         end
 
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.1")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.1.1")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
