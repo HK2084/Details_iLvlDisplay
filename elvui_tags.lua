@@ -25,7 +25,12 @@ if not API then return end -- core.lua didn't load (shouldn't happen)
 -- Returns "" (empty string) if: ElvUI tag is disabled, unit has no cached data.
 -- Update events: fires on gear changes and after inspect completes.
 ---------------------------------------------------------------
-E:AddTag("dilvl", "UNIT_INVENTORY_CHANGED INSPECT_READY", function(unit)
+-- Use a throttled update (2 seconds) instead of event-based:
+-- INSPECT_READY is a global event with no unit argument — ElvUI's tag
+-- system cannot route it to specific unit frames. A 2s poll is cheap
+-- (just a cache lookup) and matches our ticker interval in core.lua.
+-- UNIT_INVENTORY_CHANGED fires per-unit on gear swaps (own player instant).
+E:AddTag("dilvl", "UNIT_INVENTORY_CHANGED", function(unit)
     local db = API.GetDb()
     if not db or not db.elvuiTag then return "" end
 
@@ -50,6 +55,5 @@ E:AddTag("dilvl", "UNIT_INVENTORY_CHANGED INSPECT_READY", function(unit)
 end)
 
 E:AddTagInfo("dilvl", "Details! iLvl Display",
-    "Shows item level and tier set bonus from Details! iLvl Display. " ..
-    "Enable/disable with /dilvl elvui on|off. " ..
-    "Respects your color and set bonus settings.")
+    "Shows item level and tier set bonus. Enable with /dilvl elvui. " ..
+    "Respects your /dilvl color and setbonus settings.")
