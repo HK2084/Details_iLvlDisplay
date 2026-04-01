@@ -322,30 +322,37 @@ local function HookBarTextIfNeeded(bar)
     hooksecurefunc(fontString, "SetText", function(self, text)
         if isOurSetText then return end
         if not db or not db.enabled then return end
-        if not text or type(text) ~= "string" or text:match("^%s*$") then return end
-        if text:find("%[%d+%]") then return end
+        -- Details! Itemlevelfinder passes "secret string" values to SetText.
+        -- type() returns "string" for them but :match()/:find() error on line 325.
+        -- Wrap everything in pcall to silently skip secret values.
+        pcall(function()
+            if not text or type(text) ~= "string" or text:match("^%s*$") then return end
+            if text:find("%[%d+%]") then return end
 
-        -- Cache Details!'s clean text before we inject anything.
-        -- GetText() later returns our injected (tainted) string, so we must
-        -- never call GetText() — use barCleanText instead.
-        -- IMPORTANT: update even during combat so post-combat RefreshAllBarTexts
-        -- sees the CURRENT player names, not pre-fight stale data.
-        barCleanText[self] = text
+            -- Cache Details!'s clean text before we inject anything.
+            -- GetText() later returns our injected (tainted) string, so we must
+            -- never call GetText() — use barCleanText instead.
+            -- IMPORTANT: update even during combat so post-combat RefreshAllBarTexts
+            -- sees the CURRENT player names, not pre-fight stale data.
+            barCleanText[self] = text
 
-        if not db.showInDetails then return end
+            if not db.showInDetails then return end
 
-        -- Don't inject during combat (taint with secure UI elements)
-        if InCombatLockdown() then return end
+            -- Don't inject during combat (taint with secure UI elements)
+            if InCombatLockdown() then return end
 
-        local name = ExtractName(text)
-        if name then
-            local tag = BuildTag(name)
-            if tag then
-                isOurSetText = true
-                self:SetText(text .. tag)
-                isOurSetText = false
+            local name = ExtractName(text)
+            if name then
+                local tag = BuildTag(name)
+                if tag then
+                    isOurSetText = true
+                    self:SetText(text .. tag)
+                    isOurSetText = false
+                end
             end
-        end
+        end)
+        -- Safety: reset guard in case pcall swallowed an error mid-injection
+        isOurSetText = false
     end)
 
     -- 12.0.1 added FontString:ClearText() — hook it so barCleanText doesn't
@@ -607,7 +614,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.8 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.9 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -826,7 +833,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.1.8 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.1.9 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Color: %s  SetBonus: %s",
             db.enabled and "ON" or "OFF",
@@ -909,7 +916,7 @@ SlashCmdList["DILVL"] = function(msg)
         db.elvuiTag = false
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.1.8")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.1.9")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
