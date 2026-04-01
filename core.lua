@@ -614,7 +614,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.9 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.0 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -748,6 +748,21 @@ frame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 ---------------------------------------------------------------
+-- Remove injected iLvl tags from all visible bars
+---------------------------------------------------------------
+local function ClearAllBarTags()
+    isOurSetText = true
+    for fontString, cleanText in pairs(barCleanText) do
+        pcall(function()
+            if fontString:IsShown() and cleanText then
+                fontString:SetText(cleanText)
+            end
+        end)
+    end
+    isOurSetText = false
+end
+
+---------------------------------------------------------------
 -- Slash command
 ---------------------------------------------------------------
 SLASH_DILVL1 = "/dilvl"
@@ -756,29 +771,28 @@ SlashCmdList["DILVL"] = function(msg)
 
     if msg == "on" then
         db.enabled = true
+        RefreshAllBarTexts()
+        NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r Enabled")
     elseif msg == "off" then
         db.enabled = false
+        ClearAllBarTags()
+        NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r Disabled")
     elseif msg == "color" then
         db.colorIlvl = not db.colorIlvl
+        RefreshAllBarTexts()
+        NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r Color " .. (db.colorIlvl and "ON" or "OFF"))
     elseif msg == "setbonus" then
         db.showSetBonus = not db.showSetBonus
+        RefreshAllBarTexts()
+        NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r Set Bonus " .. (db.showSetBonus and "ON" or "OFF"))
     elseif msg == "details" then
         db.showInDetails = not db.showInDetails
         if not db.showInDetails then
-            -- Remove injected tags: reset each bar to its clean text
-            isOurSetText = true
-            for fontString, cleanText in pairs(barCleanText) do
-                pcall(function()
-                    if fontString:IsShown() and cleanText then
-                        fontString:SetText(cleanText)
-                    end
-                end)
-            end
-            isOurSetText = false
+            ClearAllBarTags()
         else
             RefreshAllBarTexts()
         end
@@ -833,7 +847,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.1.9 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.2.0 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s",
             db.enabled and "ON" or "OFF",
@@ -914,12 +928,14 @@ SlashCmdList["DILVL"] = function(msg)
 
     elseif msg == "elvui" or msg == "elvui on" then
         db.elvuiTag = true
+        NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r enabled. Add it to your ElvUI name/health tag.")
     elseif msg == "elvui off" then
         db.elvuiTag = false
+        NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.1.9")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.2.0")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
