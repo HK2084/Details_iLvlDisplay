@@ -214,6 +214,13 @@ local function RebuildNameIlvlMap()
             if not seenGuids[guid] and cached.ilvl and cached.name then
                 StoreNameIlvl(cached.name, cached.ilvl)
                 StoreNameBonus(cached.name, setBonusCache[guid])
+                -- Cross-realm: cached.name may be "Name-Realm". Also store short
+                -- name so Details! bars (which show only "Name") still match.
+                local shortName = cached.name:match("^([^%-]+)%-")
+                if shortName then
+                    StoreNameIlvl(shortName, cached.ilvl)
+                    StoreNameBonus(shortName, setBonusCache[guid])
+                end
             end
         end
 
