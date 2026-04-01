@@ -835,8 +835,11 @@ SlashCmdList["DILVL"] = function(msg)
 
         print("=== Details! iLvl Display v1.0.1.9 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
-        print(string.format("  Addon: %s  Color: %s  SetBonus: %s",
+        print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s",
             db.enabled and "ON" or "OFF",
+            db.showInDetails and "ON" or "OFF",
+            db.elvuiTag and "ON" or "OFF"))
+        print(string.format("  Color: %s  SetBonus: %s",
             db.colorIlvl and "ON" or "OFF",
             db.showSetBonus and "ON" or "OFF"))
         print(string.format("  Group: %s (%d members)  InCombat: %s",
