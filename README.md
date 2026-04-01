@@ -8,16 +8,17 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 
 ## Features
 
-- Item level displayed in brackets next to each player name: `Quinroth [252]`
+- Item level displayed in brackets next to each player name: `Quinroth [254]`
 - Color-coded by gear tier (see table below)
 - **2P / 4P tier set bonus** detection for Midnight Season 1 tier pieces
 - Automatic background inspection of group and raid members outside of combat
 - 2-hour persistent cache — survives `/reload`, loads instantly on re-login
 - Automatic re-inspection after boss kills (catches loot upgrades)
 - Your own iLvl and set bonus update instantly on gear swap — no inspect needed
-- Cross-realm and LFR/LFD support
+- Cross-realm, LFR and LFD support (up to 40 players)
 - Manual inspect protection — background queue pauses when you inspect someone
 - iLvl tags re-appear immediately after resizing the Details! window
+- **Independent toggles** — enable Details! bars and/or ElvUI frames separately
 - Optional **ElvUI integration**: adds a `[dilvl]` tag for party/raid unit frames
 
 ---
@@ -44,7 +45,10 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 
 ## Requirements
 
-- [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) — required
+- [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) — optional (bars feature only)
+- [ElvUI](https://www.tukui.org/download.php?ui=elvui) — optional (party frame tag only)
+
+The addon works without either — install only what you use.
 
 ---
 
@@ -74,6 +78,8 @@ The addon inspects group members **outside of combat** using WoW's native inspec
 | --- | --- |
 | `/dilvl` | Show all commands |
 | `/dilvl on` / `off` | Enable / disable the addon |
+| `/dilvl details` | Toggle iLvl display on Details! bars |
+| `/dilvl elvui on` / `off` | Toggle ElvUI `[dilvl]` party frame tag |
 | `/dilvl color` | Toggle color-coded iLvl display |
 | `/dilvl setbonus` | Toggle 2P/4P tier set bonus display |
 | `/dilvl inspect` | Manually trigger a full group re-inspect |
@@ -112,7 +118,7 @@ The tag updates instantly when inspect data arrives, on gear swaps, or when the 
 → Fixed in v1.0.1. Tags re-appear automatically within 0.3s after you stop resizing.
 
 **"Nothing is showing at all"**
-→ Run `/dilvl on` to ensure the addon is enabled, then `/dilvl inspect`.
+→ Run `/dilvl debug` and check that `Details-bars` and `Addon` are both `ON`. If `Details-bars: OFF`, run `/dilvl details` to re-enable. Then `/dilvl inspect`.
 
 **Reporting a bug:** run `/dilvl debug` and include the full output in your report.
 

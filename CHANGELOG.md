@@ -7,6 +7,52 @@ Versioning: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.0.2.1] - 2026-04-01
+
+### Fixed
+- Inspect queue could deadlock if `INSPECT_READY` never fired (server throttle, player out of range mid-inspect) — 15s safety timeout added
+- `setBonusCache` is now persisted in SavedVariables; no longer re-inspects the entire group on every `/reload` just to rebuild set bonus data
+
+---
+
+## [1.0.2.0] - 2026-04-01
+
+### Fixed
+- All slash command toggles now apply immediately without waiting for the next ticker cycle:
+  - `/dilvl on` refreshes bars and ElvUI frames instantly
+  - `/dilvl off` strips injected tags from bars instantly
+  - `/dilvl color` and `/dilvl setbonus` update all visible bars immediately
+  - `/dilvl elvui on/off` triggers an immediate ElvUI frame refresh
+
+---
+
+## [1.0.1.9] - 2026-04-01
+
+### Fixed
+- Crash when Details! **Itemlevelfinder** is enabled — it passes secret string values to `SetText` which caused `attempt to index local 'text'` errors (×497). Hook body now wrapped in `pcall` to silently skip secret values
+
+---
+
+## [1.0.1.8] - 2026-04-01
+
+### Added
+- **Independent toggles**: Details! bars and ElvUI party frames can now be enabled/disabled separately
+  - `/dilvl details` — toggle iLvl on Details! bars
+  - `/dilvl elvui on/off` — already existed, now consistent
+- Details! is now an **optional dependency** — addon loads and works without it (ElvUI-only mode)
+- `/dilvl debug` now shows `Details-bars` and `ElvUI-tag` status explicitly
+
+---
+
+## [1.0.1.7] - 2026-04-01
+
+### Fixed
+- iLvl missing on **middle-ranked bars (rows 6–15)** in raids/LFR after combat — `barCleanText` was not updated during `InCombatLockdown`, leaving stale player names for bars whose ranks changed mid-fight
+- `PLAYER_REGEN_ENABLED`: iLvl now injects within 0.5s of combat end instead of waiting up to 2s for the next ticker
+- `FontString:ClearText` (new in WoW 12.0.1) now hooked to prevent stale player names from leaking into refreshed bars
+
+---
+
 ## [1.0.0] - 2026-03-30 — First Public Release
 
 ### Features
