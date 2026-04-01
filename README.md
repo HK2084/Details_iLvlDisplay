@@ -2,6 +2,8 @@
 
 Shows **item level** and **tier set bonus** next to every player name on [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) bars — the combat meter addon by [Tercioo](https://github.com/Tercioo).
 
+*By [HK2084](https://github.com/HK2084)*
+
 Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item levels in Midnight — this addon brings that back.
 
 ---
