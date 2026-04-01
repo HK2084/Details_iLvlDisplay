@@ -321,15 +321,18 @@ local function HookBarTextIfNeeded(bar)
     hooksecurefunc(fontString, "SetText", function(self, text)
         if isOurSetText then return end
         if not db or not db.enabled then return end
-        -- Skip during combat - text is secret/tainted AND we don't need it mid-fight
-        if InCombatLockdown() then return end
         if not text or type(text) ~= "string" or text:match("^%s*$") then return end
         if text:find("%[%d+%]") then return end
 
         -- Cache Details!'s clean text before we inject anything.
         -- GetText() later returns our injected (tainted) string, so we must
         -- never call GetText() — use barCleanText instead.
+        -- IMPORTANT: update even during combat so post-combat RefreshAllBarTexts
+        -- sees the CURRENT player names, not pre-fight stale data.
         barCleanText[self] = text
+
+        -- Don't inject during combat (taint with secure UI elements)
+        if InCombatLockdown() then return end
 
         local name = ExtractName(text)
         if name then
@@ -341,6 +344,14 @@ local function HookBarTextIfNeeded(bar)
             end
         end
     end)
+
+    -- 12.0.1 added FontString:ClearText() — hook it so barCleanText doesn't
+    -- keep a stale player name after Details! empties a bar for reuse.
+    if fontString.ClearText then
+        hooksecurefunc(fontString, "ClearText", function(self)
+            barCleanText[self] = nil
+        end)
+    end
 end
 
 ---------------------------------------------------------------
@@ -592,7 +603,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.6 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.7 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -683,6 +694,16 @@ frame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_REGEN_ENABLED" then
         if db and db.enabled then
             mapDirty = true
+            -- Give Details! ~0.5s to update its own bars after combat ends,
+            -- then immediately inject iLvl without waiting for the next ticker.
+            -- barCleanText is now always current (updated even during combat),
+            -- so the refresh sees correct player names for ALL bar positions.
+            C_Timer.After(0.5, function()
+                if db and db.enabled then
+                    RebuildNameIlvlMap()
+                    RefreshAllBarTexts()
+                end
+            end)
             C_Timer.After(2, QueueGroupInspect)
         end
 
@@ -784,7 +805,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.1.6 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.1.7 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Color: %s  SetBonus: %s",
             db.enabled and "ON" or "OFF",
@@ -867,7 +888,7 @@ SlashCmdList["DILVL"] = function(msg)
         db.elvuiTag = false
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.1.6")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.1.7")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
