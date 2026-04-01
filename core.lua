@@ -314,10 +314,14 @@ local function HookBarTextIfNeeded(bar)
     -- haven't injected into this FontString yet, so GetText() is clean.
     -- Without this, RefreshAllBarTexts has nothing to work with until Details!
     -- calls SetText again (e.g. never, if the window was just resized).
-    local currentText = fontString:GetText()
-    if currentText and type(currentText) == "string" and not currentText:find("%[%d+%]") then
-        barCleanText[fontString] = currentText
-    end
+    -- pcall: GetText() can return a secret string (Details! Itemlevelfinder),
+    -- and :find() on secret strings raises an error even when type() == "string".
+    pcall(function()
+        local currentText = fontString:GetText()
+        if currentText and type(currentText) == "string" and not currentText:find("%[%d+%]") then
+            barCleanText[fontString] = currentText
+        end
+    end)
     mapDirty = true
 
     hooksecurefunc(fontString, "SetText", function(self, text)
