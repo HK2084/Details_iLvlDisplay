@@ -633,6 +633,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     C_Timer.NewTicker(2, OnTick)
                     print("|cFF00FF00Details! iLvl Display|r v1.0.2.1 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
+                    -- LFR: unit tokens for all 25 players may not exist yet after 5s.
+                    -- Retry at 15s and 30s to catch late-appearing group members.
+                    C_Timer.After(15, QueueGroupInspect)
+                    C_Timer.After(30, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
                     tickerStarted = false
