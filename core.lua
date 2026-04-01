@@ -28,6 +28,7 @@ local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- guard against multiple tickers on repeated PLAYER_ENTERING_WORLD
 local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI is built
+local openRaidLib = nil -- LibOpenRaid-1.0 handle; assigned after ADDON_LOADED if available
 
 ---------------------------------------------------------------
 -- Group info helper (handles normal party/raid + LFR/LFD)
@@ -613,6 +614,49 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
 
             UpdatePlayerCache()
+
+            -- LibOpenRaid-1.0: optional data source, bundled with Details!
+            -- Provides iLvl via addon-comm (no inspect needed when both players have Details!).
+            -- We use it as a first source; our own inspect queue is the fallback.
+            if LibStub then
+                local ok, lib = pcall(LibStub, "LibOpenRaid-1.0")
+                if ok and lib then
+                    openRaidLib = lib
+                    -- GearUpdate fires with (unitName) after Details! broadcasts gear info.
+                    -- unitName is the full "Name-Realm" string.
+                    lib.RegisterCallback({}, "GearUpdate", function(_, unitName)
+                        if not unitName or not ilvlCache then return end
+                        local gearInfo = lib.GetUnitGear(unitName)
+                        if not gearInfo or not gearInfo.ilevel or gearInfo.ilevel <= 0 then return end
+                        -- Resolve GUID from live group tokens for cache keying
+                        local prefix, count = GetGroupInfo()
+                        for i = 1, count do
+                            local unit = prefix .. i
+                            if UnitExists(unit) then
+                                local fullName = GetUnitName(unit, true)
+                                if fullName == unitName then
+                                    local guid = UnitGUID(unit)
+                                    if guid then
+                                        local ilvl = math.floor(gearInfo.ilevel)
+                                        -- Only update if newer than what we have
+                                        local existing = ilvlCache[guid]
+                                        if not existing or ilvl ~= existing.ilvl or (time() - existing.time) > 300 then
+                                            local name, realm = UnitName(unit)
+                                            local storedName = (realm and realm ~= "") and (name.."-"..realm) or name
+                                            ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName}
+                                            StoreNameIlvl(storedName, ilvl)
+                                            StoreNameIlvl(name, ilvl)
+                                            mapDirty = true
+                                            NotifyElvUI()
+                                        end
+                                    end
+                                    break
+                                end
+                            end
+                        end
+                    end)
+                end
+            end
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
