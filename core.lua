@@ -10,7 +10,7 @@ local defaults = {
 
 local db
 local ilvlCache -- points to db.ilvlCache after ADDON_LOADED (persistent SavedVariables)
-local setBonusCache = {} -- guid -> "2P" / "4P" / nil
+local setBonusCache = {} -- guid -> "2P" / "4P" / false (no bonus) / nil (never inspected); persisted after ADDON_LOADED
 local nameToIlvl = {}    -- "PlayerName" -> ilvl
 local nameToSetBonus = {} -- "PlayerName" -> "2P" / "4P" / nil (mirrors nameToIlvl, O(1) BuildTag lookup)
 local CACHE_EXPIRE = 7200 -- 2 hours; stale entries purged on new instance or after boss
@@ -493,6 +493,15 @@ local function ProcessNextInspect()
     if UnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, false) then
         pendingInspectGuid = entry.guid -- track that WE triggered this inspect
         NotifyInspect(entry.unit)
+        -- Safety timeout: if INSPECT_READY never fires (server throttle, player
+        -- LoS'd mid-inspect, disconnect), unblock the queue after 15s.
+        C_Timer.After(15, function()
+            if isInspecting and pendingInspectGuid == entry.guid then
+                isInspecting = false
+                pendingInspectGuid = nil
+                C_Timer.After(0.5, ProcessNextInspect)
+            end
+        end)
     else
         -- Can't inspect right now (out of range, throttled, etc.).
         -- Re-queue up to 3 times so we retry after other players are done.
@@ -536,8 +545,9 @@ local function QueueGroupInspect()
                         StoreNameBonus(name, setBonusCache[guid])
                     end
                 end
-                -- Queue if iLvl is stale OR set bonus is missing (setBonusCache is session-only)
-                if not cached or (time() - cached.time >= CACHE_EXPIRE) or setBonusCache[guid] == nil then
+                -- Queue only if iLvl is stale; setBonusCache is now persisted so
+                -- no need to re-inspect just because it's absent after a reload.
+                if not cached or (time() - cached.time >= CACHE_EXPIRE) then
                     table.insert(inspectQueue, {guid = guid, unit = unit})
                 end
             end
@@ -561,7 +571,7 @@ local function UpdatePlayerCache()
     local pname = UnitName("player")
     local sb = GetSetBonusForUnit("player")
     ilvlCache[guid] = {ilvl = math.floor(equipped), time = time(), name = pname}
-    setBonusCache[guid] = sb
+    setBonusCache[guid] = sb or false
     if pname then StoreNameBonus(pname, sb) end
     NotifyElvUI()
 end
@@ -587,15 +597,18 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 if db[k] == nil then db[k] = v end
             end
 
-            -- Persistent cache stored separately (not in defaults to avoid confusion)
+            -- Persistent caches stored separately (not in defaults to avoid confusion)
             if not db.ilvlCache then db.ilvlCache = {} end
             ilvlCache = db.ilvlCache
+            if not db.setBonusCache then db.setBonusCache = {} end
+            setBonusCache = db.setBonusCache
 
-            -- Purge entries older than CACHE_EXPIRE on load
+            -- Purge entries older than CACHE_EXPIRE on load; keep setBonusCache in sync
             local now = time()
             for guid, data in pairs(ilvlCache) do
                 if (now - data.time) >= CACHE_EXPIRE then
                     ilvlCache[guid] = nil
+                    setBonusCache[guid] = nil
                 end
             end
 
@@ -614,7 +627,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.0 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.1 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -665,7 +678,9 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     local ilvlFloor = math.floor(ilvl)
                     local fullName = name and (realm and realm ~= "") and (name .. "-" .. realm) or name
                     local setBonus = GetSetBonusForUnit(u)
-                    setBonusCache[guid] = setBonus
+                    -- Store false (not nil) for "inspected, no bonus" so persistence
+                    -- can distinguish from "never inspected" (nil = not in table).
+                    setBonusCache[guid] = setBonus or false
                     -- Fallback to existing cached name if UnitName() returned nil
                     -- (unit token can go stale between queue and INSPECT_READY)
                     local cachedName = ilvlCache[guid] and ilvlCache[guid].name
@@ -847,7 +862,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.2.0 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.2.1 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s",
             db.enabled and "ON" or "OFF",
@@ -935,7 +950,7 @@ SlashCmdList["DILVL"] = function(msg)
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.2.0")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.2.1")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
