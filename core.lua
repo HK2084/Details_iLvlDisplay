@@ -742,11 +742,16 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- Only re-inspect on kills — loot (and potential ilvl gains) only drop on kills.
         local _, _, _, _, success = ...
         if db and db.enabled and success == 1 then
+            -- Don't force-expire ALL entries: players out of inspect range (common
+            -- in LFR) would lose their tags and never get them back this session.
+            -- Instead set cache age to just-under-expiry so QueueGroupInspect will
+            -- re-queue them when in range, but existing data stays visible until then.
+            local softExpire = time() - (CACHE_EXPIRE - 60) -- 60s left before real expiry
             local prefix, count = GetGroupInfo()
             for i = 1, count do
                 local guid = UnitGUID(prefix .. i)
                 if guid and ilvlCache[guid] then
-                    ilvlCache[guid].time = 0 -- force expire → QueueGroupInspect re-queues
+                    ilvlCache[guid].time = softExpire
                 end
             end
             C_Timer.After(5, QueueGroupInspect)
