@@ -4,7 +4,8 @@ local defaults = {
     enabled = true,
     colorIlvl = true,
     showSetBonus = true,
-    elvuiTag = false, -- opt-in: enable via /dilvl elvui (requires ElvUI)
+    showInDetails = true,  -- show iLvl on Details! bars (requires Details!)
+    elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
 }
 
 local db
@@ -331,6 +332,8 @@ local function HookBarTextIfNeeded(bar)
         -- sees the CURRENT player names, not pre-fight stale data.
         barCleanText[self] = text
 
+        if not db.showInDetails then return end
+
         -- Don't inject during combat (taint with secure UI elements)
         if InCombatLockdown() then return end
 
@@ -381,6 +384,7 @@ end
 ---------------------------------------------------------------
 local function RefreshAllBarTexts()
     if InCombatLockdown() then return end
+    if not db or not db.showInDetails then return end
     if not next(nameToIlvl) then return end
 
     isOurSetText = true
@@ -603,7 +607,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.7 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.1.8 loaded. /dilvl")
                     C_Timer.After(5, QueueGroupInspect)
                 else
                     -- Details not loaded yet, allow retry on next zone
@@ -755,6 +759,23 @@ SlashCmdList["DILVL"] = function(msg)
     elseif msg == "setbonus" then
         db.showSetBonus = not db.showSetBonus
         print("|cFF00FF00Details! iLvl Display:|r Set Bonus " .. (db.showSetBonus and "ON" or "OFF"))
+    elseif msg == "details" then
+        db.showInDetails = not db.showInDetails
+        if not db.showInDetails then
+            -- Remove injected tags: reset each bar to its clean text
+            isOurSetText = true
+            for fontString, cleanText in pairs(barCleanText) do
+                pcall(function()
+                    if fontString:IsShown() and cleanText then
+                        fontString:SetText(cleanText)
+                    end
+                end)
+            end
+            isOurSetText = false
+        else
+            RefreshAllBarTexts()
+        end
+        print("|cFF00FF00Details! iLvl Display:|r Details bars " .. (db.showInDetails and "ON" or "OFF"))
     elseif msg == "inspect" then
         print("|cFF00FF00Details! iLvl Display:|r Inspecting group...")
         QueueGroupInspect()
@@ -805,7 +826,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.1.7 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.1.8 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Color: %s  SetBonus: %s",
             db.enabled and "ON" or "OFF",
@@ -888,11 +909,12 @@ SlashCmdList["DILVL"] = function(msg)
         db.elvuiTag = false
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.1.7")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.1.8")
         print("  /dilvl on|off          — Enable / disable")
+        print("  /dilvl details         — Toggle iLvl on Details! bars")
+        print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
-        print("  /dilvl elvui on|off    — Toggle ElvUI [dilvl] party frame tag")
         print("  /dilvl inspect         — Manually trigger group inspect")
         print("  /dilvl debug           — Full status report (paste when reporting a bug)")
         print("  /dilvl cache           — Show cached iLvl entries")
