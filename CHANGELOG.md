@@ -7,6 +7,17 @@ Versioning: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.0.2.2] - 2026-04-01
+
+### Fixed
+
+- **ElvUI-only mode**: addon now fully works without Details! loaded — inspect queue runs, `[dilvl]` tag populates correctly
+- `GetText()` seed in `HookBarTextIfNeeded` wrapped in `pcall` — prevented crash when Details! Itemlevelfinder returns a secret string during initial bar hook
+- `ENCOUNTER_END` no longer force-expires cache — uses soft-expire (60s before real TTL) so tags survive until fresh inspect data arrives after boss kill
+- LFR late unit tokens: `QueueGroupInspect` retried at 15s and 30s after zone-in — ensures all 25 players get tagged even when unit tokens are not available immediately
+
+---
+
 ## [1.0.2.1] - 2026-04-01
 
 ### Fixed
