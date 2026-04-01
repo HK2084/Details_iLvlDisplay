@@ -460,17 +460,19 @@ end
 ---------------------------------------------------------------
 local function OnTick()
     if not db or not db.enabled then return end
-    if not Details then return end
 
-    HookAllBars()
+    -- Details-specific work (skip in ElvUI-only mode)
+    if Details then
+        HookAllBars()
 
-    if mapDirty then
-        mapDirty = false
-        RebuildNameIlvlMap()
+        if mapDirty then
+            mapDirty = false
+            RebuildNameIlvlMap()
+        end
+
+        -- Always run, cheap: early exits if bars already tagged or nameToIlvl empty
+        RefreshAllBarTexts()
     end
-
-    -- Always run, cheap: early exits if bars already tagged or nameToIlvl empty
-    RefreshAllBarTexts()
 end
 
 ---------------------------------------------------------------
@@ -676,15 +678,19 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
                     print("|cFF00FF00Details! iLvl Display|r v1.0.2.1 loaded. /dilvl")
-                    C_Timer.After(5, QueueGroupInspect)
-                    -- LFR: unit tokens for all 25 players may not exist yet after 5s.
-                    -- Retry at 15s and 30s to catch late-appearing group members.
-                    C_Timer.After(15, QueueGroupInspect)
-                    C_Timer.After(30, QueueGroupInspect)
                 else
-                    -- Details not loaded yet, allow retry on next zone
-                    tickerStarted = false
+                    -- ElvUI-only mode: Details! not loaded, but we can still
+                    -- inspect group and serve data via the [dilvl] ElvUI tag.
+                    detailsReady = true  -- prevent re-init on next zone
+                    C_Timer.NewTicker(2, OnTick)  -- needed for inspect queue processing
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.1 loaded (ElvUI-only mode). /dilvl")
                 end
+                -- Inspect in both modes (Details + ElvUI-only)
+                C_Timer.After(5, QueueGroupInspect)
+                -- LFR: unit tokens for all 25 players may not exist yet after 5s.
+                -- Retry at 15s and 30s to catch late-appearing group members.
+                C_Timer.After(15, QueueGroupInspect)
+                C_Timer.After(30, QueueGroupInspect)
             end)
         end
 
