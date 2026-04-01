@@ -921,8 +921,9 @@ SlashCmdList["DILVL"] = function(msg)
             cacheCount, setBonusCount, mapCount, bonusMapCount, hookCount))
         print(string.format("  Queue: %d pending  inspecting: %s  manualPause: %s  pending: %s",
             #inspectQueue, tostring(isInspecting), manualPause, pending))
-        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s",
-            tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty)))
+        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s",
+            tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
+            openRaidLib and "active" or "n/a"))
 
         -- Cache: show all entries with iLvl + set bonus
         if cacheCount > 0 then
