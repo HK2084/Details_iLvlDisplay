@@ -21,4 +21,4 @@ jobs:
 
       - uses: BigWigsMods/packager@v2
         with:
-          args: -p 1501917
+          args: -p 1501917 -n "{package-name}-{project-version}{nolib}{classic}:{package-name}-{project-version}{nolib}{classic}"
