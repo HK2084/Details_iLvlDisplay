@@ -13,10 +13,9 @@ jobs:
 
       - name: Create ZIP
         run: |
-          zip -r Details_iLvlDisplay.zip . \
-            --exclude ".git/*" \
-            --exclude ".github/*" \
-            --exclude "*.zip"
+          mkdir -p Details_iLvlDisplay
+          cp -r *.lua *.toc *.tga *.png LICENSE README.md CHANGELOG.md .pkgmeta Details_iLvlDisplay/ 2>/dev/null || true
+          zip -r Details_iLvlDisplay.zip Details_iLvlDisplay/
 
       - name: Upload to CurseForge
         uses: itsmeow/curseforge-upload@v3
