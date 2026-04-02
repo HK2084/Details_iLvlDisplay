@@ -4,7 +4,7 @@
 ## Author: HK2084
 ## Version: 1.0.2.3
 ## IconTexture: Interface\AddOns\Details_iLvlDisplay\icon
-## OptionalDeps: Details, QuickItemLevel, ElvUI
+## OptionalDeps: Details, QuickItemLevel, ElvUI, LibOpenRaid-1.0
 ## SavedVariables: Details_iLvlDisplayDB
 
 core.lua
