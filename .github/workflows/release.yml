@@ -24,10 +24,9 @@ jobs:
           token: ${{ secrets.CF_API_KEY }}
           project_id: "1501917"
           game_endpoint: "wow"
-          upload_retry_count: 3
           file_path: "Details_iLvlDisplay.zip"
           changelog: ${{ github.event.head_commit.message }}
           changelog_type: "markdown"
-          game_versions: "12.0.1"
+          game_versions: "14422,15855"
           release_type: "release"
           display_name: ${{ github.ref_name }}
