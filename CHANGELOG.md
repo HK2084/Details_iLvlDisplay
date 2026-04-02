@@ -7,6 +7,14 @@ Versioning: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.0.2.3] - 2026-04-02
+
+### Fixed
+
+- Own iLvl not updating in Details! bars when re-equipping gear — `UpdatePlayerCache` now calls `StoreNameIlvl` and sets `mapDirty = true` so bars refresh immediately on gear swap in both directions
+
+---
+
 ## [1.0.2.2] - 2026-04-01
 
 ### Fixed

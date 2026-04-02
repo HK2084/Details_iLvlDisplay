@@ -583,9 +583,14 @@ local function UpdatePlayerCache()
     if not guid then return end
     local pname = UnitName("player")
     local sb = GetSetBonusForUnit("player")
-    ilvlCache[guid] = {ilvl = math.floor(equipped), time = time(), name = pname}
+    local ilvl = math.floor(equipped)
+    ilvlCache[guid] = {ilvl = ilvl, time = time(), name = pname}
     setBonusCache[guid] = sb or false
-    if pname then StoreNameBonus(pname, sb) end
+    if pname then
+        StoreNameIlvl(pname, ilvl)
+        StoreNameBonus(pname, sb)
+    end
+    mapDirty = true
     NotifyElvUI()
 end
 
@@ -640,13 +645,13 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.2 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.3 loaded. /dilvl")
                 else
                     -- ElvUI-only mode: Details! not loaded, but we can still
                     -- inspect group and serve data via the [dilvl] ElvUI tag.
                     detailsReady = true  -- prevent re-init on next zone
                     C_Timer.NewTicker(2, OnTick)  -- needed for inspect queue processing
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.2 loaded (ElvUI-only mode). /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.3 loaded (ElvUI-only mode). /dilvl")
                 end
                 -- Inspect in both modes (Details + ElvUI-only)
                 C_Timer.After(5, QueueGroupInspect)
@@ -888,7 +893,7 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.2.2 — Bug Report ===")
+        print("=== Details! iLvl Display v1.0.2.3 — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s",
             db.enabled and "ON" or "OFF",
@@ -976,7 +981,7 @@ SlashCmdList["DILVL"] = function(msg)
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.2.2")
+        print("|cFF00FF00Details! iLvl Display|r v1.0.2.3")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
