@@ -4,7 +4,4 @@ ignore:
   - .github
   - .gitignore
   - .pkgmeta
-  - CHANGELOG.md
-  - README.md
   - logo.png
-  - LICENSE

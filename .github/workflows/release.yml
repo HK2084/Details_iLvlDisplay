@@ -3,29 +3,19 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - '**'
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Create ZIP
-        run: |
-          mkdir -p Details_iLvlDisplay
-          cp -r *.lua *.toc *.tga *.png LICENSE README.md CHANGELOG.md .pkgmeta Details_iLvlDisplay/ 2>/dev/null || true
-          zip -r Details_iLvlDisplay.zip Details_iLvlDisplay/
-
-      - name: Upload to CurseForge
-        uses: itsmeow/curseforge-upload@v3
         with:
-          token: ${{ secrets.CF_API_KEY }}
-          project_id: "1501917"
-          game_endpoint: "wow"
-          file_path: "Details_iLvlDisplay.zip"
-          changelog: ${{ github.event.head_commit.message }}
-          changelog_type: "markdown"
-          game_versions: "14422,15855"
-          release_type: "release"
-          display_name: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: BigWigsMods/packager@v2
+        with:
+          args: -p 1501917
