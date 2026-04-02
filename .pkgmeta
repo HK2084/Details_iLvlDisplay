@@ -1,5 +1,9 @@
 package-as: Details_iLvlDisplay
 
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
 ignore:
   - .github
   - .gitignore
