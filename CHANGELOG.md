@@ -7,6 +7,20 @@ Versioning: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.1.0] - 2026-04-02
+
+### Added
+
+- **LibOpenRaid-1.0 integration**: iLvl data from players running Details! is now received instantly via addon-comm — no inspect needed. Own inspect queue remains as fallback for players without Details!
+- **Secret value guard**: proactive `issecretvalue()` check (WoW 12.0+) before touching potentially tainted strings — catches secret values early, before the pcall safety net
+
+### Changed
+
+- `LibOpenRaid-1.0` added to TOC `OptionalDeps`
+- `/dilvl debug` now shows LibOpenRaid status (`active` / `n/a`)
+
+---
+
 ## [1.0.2.3] - 2026-04-02
 
 ### Fixed

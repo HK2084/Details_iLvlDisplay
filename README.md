@@ -11,7 +11,8 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 - Item level displayed in brackets next to each player name: `Quinroth [254]`
 - Color-coded by gear tier (see table below)
 - **2P / 4P tier set bonus** detection for Midnight Season 1 tier pieces
-- Automatic background inspection of group and raid members outside of combat
+- **Instant iLvl via LibOpenRaid** — if group members run Details!, their iLvl arrives via addon-comm with no inspect delay
+- Automatic background inspection of group and raid members outside of combat (fallback for players without Details!)
 - 2-hour persistent cache — survives `/reload`, loads instantly on re-login
 - Automatic re-inspection after boss kills (catches loot upgrades)
 - Your own iLvl and set bonus update instantly on gear swap — no inspect needed
@@ -54,7 +55,12 @@ The addon works without either — install only what you use.
 
 ## How it works
 
-The addon inspects group members **outside of combat** using WoW's native inspect API. iLvl data is cached for 2 hours per player.
+The addon has two data sources:
+
+1. **LibOpenRaid** (instant) — when group members also run Details!, their iLvl is broadcast via addon-comm. No inspect delay.
+2. **Inspect API** (fallback) — for players without Details!, the addon inspects them outside of combat.
+
+iLvl data is cached for 2 hours per player.
 
 **Expected behavior — not bugs:**
 

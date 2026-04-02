@@ -31,6 +31,18 @@ local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI 
 local openRaidLib = nil -- LibOpenRaid-1.0 handle; assigned after ADDON_LOADED if available
 
 ---------------------------------------------------------------
+-- Secret value guard (WoW 12.0+)
+-- issecretvalue() / issecrettable() are Blizzard globals that
+-- return true for tainted values that crash on string ops.
+-- Check BEFORE touching the value — avoids the pcall entirely.
+---------------------------------------------------------------
+local function isSecretValue(val)
+    if issecretvalue and issecretvalue(val) then return true end
+    if issecrettable and issecrettable(val) then return true end
+    return false
+end
+
+---------------------------------------------------------------
 -- Group info helper (handles normal party/raid + LFR/LFD)
 -- Returns: prefix ("raid"/"party"), count, numGroup
 ---------------------------------------------------------------
@@ -321,10 +333,11 @@ local function HookBarTextIfNeeded(bar)
     -- haven't injected into this FontString yet, so GetText() is clean.
     -- Without this, RefreshAllBarTexts has nothing to work with until Details!
     -- calls SetText again (e.g. never, if the window was just resized).
-    -- pcall: GetText() can return a secret string (Details! Itemlevelfinder),
-    -- and :find() on secret strings raises an error even when type() == "string".
+    -- GetText() can return a secret string (Details! Itemlevelfinder).
+    -- isSecretValue guard skips early; pcall is the safety net.
     pcall(function()
         local currentText = fontString:GetText()
+        if isSecretValue(currentText) then return end
         if currentText and type(currentText) == "string" and not currentText:find("%[%d+%]") then
             barCleanText[fontString] = currentText
         end
@@ -335,8 +348,8 @@ local function HookBarTextIfNeeded(bar)
         if isOurSetText then return end
         if not db or not db.enabled then return end
         -- Details! Itemlevelfinder passes "secret string" values to SetText.
-        -- type() returns "string" for them but :match()/:find() error on line 325.
-        -- Wrap everything in pcall to silently skip secret values.
+        -- isSecretValue catches them early; pcall is the safety net.
+        if isSecretValue(text) then return end
         pcall(function()
             if not text or type(text) ~= "string" or text:match("^%s*$") then return end
             if text:find("%[%d+%]") then return end
