@@ -22,7 +22,7 @@ jobs:
         uses: itsmeow/curseforge-upload@v3
         with:
           token: ${{ secrets.CF_API_KEY }}
-          project_id: "1268097"
+          project_id: "1501917"
           game_endpoint: "wow"
           upload_retry_count: 3
           file_path: "Details_iLvlDisplay.zip"
