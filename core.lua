@@ -54,6 +54,27 @@ local function isSecretValue(val)
 end
 
 ---------------------------------------------------------------
+-- Safe InCombatLockdown wrapper (WoW 12.0+)
+-- Inside instances, InCombatLockdown() can return a secret value.
+-- A secret-wrapped false is truthy in Lua (userdata, not nil/false),
+-- so raw `if InCombatLockdown() then` is ALWAYS true when secret.
+-- This wrapper treats secret returns as "not in combat" — safe for
+-- addon logic (inspect queue, refresh, measurement).
+---------------------------------------------------------------
+local function IsInCombatSafe()
+    local v = InCombatLockdown()
+    if isSecretValue(v) then return false end
+    return v
+end
+
+-- Strict version: treats secret as "in combat" — for protected frame ops
+local function MayBeInCombat()
+    local v = InCombatLockdown()
+    if isSecretValue(v) then return true end
+    return v
+end
+
+---------------------------------------------------------------
 -- Group info helper (handles normal party/raid + LFR/LFD)
 -- Returns: prefix ("raid"/"party"), count, numGroup
 ---------------------------------------------------------------
@@ -552,7 +573,7 @@ local function RefreshAllColumns()
                 end
 
                 -- Constrain name width to prevent overlap (skip during combat — taint)
-                if not InCombatLockdown() then
+                if not MayBeInCombat() then
                     local rightEdge = ilvlAnchor + maxWidthIlvl
                     if cols.tierFS:IsShown() then rightEdge = tierAnchor + COL_TIER_WIDTH end
                     if not cols.ilvlFS:IsShown() then rightEdge = 0 end
@@ -658,6 +679,9 @@ local function HookBarTextIfNeeded(bar)
             return
         end
 
+        -- Don't inject during combat (taint with secure UI elements)
+        if MayBeInCombat() then return end
+
         local name = ExtractName(text)
         if name then
             local tag = BuildTag(name)
@@ -714,7 +738,7 @@ local function RefreshAllBarTexts()
     end
 
     -- Inline mode: skip during combat (modifies Details!' FontStrings → taint)
-    if InCombatLockdown() then return end
+    if MayBeInCombat() then return end
 
     isOurSetText = true
     for fontString in pairs(hookedFontStrings) do
@@ -797,7 +821,7 @@ end
 -- Inspect group
 ---------------------------------------------------------------
 local function ProcessNextInspect()
-    if InCombatLockdown() or #inspectQueue == 0 then
+    if IsInCombatSafe() or #inspectQueue == 0 then
         isInspecting = false
         return
     end
@@ -839,7 +863,7 @@ local function ProcessNextInspect()
 end
 
 local function QueueGroupInspect()
-    if InCombatLockdown() then return end
+    if IsInCombatSafe() then return end
 
     -- Reset inspect state: if a previous NotifyInspect was throttled and
     -- INSPECT_READY never fired, isInspecting stays true and the queue
@@ -1135,7 +1159,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "GROUP_ROSTER_UPDATE" then
-        if not InCombatLockdown() and db and db.enabled then
+        if not IsInCombatSafe() and db and db.enabled then
             -- Wipe name maps immediately — unit tokens reshuffle on roster
             -- changes so old name->iLvl mappings are unreliable until we
             -- re-inspect and re-populate from fresh unit tokens.
@@ -1243,7 +1267,8 @@ SlashCmdList["DILVL"] = function(msg)
         for _ in pairs(barColumns) do colCount = colCount + 1 end
 
         local prefix, count, numGroup = GetGroupInfo()
-        local inCombat = InCombatLockdown() and "yes" or "no"
+        local rawCombat = InCombatLockdown()
+        local inCombat = isSecretValue(rawCombat) and "SECRET(safe=no)" or (rawCombat and "yes" or "no")
         local manualPause = (GetTime() - lastManualInspectTime) < 60 and "yes" or "no"
         local pending = pendingInspectGuid and pendingInspectGuid:sub(1,8) .. ".." or "none"
         local wowBuild = select(4, GetBuildInfo())

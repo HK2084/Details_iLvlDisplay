@@ -26,6 +26,16 @@ Versioning: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.1.1] - 2026-04-03
+
+### Fixed
+
+- **InCombatLockdown() returns secret value in instances** (WoW 12.0+): inside dungeons and raids, `InCombatLockdown()` returns a secret-wrapped boolean. A secret-wrapped `false` is truthy in Lua, so all combat guards treated the player as permanently in combat. This blocked inspect queue, bar refreshes, and group roster updates for the entire instance duration. Fixed by adding `IsInCombatSafe()` / `MayBeInCombat()` wrappers that check `issecretvalue()` before evaluating the result
+- `/dilvl debug` now shows `SECRET(safe=no)` when `InCombatLockdown()` returns a secret value, instead of incorrectly reporting `yes`
+- **Wrong version string in chat** (#1): four hardcoded `v1.0.2.3` strings replaced with dynamic TOC lookup via `addonVersion` — version now always matches the TOC `## Version` field
+
+---
+
 ## [1.1.0] - 2026-04-02
 
 ### Added
