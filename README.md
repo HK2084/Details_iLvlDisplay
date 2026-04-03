@@ -8,7 +8,9 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 
 ## Features
 
-- Item level displayed in brackets next to each player name: `Quinroth [254]`
+- Item level displayed next to each player name: `Quinroth [254]`
+- **Two layout modes**: `inline` (appended to name) or `columns` (separate right-aligned columns)
+- **Column mode works during combat** — uses addon-created overlays, no taint
 - Color-coded by gear tier (see table below)
 - **2P / 4P tier set bonus** detection for Midnight Season 1 tier pieces
 - **Instant iLvl via LibOpenRaid** — if group members run Details!, their iLvl arrives via addon-comm with no inspect delay
@@ -18,7 +20,6 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 - Your own iLvl and set bonus update instantly on gear swap — no inspect needed
 - Cross-realm, LFR and LFD support (up to 40 players)
 - Manual inspect protection — background queue pauses when you inspect someone
-- iLvl tags re-appear immediately after resizing the Details! window
 - **Independent toggles** — enable Details! bars and/or ElvUI frames separately
 - Optional **ElvUI integration**: adds a `[dilvl]` tag for party/raid unit frames
 
@@ -26,11 +27,23 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 
 ## Preview
 
+**Inline mode** (default):
+
 ```text
-1. Quinroth     [252] [2P]     298K
-2. Tankplayer   [265] [4P]     210K
-3. Healsalot    [248]           95K
+1. Quinroth [252] [2P]     298K
+2. Tankplayer [265] [4P]   210K
+3. Healsalot [248]          95K
 ```
+
+**Column mode** (`/dilvl layout columns`):
+
+```text
+1. Quinroth          4P  252     2.3M    298K
+2. Tankplayer        4P  265     1.8M    210K
+3. Healsalot             248     950K     95K
+```
+
+Column mode shows iLvl and tier set during combat. Columns auto-hide on narrow windows. When bars swap positions, columns briefly disappear and reappear with the correct player's data.
 
 ### iLvl Colors
 
@@ -65,7 +78,8 @@ iLvl data is cached for 2 hours per player.
 **Expected behavior — not bugs:**
 
 - **First pull:** iLvl may not show for all players yet. Inspection runs after you join the group and takes a few seconds per player.
-- **In combat:** no updates. Tags stay as-is until combat ends.
+- **In combat (inline mode):** tags pause until combat ends. Use **column mode** to see iLvl during combat.
+- **In combat (column mode):** iLvl and tier columns stay visible throughout combat. When DPS rankings change and bars swap positions, columns may briefly disappear and reappear — this is normal and ensures every bar always shows the correct player's data.
 - **After the first fight:** everyone should be fully tagged.
 - **After a boss kill:** the whole group gets re-inspected automatically.
 - **On `/reload`:** cached data is restored instantly. Only new or uncached players get re-inspected.
@@ -85,6 +99,9 @@ iLvl data is cached for 2 hours per player.
 | `/dilvl` | Show all commands |
 | `/dilvl on` / `off` | Enable / disable the addon |
 | `/dilvl details` | Toggle iLvl display on Details! bars |
+| `/dilvl layout` | Toggle between `inline` and `columns` mode |
+| `/dilvl layout inline` | Switch to inline mode (appended to name) |
+| `/dilvl layout columns` | Switch to column mode (separate columns, works in combat) |
 | `/dilvl elvui on` / `off` | Toggle ElvUI `[dilvl]` party frame tag |
 | `/dilvl color` | Toggle color-coded iLvl display |
 | `/dilvl setbonus` | Toggle 2P/4P tier set bonus display |
@@ -93,8 +110,6 @@ iLvl data is cached for 2 hours per player.
 | `/dilvl cache` | Show all cached iLvl entries with age |
 | `/dilvl map` | Show current name → iLvl map |
 | `/dilvl tier` | Scan your own tier slots and set IDs |
-| `/dilvl elvui on` | Enable ElvUI `[dilvl]` party frame tag |
-| `/dilvl elvui off` | Disable ElvUI `[dilvl]` party frame tag |
 | `/dilvl auras` | List your current buffs with spell IDs |
 
 ---

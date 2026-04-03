@@ -21,6 +21,7 @@ local inspectQueue = {}
 local isInspecting = false
 local pendingInspectGuid = nil -- GUID we requested via NotifyInspect (nil = we didn't trigger current inspect)
 local lastManualInspectTime = 0 -- GetTime() of last INSPECT_READY we didn't trigger (ElvUI-safe guard)
+local lastInspectInfo = nil -- {name, ilvl, source, time} last completed inspect for debug
 local detailsReady = false
 local hookedFontStrings = {} -- track which FontStrings we already hooked
 local hookedInstances = {}   -- track which Details! instance frames have OnSizeChanged hooked
@@ -59,7 +60,8 @@ end
 -- A secret-wrapped false is truthy in Lua (userdata, not nil/false),
 -- so raw `if InCombatLockdown() then` is ALWAYS true when secret.
 -- This wrapper treats secret returns as "not in combat" — safe for
--- addon logic (inspect queue, refresh, measurement).
+-- addon logic (inspect queue, refresh, measurement). For protected
+-- frame operations (lineText1:SetSize), use MayBeInCombat() instead.
 ---------------------------------------------------------------
 local function IsInCombatSafe()
     local v = InCombatLockdown()
@@ -67,7 +69,7 @@ local function IsInCombatSafe()
     return v
 end
 
--- Strict version: treats secret as "in combat" — for protected frame ops
+-- Strict version: treats secret as "in combat" — use for protected frames only
 local function MayBeInCombat()
     local v = InCombatLockdown()
     if isSecretValue(v) then return true end
@@ -168,26 +170,28 @@ end
 local function GetIlvlForGuid(guid)
     if not guid then return nil end
 
+    -- Player's own GUID: always use GetAverageItemLevel (most accurate, no inspect needed)
+    -- Skip Details API for self — it can return stale values during combat
+    if guid == UnitGUID("player") then
+        local _, equipped = GetAverageItemLevel()
+        if equipped and equipped > 0 then
+            local ilvl = math.floor(equipped)
+            ilvlCache[guid] = {ilvl = ilvl, time = time(), source = "self"}
+            return ilvl
+        end
+    end
+
     local cached = ilvlCache[guid]
     if cached and (time() - cached.time < CACHE_EXPIRE) then
         return cached.ilvl
     end
 
-    -- Details public API (preferred over internal item_level_pool)
+    -- Details public API (fallback for other players)
     if Details and Details.ilevel and Details.ilevel.GetIlvl then
         local ok, data = pcall(Details.ilevel.GetIlvl, Details.ilevel, guid)
         if ok and data and data.ilvl and data.ilvl > 0 then
             local ilvl = math.floor(data.ilvl)
-            ilvlCache[guid] = {ilvl = ilvl, time = time()}
-            return ilvl
-        end
-    end
-
-    if guid == UnitGUID("player") then
-        local _, equipped = GetAverageItemLevel()
-        if equipped and equipped > 0 then
-            local ilvl = math.floor(equipped)
-            ilvlCache[guid] = {ilvl = ilvl, time = time()}
+            ilvlCache[guid] = {ilvl = ilvl, time = time(), source = "details"}
             return ilvl
         end
     end
@@ -429,9 +433,20 @@ local function RefreshAllColumns()
             cols.ilvlFS:Hide()
             cols.tierFS:Hide()
         else
-            local text = barCleanText[bar.lineText1]
-            local name = text and ExtractName(text)
-            local ilvl = name and nameToIlvl[name]
+            -- Primary: Details! actor reference (always current, even during SECRET text reshuffles)
+            -- Fallback: barCleanText (may be stale when SetText receives secret values)
+            local ilvl, sb
+            local actor = bar.minha_tabela
+            if actor and actor.serial then
+                ilvl = GetIlvlForGuid(actor.serial)
+                sb = db.showSetBonus and setBonusCache[actor.serial]
+            end
+            if not ilvl then
+                local text = barCleanText[bar.lineText1]
+                local name = text and ExtractName(text)
+                ilvl = name and nameToIlvl[name]
+                sb = name and db.showSetBonus and nameToSetBonus[name]
+            end
 
             if not ilvl then
                 cols.ilvlFS:SetText("")
@@ -446,7 +461,6 @@ local function RefreshAllColumns()
                     cols.ilvlFS:SetText(tostring(ilvl))
                 end
                 -- Set tier text
-                local sb = db.showSetBonus and nameToSetBonus[name]
                 cols.tierFS:SetText(sb and ("|cFF00FF00" .. sb .. "|r") or "")
 
                 -- Measure our ilvl column
@@ -461,43 +475,45 @@ local function RefreshAllColumns()
                     end
                 end
 
-                -- Measure Details! right columns (inlined, no table/ipairs)
-                local fs = bar.lineText4
-                if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
-                    local _, _, _, ox = fs:GetPoint(1)
-                    if ox and not isSecretValue(ox) then
-                        local a = math.abs(ox)
-                        if a > key4a then key4a = a end
-                        local t = fs:GetText()
-                        if t and not isSecretValue(t) and t ~= "" then
-                            local w = fs:GetStringWidth() or 0
-                            if w > key4w then key4w = w end
+                -- Measure Details! right columns (skip during combat when cached)
+                if not cachedColLayout or not IsInCombatSafe() then
+                    local fs = bar.lineText4
+                    if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                        local _, _, _, ox = fs:GetPoint(1)
+                        if ox and not isSecretValue(ox) then
+                            local a = math.abs(ox)
+                            if a > key4a then key4a = a end
+                            local t = fs:GetText()
+                            if t and not isSecretValue(t) and t ~= "" then
+                                local w = fs:GetStringWidth() or 0
+                                if w > key4w then key4w = w end
+                            end
                         end
                     end
-                end
-                fs = bar.lineText3
-                if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
-                    local _, _, _, ox = fs:GetPoint(1)
-                    if ox and not isSecretValue(ox) then
-                        local a = math.abs(ox)
-                        if a > key3a then key3a = a end
-                        local t = fs:GetText()
-                        if t and not isSecretValue(t) and t ~= "" then
-                            local w = fs:GetStringWidth() or 0
-                            if w > key3w then key3w = w end
+                    fs = bar.lineText3
+                    if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                        local _, _, _, ox = fs:GetPoint(1)
+                        if ox and not isSecretValue(ox) then
+                            local a = math.abs(ox)
+                            if a > key3a then key3a = a end
+                            local t = fs:GetText()
+                            if t and not isSecretValue(t) and t ~= "" then
+                                local w = fs:GetStringWidth() or 0
+                                if w > key3w then key3w = w end
+                            end
                         end
                     end
-                end
-                fs = bar.lineText2
-                if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
-                    local _, _, _, ox = fs:GetPoint(1)
-                    if ox and not isSecretValue(ox) then
-                        local a = math.abs(ox)
-                        if a > key2a then key2a = a end
-                        local t = fs:GetText()
-                        if t and not isSecretValue(t) and t ~= "" then
-                            local w = fs:GetStringWidth() or 0
-                            if w > key2w then key2w = w end
+                    fs = bar.lineText2
+                    if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                        local _, _, _, ox = fs:GetPoint(1)
+                        if ox and not isSecretValue(ox) then
+                            local a = math.abs(ox)
+                            if a > key2a then key2a = a end
+                            local t = fs:GetText()
+                            if t and not isSecretValue(t) and t ~= "" then
+                                local w = fs:GetStringWidth() or 0
+                                if w > key2w then key2w = w end
+                            end
                         end
                     end
                 end
@@ -505,42 +521,44 @@ local function RefreshAllColumns()
         end
     end
 
-    -- Find leftmost + second leftmost Details! column (anchors always: text4 < text3 < text2)
-    local leftA, leftW, secA, secW = 0, 0, 0, 0
-    if key2a > 0 then
-        leftA, leftW = key2a, key2w
-        if key3a > 0 then secA, secW = key3a, key3w
-        elseif key4a > 0 then secA, secW = key4a, key4w end
-    elseif key3a > 0 then
-        leftA, leftW = key3a, key3w
-        if key4a > 0 then secA, secW = key4a, key4w end
-    elseif key4a > 0 then
-        leftA, leftW = key4a, key4w
-    end
-    -- If we got real data (non-SECRET), cache it for combat fallback.
-    -- If all anchors are 0 (SECRET during combat), use cached values.
-    local hasGoodData = (key3a > 0 or key4a > 0) -- at least one inner column measured
-    if hasGoodData then
-        if leftA == 0 then leftA = 73 end
-        local gap = 5
-        if secA > 0 then
-            local measured = leftA - secA - secW
-            if measured >= 3 then gap = measured end
-        end
-        cachedColLayout = {leftA = leftA, leftW = leftW, secA = secA, secW = secW, gap = gap, yOff = yOff}
-    elseif cachedColLayout then
-        leftA = cachedColLayout.leftA
-        leftW = cachedColLayout.leftW
-        secA  = cachedColLayout.secA
-        secW  = cachedColLayout.secW
-        yOff  = cachedColLayout.yOff
-    else
-        leftA = 73 -- no cache yet, Details default
+    -- Compute gap from two adjacent Details! columns that BOTH have visible text.
+    -- This mirrors Details!' own visual spacing between data columns.
+    -- text4 is always at anchor 0, so key4a=0 — use key4w>0 to detect presence.
+    local detailsGap = 5 -- default (Details!' min structural gap)
+    if key3a > 0 and key3w > 0 and key4w > 0 then
+        local measured = key3a - key4w -- visual gap at max-width between text4 and text3
+        if measured >= 3 then detailsGap = measured end
     end
 
-    local gap = cachedColLayout and cachedColLayout.gap or 5
-    local ilvlAnchor = leftA + leftW + gap
-    local tierAnchor = ilvlAnchor + maxWidthIlvl + gap
+    -- Find the leftmost Details! column edge WITH actual text content.
+    -- Empty columns (text2 with no text) are skipped — anchoring from them
+    -- creates a huge visual gap between our columns and the nearest visible data.
+    local contentEdge = 0
+    if key2a > 0 and key2w > 0 then
+        contentEdge = key2a + key2w     -- text2 has text: use its left edge
+    elseif key3a > 0 and key3w > 0 then
+        contentEdge = key3a + key3w     -- text2 empty: anchor from text3's left edge
+    elseif key4w > 0 then
+        contentEdge = key4w             -- only text4 visible (at anchor 0)
+    end
+
+    -- Cache management: store good measurements for combat fallback
+    local hasGoodData = (key3a > 0 or key4w > 0)
+    if hasGoodData then
+        if contentEdge == 0 then contentEdge = 73 end
+        cachedColLayout = {contentEdge = contentEdge, detailsGap = detailsGap, yOff = yOff}
+        if db then db.cachedColLayout = cachedColLayout end
+    elseif cachedColLayout then
+        contentEdge = cachedColLayout.contentEdge
+        detailsGap  = cachedColLayout.detailsGap
+        yOff        = cachedColLayout.yOff
+    else
+        contentEdge = 73 -- no cache yet, Details default
+    end
+
+    local gap = cachedColLayout and cachedColLayout.detailsGap or 5
+    local ilvlAnchor = contentEdge + gap          -- matches Details!' own column spacing
+    local tierAnchor = ilvlAnchor + maxWidthIlvl + gap + 4  -- +4px padding between our own columns
 
     -- === PASS 2: Position all columns ===
     for bar, cols in pairs(barColumns) do
@@ -658,7 +676,23 @@ local function HookBarTextIfNeeded(bar)
         if not db or not db.enabled then return end
         -- Details! Itemlevelfinder passes "secret string" values to SetText.
         -- Per-field guard: check the value, skip if tainted. No pcall needed.
-        if isSecretValue(text) then return end
+        if isSecretValue(text) then
+            -- Invalidate stale text and hide this bar's columns immediately.
+            -- During bar reshuffles, minha_tabela may still reference the old
+            -- actor when a scheduled refresh fires — showing wrong data.
+            -- Columns reappear when Details! sets the real (non-secret) text.
+            barCleanText[self] = nil
+            if db.layout == "columns" then
+                local cols = barColumns[bar]
+                if cols then
+                    cols.ilvlFS:SetText("")
+                    cols.ilvlFS:Hide()
+                    cols.tierFS:SetText("")
+                    cols.tierFS:Hide()
+                end
+            end
+            return
+        end
         if not text or type(text) ~= "string" or text:match("^%s*$") then return end
         if text:find("%[%d+%]") then return end
 
@@ -781,6 +815,7 @@ local function OnDetailsResize()
         if not db or not db.enabled then return end
         mapDirty = true
         cachedColLayout = nil -- force re-measure after resize
+        if db then db.cachedColLayout = nil end
         HookAllBars()         -- pick up any new bar FontStrings created on resize
         UpdateAllColumnFonts() -- re-copy fonts (Details! font may have changed)
         RebuildNameIlvlMap()  -- re-populate name->ilvl from cache (cache is intact)
@@ -920,7 +955,7 @@ local function UpdatePlayerCache()
     local pname = UnitName("player")
     local sb = GetSetBonusForUnit("player")
     local ilvl = math.floor(equipped)
-    ilvlCache[guid] = {ilvl = ilvl, time = time(), name = pname}
+    ilvlCache[guid] = {ilvl = ilvl, time = time(), name = pname, source = "self"}
     setBonusCache[guid] = sb or false
     if pname then
         StoreNameIlvl(pname, ilvl)
@@ -938,6 +973,7 @@ frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("ENCOUNTER_END")
+frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 
 frame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -956,6 +992,12 @@ frame:SetScript("OnEvent", function(self, event, ...)
             ilvlCache = db.ilvlCache
             if not db.setBonusCache then db.setBonusCache = {} end
             setBonusCache = db.setBonusCache
+
+            -- Restore column layout cache from SavedVariables (survives /reload in instances
+            -- where Details! columns are SECRET and can't be re-measured)
+            if db.cachedColLayout then
+                cachedColLayout = db.cachedColLayout
+            end
 
             -- Purge entries older than CACHE_EXPIRE on load; keep setBonusCache in sync
             local now = time()
@@ -989,6 +1031,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                                 local fullName = GetUnitName(unit, true)
                                 if fullName == unitName then
                                     local guid = UnitGUID(unit)
+                                    -- Skip own GUID — GetAverageItemLevel is always more accurate for self
+                                    if guid == UnitGUID("player") then break end
                                     if guid then
                                         local ilvl = math.floor(gearInfo.ilevel)
                                         -- Only update if newer than what we have
@@ -996,7 +1040,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                                         if not existing or ilvl ~= existing.ilvl or (time() - existing.time) > 300 then
                                             local name, realm = UnitName(unit)
                                             local storedName = (realm and realm ~= "") and (name.."-"..realm) or name
-                                            ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName}
+                                            ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName, source = "lor"}
                                             StoreNameIlvl(storedName, ilvl)
                                             StoreNameIlvl(name, ilvl)
                                             mapDirty = true
@@ -1041,29 +1085,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end)
         end
 
-        -- Detect new instance: if MapID changed, purge all non-group cache entries
-        -- so stale data from previous raid doesn't linger forever.
+        -- Rebuild name maps on zone change (unit tokens may have changed).
+        -- Cache entries are kept — the 2h TTL handles staleness, and players
+        -- viewing old Details! segments still see iLvl from previous groups.
         if ilvlCache then
             local currentMap = C_Map.GetBestMapForUnit("player")
             if currentMap and currentMap ~= lastMapID then
-                if lastMapID then
-                    local keepGuids = {}
-                    local prefix, count = GetGroupInfo()
-                    for i = 1, count do
-                        local g = UnitGUID(prefix .. i)
-                        if g then keepGuids[g] = true end
-                    end
-                    keepGuids[UnitGUID("player")] = true
-                    for guid in pairs(ilvlCache) do
-                        if not keepGuids[guid] then
-                            ilvlCache[guid] = nil
-                            setBonusCache[guid] = nil
-                        end
-                    end
-                    wipe(nameToIlvl)
-                    wipe(nameToSetBonus)
-                    mapDirty = true
-                end
+                wipe(nameToIlvl)
+                wipe(nameToSetBonus)
+                mapDirty = true
                 lastMapID = currentMap
             end
         end
@@ -1077,6 +1107,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         for i = 1, count do
             local u = prefix .. i
             if UnitGUID(u) == guid then
+                -- Skip own GUID — GetAverageItemLevel is always more accurate for self
+                if guid == UnitGUID("player") then break end
                 local ilvl = C_PaperDollInfo.GetInspectItemLevel(u)
                 if ilvl and ilvl > 0 then
                     local name, realm = UnitName(u)
@@ -1089,7 +1121,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     -- Fallback to existing cached name if UnitName() returned nil
                     -- (unit token can go stale between queue and INSPECT_READY)
                     local cachedName = ilvlCache[guid] and ilvlCache[guid].name
-                    ilvlCache[guid] = {ilvl = ilvlFloor, time = time(), name = fullName or name or cachedName}
+                    ilvlCache[guid] = {ilvl = ilvlFloor, time = time(), name = fullName or name or cachedName, source = "inspect"}
+                    lastInspectInfo = {name = fullName or name or cachedName, ilvl = ilvlFloor, time = GetTime()}
                     -- Populate nameToIlvl directly — don't rely on Details! combat
                     -- actors (player may not have dealt damage/healed yet).
                     if name then
@@ -1121,6 +1154,20 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         UpdatePlayerCache()
+
+    elseif event == "GET_ITEM_INFO_RECEIVED" then
+        -- C_Item.GetItemInfo is async — on fresh login, tier slot items may
+        -- not be cached yet, causing GetSetBonusForUnit to undercount.
+        -- Re-check only when a tier slot item finishes loading.
+        local itemID = ...
+        if itemID then
+            for _, slotID in ipairs(TIER_SLOTS) do
+                if GetInventoryItemID("player", slotID) == itemID then
+                    UpdatePlayerCache()
+                    break
+                end
+            end
+        end
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         if db and db.enabled then
@@ -1290,6 +1337,26 @@ SlashCmdList["DILVL"] = function(msg)
             cacheCount, setBonusCount, mapCount, bonusMapCount, hookCount, colCount))
         print(string.format("  Queue: %d pending  inspecting: %s  manualPause: %s  pending: %s",
             #inspectQueue, tostring(isInspecting), manualPause, pending))
+        -- Queue contents (who is waiting)
+        if #inspectQueue > 0 then
+            local qNames = {}
+            for i, qItem in ipairs(inspectQueue) do
+                local qGuid = type(qItem) == "table" and qItem.guid or qItem
+                local qEntry = ilvlCache[qGuid]
+                local qName = qEntry and qEntry.name or (qGuid and qGuid:sub(1,8) .. ".." or "?")
+                qNames[#qNames + 1] = qName
+                if i >= 10 then
+                    qNames[#qNames + 1] = string.format("+%d more", #inspectQueue - 10)
+                    break
+                end
+            end
+            print("  Queue names: " .. table.concat(qNames, ", "))
+        end
+        -- Last completed inspect
+        if lastInspectInfo then
+            local ago = string.format("%.0fs ago", GetTime() - lastInspectInfo.time)
+            print(string.format("  Last inspect: %s → %d iLvl (%s)", lastInspectInfo.name, lastInspectInfo.ilvl, ago))
+        end
         print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
             openRaidLib and "active" or "n/a"))
@@ -1391,32 +1458,25 @@ SlashCmdList["DILVL"] = function(msg)
             end
 
             -- Compute anchors (mirror RefreshAllColumns logic)
-            local leftA, leftW, secA, secW = 0, 0, 0, 0
-            if dk2a > 0 then
-                leftA, leftW = dk2a, dk2w
-                if dk3a > 0 then secA, secW = dk3a, dk3w
-                elseif dk4a > 0 then secA, secW = dk4a, dk4w end
-            elseif dk3a > 0 then
-                leftA, leftW = dk3a, dk3w
-                if dk4a > 0 then secA, secW = dk4a, dk4w end
-            elseif dk4a > 0 then
-                leftA, leftW = dk4a, dk4w
+            local dGap = 5
+            if dk3a > 0 and dk3w > 0 and dk4w > 0 then
+                local m = dk3a - dk4w
+                if m >= 3 then dGap = m end
             end
-            if leftA == 0 then leftA = 73 end
-            local gap = 5
-            if secA > 0 then
-                local m = leftA - secA - secW
-                if m >= 3 then gap = m end
-            end
-            local ilvlAnc = leftA + leftW + gap
-            local tierAnc = ilvlAnc + dMaxIlvl + gap
+            local cEdge = 0
+            if dk2a > 0 and dk2w > 0 then cEdge = dk2a + dk2w
+            elseif dk3a > 0 and dk3w > 0 then cEdge = dk3a + dk3w
+            elseif dk4w > 0 then cEdge = dk4w
+            else cEdge = 73 end
+            local ilvlAnc = cEdge + dGap
+            local tierAnc = ilvlAnc + dMaxIlvl + dGap
 
             print("  --- Spacing ---")
             print(string.format("    Details! cols: text4(a=%.1f w=%.1f) text3(a=%.1f w=%.1f) text2(a=%.1f w=%.1f)",
                 dk4a, dk4w, dk3a, dk3w, dk2a, dk2w))
-            local cacheStr = cachedColLayout and string.format("YES(gap=%.1f)", cachedColLayout.gap) or "NO"
-            print(string.format("    leftmost: a=%.1f w=%.1f  second: a=%.1f w=%.1f  gap=%.1f  cache=%s",
-                leftA, leftW, secA, secW, gap, cacheStr))
+            local cacheStr = cachedColLayout and string.format("YES(gap=%.1f)", cachedColLayout.detailsGap) or "NO"
+            print(string.format("    contentEdge=%.1f  detailsGap=%.1f  cache=%s",
+                cEdge, dGap, cacheStr))
             print(string.format("    ilvlAnchor=%.1f  tierAnchor=%.1f  maxWidthIlvl=%.1f",
                 ilvlAnc, tierAnc, dMaxIlvl))
             -- Hide thresholds
@@ -1429,7 +1489,7 @@ SlashCmdList["DILVL"] = function(msg)
             end
             print(string.format("    barWidth=%.1f  nameLeft=%.1f  hideIlvl@<%.1f  hideTier@<%.1f",
                 sampleWidth,
-                sampleWidth - (tierAnc + COL_TIER_WIDTH) - gap,
+                sampleWidth - (tierAnc + COL_TIER_WIDTH) - dGap,
                 ilvlAnc + dMaxIlvl + MIN_NAME_WIDTH,
                 tierAnc + COL_TIER_WIDTH + MIN_NAME_WIDTH))
 
@@ -1450,7 +1510,8 @@ SlashCmdList["DILVL"] = function(msg)
                 local name = data.name or "?"
                 local age = data.time == 0 and "force-exp" or (now - data.time) .. "s"
                 local sb = setBonusCache[guid] and ("[" .. setBonusCache[guid] .. "] ") or ""
-                print(string.format("    %s: %s%d iLvl (%s)", name, sb, data.ilvl, age))
+                local src = data.source and string.upper(data.source) or "?"
+                print(string.format("    %s: %s%d iLvl [%s] (%s)", name, sb, data.ilvl, src, age))
             end
         end
 

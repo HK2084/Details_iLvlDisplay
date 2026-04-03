@@ -1,4 +1,4 @@
-## Interface: 120001
+## Interface: 120001, 120005
 ## Title: Details! Item Level Display
 ## Notes: Shows item level (iLvl) and tier set bonus (2P/4P) next to player names on Details! Damage Meter bars and ElvUI party frames
 ## Author: HK2084
