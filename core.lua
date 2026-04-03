@@ -1,4 +1,5 @@
 local addonName = ...
+local addonVersion = C_AddOns.GetAddOnMetadata(addonName, "Version") or "?"
 
 local defaults = {
     enabled = true,
@@ -40,6 +41,27 @@ local function isSecretValue(val)
     if issecretvalue and issecretvalue(val) then return true end
     if issecrettable and issecrettable(val) then return true end
     return false
+end
+
+---------------------------------------------------------------
+-- Safe InCombatLockdown wrapper (WoW 12.0+)
+-- Inside instances, InCombatLockdown() can return a secret value.
+-- A secret-wrapped false is truthy in Lua (userdata, not nil/false),
+-- so raw `if InCombatLockdown() then` is ALWAYS true when secret.
+-- This wrapper treats secret returns as "not in combat" — safe for
+-- addon logic (inspect queue, refresh, measurement).
+---------------------------------------------------------------
+local function IsInCombatSafe()
+    local v = InCombatLockdown()
+    if isSecretValue(v) then return false end
+    return v
+end
+
+-- Strict version: treats secret as "in combat" — for protected frame ops
+local function MayBeInCombat()
+    local v = InCombatLockdown()
+    if isSecretValue(v) then return true end
+    return v
 end
 
 ---------------------------------------------------------------
@@ -364,7 +386,7 @@ local function HookBarTextIfNeeded(bar)
             if not db.showInDetails then return end
 
             -- Don't inject during combat (taint with secure UI elements)
-            if InCombatLockdown() then return end
+            if MayBeInCombat() then return end
 
             local name = ExtractName(text)
             if name then
@@ -415,7 +437,7 @@ end
 -- Needed when inspect data arrives after Details already drew the bars
 ---------------------------------------------------------------
 local function RefreshAllBarTexts()
-    if InCombatLockdown() then return end
+    if MayBeInCombat() then return end
     if not db or not db.showInDetails then return end
     if not next(nameToIlvl) then return end
 
@@ -499,7 +521,7 @@ end
 -- Inspect group
 ---------------------------------------------------------------
 local function ProcessNextInspect()
-    if InCombatLockdown() or #inspectQueue == 0 then
+    if IsInCombatSafe() or #inspectQueue == 0 then
         isInspecting = false
         return
     end
@@ -541,7 +563,7 @@ local function ProcessNextInspect()
 end
 
 local function QueueGroupInspect()
-    if InCombatLockdown() then return end
+    if IsInCombatSafe() then return end
 
     -- Reset inspect state: if a previous NotifyInspect was throttled and
     -- INSPECT_READY never fired, isInspecting stays true and the queue
@@ -702,13 +724,13 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.3 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded. /dilvl")
                 else
                     -- ElvUI-only mode: Details! not loaded, but we can still
                     -- inspect group and serve data via the [dilvl] ElvUI tag.
                     detailsReady = true  -- prevent re-init on next zone
                     C_Timer.NewTicker(2, OnTick)  -- needed for inspect queue processing
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.3 loaded (ElvUI-only mode). /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (ElvUI-only mode). /dilvl")
                 end
                 -- Inspect in both modes (Details + ElvUI-only)
                 C_Timer.After(5, QueueGroupInspect)
@@ -837,7 +859,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "GROUP_ROSTER_UPDATE" then
-        if not InCombatLockdown() and db and db.enabled then
+        if not IsInCombatSafe() and db and db.enabled then
             -- Wipe name maps immediately — unit tokens reshuffle on roster
             -- changes so old name->iLvl mappings are unreliable until we
             -- re-inspect and re-populate from fresh unit tokens.
@@ -944,13 +966,14 @@ SlashCmdList["DILVL"] = function(msg)
         for _ in pairs(nameToSetBonus) do bonusMapCount = bonusMapCount + 1 end
 
         local prefix, count, numGroup = GetGroupInfo()
-        local inCombat = InCombatLockdown() and "yes" or "no"
+        local rawCombat = InCombatLockdown()
+        local inCombat = isSecretValue(rawCombat) and "SECRET(safe=no)" or (rawCombat and "yes" or "no")
         local manualPause = (GetTime() - lastManualInspectTime) < 60 and "yes" or "no"
         local pending = pendingInspectGuid and pendingInspectGuid:sub(1,8) .. ".." or "none"
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.2.3 — Bug Report ===")
+        print("=== Details! iLvl Display v" .. addonVersion .. " — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s",
             db.enabled and "ON" or "OFF",
@@ -1039,7 +1062,7 @@ SlashCmdList["DILVL"] = function(msg)
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.2.3")
+        print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion)
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
