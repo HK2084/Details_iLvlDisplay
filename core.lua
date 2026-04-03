@@ -1,4 +1,5 @@
 local addonName = ...
+local addonVersion = C_AddOns.GetAddOnMetadata(addonName, "Version") or "?"
 
 local defaults = {
     enabled = true,
@@ -6,6 +7,7 @@ local defaults = {
     showSetBonus = true,
     showInDetails = true,  -- show iLvl on Details! bars (requires Details!)
     elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
+    layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
 }
 
 local db
@@ -29,6 +31,15 @@ local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- guard against multiple tickers on repeated PLAYER_ENTERING_WORLD
 local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI is built
 local openRaidLib = nil -- LibOpenRaid-1.0 handle; assigned after ADDON_LOADED if available
+local barColumns = {}       -- bar -> {ilvlFS, tierFS} (custom column FontStrings for layout="columns")
+local columnRefreshPending = false -- debounce flag for next-frame column refresh
+local perfStats = {calls = 0, totalMs = 0, lastMs = 0, peak = 0} -- column refresh perf tracking
+local cachedColLayout = nil -- cached {leftA, leftW, secA, secW, gap, yOff} from last good measurement
+
+-- Column layout constants
+local COL_ILVL_WIDTH = 36   -- px max text width for iLvl column (truncation threshold)
+local COL_TIER_WIDTH = 28   -- px max text width for tier column (truncation threshold)
+local MIN_NAME_WIDTH = 50   -- px minimum for player name before hiding columns
 
 ---------------------------------------------------------------
 -- Secret value guard (WoW 12.0+)
@@ -319,6 +330,281 @@ local function BuildTag(name)
 end
 
 ---------------------------------------------------------------
+-- Column layout helpers (layout = "columns")
+-- Creates dedicated FontStrings per bar for iLvl + tier display,
+-- anchored as separate right-aligned columns left of Details!'
+-- own right-side text (DPS, total, percent).
+---------------------------------------------------------------
+local function CopyBarFont(bar, targetFS)
+    local source = bar.lineText4
+    if not source then return end
+    local font, size, flags = source:GetFont()
+    if font then
+        targetFS:SetFont(font, size, flags)
+        targetFS:SetShadowColor(source:GetShadowColor())
+        targetFS:SetShadowOffset(source:GetShadowOffset())
+    end
+end
+
+local function CreateBarColumns(bar)
+    if barColumns[bar] then return end
+    if not bar.border or not bar.statusbar then return end
+
+    local ilvlFS = bar.border:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    ilvlFS:SetJustifyH("RIGHT")
+    ilvlFS:SetWordWrap(false)
+    ilvlFS:SetMaxLines(1)
+    ilvlFS:SetWidth(COL_ILVL_WIDTH)
+    ilvlFS:Hide()
+
+    local tierFS = bar.border:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    tierFS:SetJustifyH("RIGHT")
+    tierFS:SetWordWrap(false)
+    tierFS:SetMaxLines(1)
+    tierFS:SetWidth(COL_TIER_WIDTH)
+    tierFS:Hide()
+
+    -- Copy font once at creation (updated on resize via UpdateAllColumnFonts)
+    CopyBarFont(bar, ilvlFS)
+    CopyBarFont(bar, tierFS)
+
+    barColumns[bar] = {ilvlFS = ilvlFS, tierFS = tierFS}
+end
+
+-- Re-copy fonts for all columns (called on resize / config change, NOT per refresh)
+local function UpdateAllColumnFonts()
+    for bar, cols in pairs(barColumns) do
+        CopyBarFont(bar, cols.ilvlFS)
+        CopyBarFont(bar, cols.tierFS)
+    end
+end
+
+---------------------------------------------------------------
+-- RefreshAllColumns — lean two-pass auto-align (mirrors Details!)
+--
+-- Details! AutoAlignInLineFontStrings computes global max text
+-- widths across ALL bars, then positions every column uniformly.
+-- We continue the same pattern: measure the leftmost Details!
+-- column, compute a dynamic gap from adjacent columns, and
+-- chain our columns from there. Zero table allocation.
+---------------------------------------------------------------
+local function RefreshAllColumns()
+    -- No InCombatLockdown guard here: our column FontStrings are addon-created
+    -- overlays, not protected UI. Only lineText1:SetSize is guarded (pass 2).
+    if not db or db.layout ~= "columns" then return end
+    if not db.showInDetails then return end
+    if not next(nameToIlvl) then return end
+    local _perfStart = debugprofilestop()
+
+    -- === PASS 1: Set text + measure all columns (zero allocation) ===
+    local key2a, key2w = 0, 0 -- lineText2: maxAnchor, maxWidth
+    local key3a, key3w = 0, 0 -- lineText3
+    local key4a, key4w = 0, 0 -- lineText4
+    local maxWidthIlvl = 0
+    local yOff = 0
+
+    for bar, cols in pairs(barColumns) do
+        if not bar:IsShown() then
+            cols.ilvlFS:Hide()
+            cols.tierFS:Hide()
+        else
+            local text = barCleanText[bar.lineText1]
+            local name = text and ExtractName(text)
+            local ilvl = name and nameToIlvl[name]
+
+            if not ilvl then
+                cols.ilvlFS:SetText("")
+                cols.ilvlFS:Hide()
+                cols.tierFS:SetText("")
+                cols.tierFS:Hide()
+            else
+                -- Set ilvl text
+                if db.colorIlvl then
+                    cols.ilvlFS:SetText(GetIlvlColor(ilvl) .. ilvl .. "|r")
+                else
+                    cols.ilvlFS:SetText(tostring(ilvl))
+                end
+                -- Set tier text
+                local sb = db.showSetBonus and nameToSetBonus[name]
+                cols.tierFS:SetText(sb and ("|cFF00FF00" .. sb .. "|r") or "")
+
+                -- Measure our ilvl column
+                local iw = cols.ilvlFS:GetStringWidth() or 0
+                if iw > maxWidthIlvl then maxWidthIlvl = iw end
+
+                -- yOffset (once)
+                if yOff == 0 and bar.instance_id and Details then
+                    local ok, inst = pcall(Details.GetInstance, Details, bar.instance_id)
+                    if ok and inst and inst.row_info then
+                        yOff = inst.row_info.text_yoffset or 0
+                    end
+                end
+
+                -- Measure Details! right columns (inlined, no table/ipairs)
+                local fs = bar.lineText4
+                if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                    local _, _, _, ox = fs:GetPoint(1)
+                    if ox and not isSecretValue(ox) then
+                        local a = math.abs(ox)
+                        if a > key4a then key4a = a end
+                        local t = fs:GetText()
+                        if t and not isSecretValue(t) and t ~= "" then
+                            local w = fs:GetStringWidth() or 0
+                            if w > key4w then key4w = w end
+                        end
+                    end
+                end
+                fs = bar.lineText3
+                if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                    local _, _, _, ox = fs:GetPoint(1)
+                    if ox and not isSecretValue(ox) then
+                        local a = math.abs(ox)
+                        if a > key3a then key3a = a end
+                        local t = fs:GetText()
+                        if t and not isSecretValue(t) and t ~= "" then
+                            local w = fs:GetStringWidth() or 0
+                            if w > key3w then key3w = w end
+                        end
+                    end
+                end
+                fs = bar.lineText2
+                if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                    local _, _, _, ox = fs:GetPoint(1)
+                    if ox and not isSecretValue(ox) then
+                        local a = math.abs(ox)
+                        if a > key2a then key2a = a end
+                        local t = fs:GetText()
+                        if t and not isSecretValue(t) and t ~= "" then
+                            local w = fs:GetStringWidth() or 0
+                            if w > key2w then key2w = w end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Find leftmost + second leftmost Details! column (anchors always: text4 < text3 < text2)
+    local leftA, leftW, secA, secW = 0, 0, 0, 0
+    if key2a > 0 then
+        leftA, leftW = key2a, key2w
+        if key3a > 0 then secA, secW = key3a, key3w
+        elseif key4a > 0 then secA, secW = key4a, key4w end
+    elseif key3a > 0 then
+        leftA, leftW = key3a, key3w
+        if key4a > 0 then secA, secW = key4a, key4w end
+    elseif key4a > 0 then
+        leftA, leftW = key4a, key4w
+    end
+    -- If we got real data (non-SECRET), cache it for combat fallback.
+    -- If all anchors are 0 (SECRET during combat), use cached values.
+    local hasGoodData = (key3a > 0 or key4a > 0) -- at least one inner column measured
+    if hasGoodData then
+        if leftA == 0 then leftA = 73 end
+        local gap = 5
+        if secA > 0 then
+            local measured = leftA - secA - secW
+            if measured >= 3 then gap = measured end
+        end
+        cachedColLayout = {leftA = leftA, leftW = leftW, secA = secA, secW = secW, gap = gap, yOff = yOff}
+    elseif cachedColLayout then
+        leftA = cachedColLayout.leftA
+        leftW = cachedColLayout.leftW
+        secA  = cachedColLayout.secA
+        secW  = cachedColLayout.secW
+        yOff  = cachedColLayout.yOff
+    else
+        leftA = 73 -- no cache yet, Details default
+    end
+
+    local gap = cachedColLayout and cachedColLayout.gap or 5
+    local ilvlAnchor = leftA + leftW + gap
+    local tierAnchor = ilvlAnchor + maxWidthIlvl + gap
+
+    -- === PASS 2: Position all columns ===
+    for bar, cols in pairs(barColumns) do
+        if bar:IsShown() then
+            -- Check if this bar has data (text set in pass 1; empty = no data)
+            local ilvlText = cols.ilvlFS:GetText()
+            if not ilvlText or ilvlText == "" then
+                -- already hidden in pass 1
+            else
+                local barWidth = bar.statusbar and bar.statusbar:GetWidth() or 0
+
+                -- Dynamic hide: ilvl (last to hide)
+                if barWidth - (ilvlAnchor + maxWidthIlvl) < MIN_NAME_WIDTH then
+                    cols.ilvlFS:Hide()
+                    cols.tierFS:Hide()
+                else
+                    cols.ilvlFS:ClearAllPoints()
+                    cols.ilvlFS:SetPoint("RIGHT", bar.statusbar, "RIGHT", -ilvlAnchor, yOff)
+                    cols.ilvlFS:Show()
+
+                    -- Tier (first to hide)
+                    local tierText = cols.tierFS:GetText()
+                    if tierText and tierText ~= "" and barWidth - (tierAnchor + COL_TIER_WIDTH) >= MIN_NAME_WIDTH then
+                        cols.tierFS:ClearAllPoints()
+                        cols.tierFS:SetPoint("RIGHT", bar.statusbar, "RIGHT", -tierAnchor, yOff)
+                        cols.tierFS:Show()
+                    else
+                        cols.tierFS:Hide()
+                    end
+                end
+
+                -- Constrain name width to prevent overlap (skip during combat — taint)
+                if not InCombatLockdown() then
+                    local rightEdge = ilvlAnchor + maxWidthIlvl
+                    if cols.tierFS:IsShown() then rightEdge = tierAnchor + COL_TIER_WIDTH end
+                    if not cols.ilvlFS:IsShown() then rightEdge = 0 end
+                    local nameMaxW = barWidth - rightEdge - gap
+                    if nameMaxW < MIN_NAME_WIDTH then nameMaxW = MIN_NAME_WIDTH end
+                    bar.lineText1:SetSize(nameMaxW, 15)
+                end
+            end
+        end
+    end
+
+    -- Perf tracking
+    local elapsed = debugprofilestop() - _perfStart
+    perfStats.calls = perfStats.calls + 1
+    perfStats.totalMs = perfStats.totalMs + elapsed
+    perfStats.lastMs = elapsed
+    if elapsed > perfStats.peak then perfStats.peak = elapsed end
+end
+
+local function ClearAllColumns()
+    for bar, cols in pairs(barColumns) do
+        cols.ilvlFS:Hide()
+        cols.ilvlFS:SetText("")
+        cols.tierFS:Hide()
+        cols.tierFS:SetText("")
+        -- Reset lineText1 width constraint (Details! re-applies its own on next refresh)
+        if bar.lineText1 then
+            bar.lineText1:SetWidth(0)
+        end
+    end
+end
+
+-- Debounced next-frame column refresh.
+-- Called from SetText hook; runs AFTER Details! finishes sizing for this frame.
+local function ScheduleColumnRefresh()
+    if columnRefreshPending then return end
+    columnRefreshPending = true
+    C_Timer.After(0, function()
+        columnRefreshPending = false
+        -- No combat guard: column FontStrings are addon-created, not protected.
+        -- RefreshAllColumns guards lineText1:SetSize internally.
+        if not db or not db.enabled or not db.showInDetails then return end
+        if db.layout ~= "columns" then return end
+        if mapDirty then
+            mapDirty = false
+            RebuildNameIlvlMap()
+        end
+        RefreshAllColumns()
+    end)
+end
+
+---------------------------------------------------------------
 -- Hook a bar's lineText1 SetText to inject iLvl
 -- This avoids reading GetText() which returns secret strings
 ---------------------------------------------------------------
@@ -329,55 +615,58 @@ local function HookBarTextIfNeeded(bar)
     if hookedFontStrings[fontString] then return end
     hookedFontStrings[fontString] = true
 
+    -- Create column FontStrings for this bar (no-op if already created)
+    CreateBarColumns(bar)
+
     -- Seed barCleanText immediately with the current text — safe because we
     -- haven't injected into this FontString yet, so GetText() is clean.
     -- Without this, RefreshAllBarTexts has nothing to work with until Details!
     -- calls SetText again (e.g. never, if the window was just resized).
     -- GetText() can return a secret string (Details! Itemlevelfinder).
-    -- isSecretValue guard skips early; pcall is the safety net.
-    pcall(function()
-        local currentText = fontString:GetText()
-        if isSecretValue(currentText) then return end
-        if currentText and type(currentText) == "string" and not currentText:find("%[%d+%]") then
-            barCleanText[fontString] = currentText
-        end
-    end)
+    -- Per-field guard: check the value, skip if tainted. No pcall needed.
+    local currentText = fontString:GetText()
+    if not isSecretValue(currentText)
+       and currentText and type(currentText) == "string"
+       and not currentText:find("%[%d+%]") then
+        barCleanText[fontString] = currentText
+    end
     mapDirty = true
 
     hooksecurefunc(fontString, "SetText", function(self, text)
         if isOurSetText then return end
         if not db or not db.enabled then return end
         -- Details! Itemlevelfinder passes "secret string" values to SetText.
-        -- isSecretValue catches them early; pcall is the safety net.
+        -- Per-field guard: check the value, skip if tainted. No pcall needed.
         if isSecretValue(text) then return end
-        pcall(function()
-            if not text or type(text) ~= "string" or text:match("^%s*$") then return end
-            if text:find("%[%d+%]") then return end
+        if not text or type(text) ~= "string" or text:match("^%s*$") then return end
+        if text:find("%[%d+%]") then return end
 
-            -- Cache Details!'s clean text before we inject anything.
-            -- GetText() later returns our injected (tainted) string, so we must
-            -- never call GetText() — use barCleanText instead.
-            -- IMPORTANT: update even during combat so post-combat RefreshAllBarTexts
-            -- sees the CURRENT player names, not pre-fight stale data.
+        -- Cache Details!'s clean text before we inject anything.
+        -- Only store text with a rank prefix ("1. Name") — real player bars.
+        -- Details! may call SetText with placeholders like "warte Aktualisierung ab ..."
+        -- during data loading; those must NOT overwrite a stored player name.
+        if text:match("^%d+%.%s") or not barCleanText[self] then
             barCleanText[self] = text
+        end
 
-            if not db.showInDetails then return end
+        if not db.showInDetails then return end
 
-            -- Don't inject during combat (taint with secure UI elements)
-            if InCombatLockdown() then return end
+        -- Column mode: schedule next-frame refresh (after Details! finishes sizing).
+        -- No combat guard needed — we only write to our own FontStrings, not Details!'.
+        if db.layout == "columns" then
+            ScheduleColumnRefresh()
+            return
+        end
 
-            local name = ExtractName(text)
-            if name then
-                local tag = BuildTag(name)
-                if tag then
-                    isOurSetText = true
-                    self:SetText(text .. tag)
-                    isOurSetText = false
-                end
+        local name = ExtractName(text)
+        if name then
+            local tag = BuildTag(name)
+            if tag then
+                isOurSetText = true
+                self:SetText(text .. tag)
+                isOurSetText = false
             end
-        end)
-        -- Safety: reset guard in case pcall swallowed an error mid-injection
-        isOurSetText = false
+        end
     end)
 
     -- 12.0.1 added FontString:ClearText() — hook it so barCleanText doesn't
@@ -415,31 +704,33 @@ end
 -- Needed when inspect data arrives after Details already drew the bars
 ---------------------------------------------------------------
 local function RefreshAllBarTexts()
-    if InCombatLockdown() then return end
     if not db or not db.showInDetails then return end
     if not next(nameToIlvl) then return end
 
+    -- Column mode: no combat guard needed (writes to our own FontStrings only)
+    if db.layout == "columns" then
+        RefreshAllColumns()
+        return
+    end
+
+    -- Inline mode: skip during combat (modifies Details!' FontStrings → taint)
+    if InCombatLockdown() then return end
+
     isOurSetText = true
     for fontString in pairs(hookedFontStrings) do
-        local ok = pcall(function()
-            if fontString:IsShown() then
-                -- Use our cached clean text — never GetText(), which returns our
-                -- injected secret string and causes taint errors on string ops.
-                local text = barCleanText[fontString]
-                if text then
-                    local name = ExtractName(text)
-                    if name then
-                        local tag = BuildTag(name)
-                        if tag then
-                            fontString:SetText(text .. tag)
-                        end
+        -- barCleanText values are pre-validated on insert (isSecretValue checked
+        -- in SetText hook and GetText seed). No pcall needed here.
+        if fontString:IsShown() then
+            local text = barCleanText[fontString]
+            if text then
+                local name = ExtractName(text)
+                if name then
+                    local tag = BuildTag(name)
+                    if tag then
+                        fontString:SetText(text .. tag)
                     end
                 end
             end
-        end)
-        if not ok then
-            -- Restore guard so subsequent iterations still block re-entry
-            isOurSetText = true
         end
     end
     isOurSetText = false
@@ -453,6 +744,11 @@ end
 ---------------------------------------------------------------
 local resizeDebounce = nil
 local function OnDetailsResize()
+    -- Immediate next-frame column refresh (cheap, 0.09ms) for responsive resize
+    if db and db.layout == "columns" then
+        ScheduleColumnRefresh()
+    end
+    -- Full re-hook + rebuild after drag ends (0.3s debounce)
     if resizeDebounce then
         resizeDebounce:Cancel()
     end
@@ -460,7 +756,9 @@ local function OnDetailsResize()
         resizeDebounce = nil
         if not db or not db.enabled then return end
         mapDirty = true
+        cachedColLayout = nil -- force re-measure after resize
         HookAllBars()         -- pick up any new bar FontStrings created on resize
+        UpdateAllColumnFonts() -- re-copy fonts (Details! font may have changed)
         RebuildNameIlvlMap()  -- re-populate name->ilvl from cache (cache is intact)
         RefreshAllBarTexts()  -- inject tags immediately, don't wait for next ticker
     end)
@@ -702,13 +1000,13 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RebuildNameIlvlMap()
                     HookAllBars()
                     C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.3 loaded. /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded. /dilvl")
                 else
                     -- ElvUI-only mode: Details! not loaded, but we can still
                     -- inspect group and serve data via the [dilvl] ElvUI tag.
                     detailsReady = true  -- prevent re-init on next zone
                     C_Timer.NewTicker(2, OnTick)  -- needed for inspect queue processing
-                    print("|cFF00FF00Details! iLvl Display|r v1.0.2.3 loaded (ElvUI-only mode). /dilvl")
+                    print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (ElvUI-only mode). /dilvl")
                 end
                 -- Inspect in both modes (Details + ElvUI-only)
                 C_Timer.After(5, QueueGroupInspect)
@@ -856,13 +1154,13 @@ end)
 local function ClearAllBarTags()
     isOurSetText = true
     for fontString, cleanText in pairs(barCleanText) do
-        pcall(function()
-            if fontString:IsShown() and cleanText then
-                fontString:SetText(cleanText)
-            end
-        end)
+        -- cleanText is pre-validated (isSecretValue checked on insert).
+        if fontString:IsShown() and cleanText then
+            fontString:SetText(cleanText)
+        end
     end
     isOurSetText = false
+    ClearAllColumns()
 end
 
 ---------------------------------------------------------------
@@ -936,12 +1234,13 @@ SlashCmdList["DILVL"] = function(msg)
 
     elseif msg == "debug" then
         -- Full bug-report output — user can paste this entire block
-        local cacheCount, mapCount, hookCount, setBonusCount, bonusMapCount = 0, 0, 0, 0, 0
+        local cacheCount, mapCount, hookCount, setBonusCount, bonusMapCount, colCount = 0, 0, 0, 0, 0, 0
         for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
         for _ in pairs(nameToIlvl) do mapCount = mapCount + 1 end
         for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
         for _ in pairs(setBonusCache) do setBonusCount = setBonusCount + 1 end
         for _ in pairs(nameToSetBonus) do bonusMapCount = bonusMapCount + 1 end
+        for _ in pairs(barColumns) do colCount = colCount + 1 end
 
         local prefix, count, numGroup = GetGroupInfo()
         local inCombat = InCombatLockdown() and "yes" or "no"
@@ -950,24 +1249,173 @@ SlashCmdList["DILVL"] = function(msg)
         local wowBuild = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
-        print("=== Details! iLvl Display v1.0.2.3 — Bug Report ===")
+        print("=== Details! iLvl Display v" .. addonVersion .. " — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
-        print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s",
+        print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s  Layout: %s",
             db.enabled and "ON" or "OFF",
             db.showInDetails and "ON" or "OFF",
-            db.elvuiTag and "ON" or "OFF"))
+            db.elvuiTag and "ON" or "OFF",
+            db.layout or "inline"))
         print(string.format("  Color: %s  SetBonus: %s",
             db.colorIlvl and "ON" or "OFF",
             db.showSetBonus and "ON" or "OFF"))
         print(string.format("  Group: %s (%d members)  InCombat: %s",
             prefix, numGroup, inCombat))
-        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d bonusMap  %d hooks",
-            cacheCount, setBonusCount, mapCount, bonusMapCount, hookCount))
+        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d bonusMap  %d hooks  %d columns",
+            cacheCount, setBonusCount, mapCount, bonusMapCount, hookCount, colCount))
         print(string.format("  Queue: %d pending  inspecting: %s  manualPause: %s  pending: %s",
             #inspectQueue, tostring(isInspecting), manualPause, pending))
         print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
             openRaidLib and "active" or "n/a"))
+
+        -- Column diagnostics
+        if db.layout == "columns" then
+            print("  --- Column Diagnostics ---")
+            local shown, hasText, hasIlvl = 0, 0, 0
+            -- Simulate pass 1 measurement for debug output
+            local dk2a, dk2w, dk3a, dk3w, dk4a, dk4w = 0, 0, 0, 0, 0, 0
+            local dMaxIlvl = 0
+            for bar, cols in pairs(barColumns) do
+                if bar:IsShown() then
+                    shown = shown + 1
+                    local ct = barCleanText[bar.lineText1]
+                    local n = ct and ExtractName(ct)
+                    local iv = n and nameToIlvl[n]
+                    if ct then hasText = hasText + 1 end
+                    if iv then hasIlvl = hasIlvl + 1 end
+
+                    -- Per-bar detail (first 2 visible bars)
+                    if shown <= 2 then
+                        print(string.format("    [bar %d] cleanText=%s", shown, ct and ct:sub(1,30) or "nil"))
+                        print(string.format("      name=%s  ilvl=%s", tostring(n), tostring(iv)))
+                        print(string.format("      barWidth=%.1f  shown=%s",
+                            bar.statusbar and bar.statusbar:GetWidth() or 0,
+                            tostring(bar:IsShown())))
+                        print(string.format("      ilvlFS: text=%s shown=%s  tierFS: text=%s shown=%s",
+                            tostring(cols.ilvlFS:GetText()), tostring(cols.ilvlFS:IsShown()),
+                            tostring(cols.tierFS:GetText()), tostring(cols.tierFS:IsShown())))
+                        -- Details! columns
+                        for _, k in ipairs({"lineText2","lineText3","lineText4"}) do
+                            local fs = bar[k]
+                            if fs then
+                                local vis = fs:IsShown() and "vis" or "hid"
+                                local pts = fs:GetNumPoints()
+                                local ox, sw = "?", "?"
+                                if pts > 0 then
+                                    local _,_,_,x = fs:GetPoint(1)
+                                    ox = x and (isSecretValue(x) and "SECRET" or string.format("%.1f", x)) or "nil"
+                                end
+                                local txt = fs:GetText()
+                                if txt then
+                                    if isSecretValue(txt) then sw = "SECRET"
+                                    else sw = string.format("%.1f", fs:GetStringWidth() or 0) end
+                                else sw = "0" end
+                                local ts = txt and (isSecretValue(txt) and "SECRET" or txt:sub(1,10)) or "nil"
+                                print(string.format("      %s: %s ox=%s sw=%s text=%s", k, vis, ox, sw, ts))
+                            end
+                        end
+                    end
+
+                    -- Accumulate measurements (same logic as RefreshAllColumns pass 1)
+                    local fs = bar.lineText4
+                    if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                        local _,_,_,ox = fs:GetPoint(1)
+                        if ox and not isSecretValue(ox) then
+                            local a = math.abs(ox)
+                            if a > dk4a then dk4a = a end
+                            local t = fs:GetText()
+                            if t and not isSecretValue(t) and t ~= "" then
+                                local w = fs:GetStringWidth() or 0
+                                if w > dk4w then dk4w = w end
+                            end
+                        end
+                    end
+                    fs = bar.lineText3
+                    if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                        local _,_,_,ox = fs:GetPoint(1)
+                        if ox and not isSecretValue(ox) then
+                            local a = math.abs(ox)
+                            if a > dk3a then dk3a = a end
+                            local t = fs:GetText()
+                            if t and not isSecretValue(t) and t ~= "" then
+                                local w = fs:GetStringWidth() or 0
+                                if w > dk3w then dk3w = w end
+                            end
+                        end
+                    end
+                    fs = bar.lineText2
+                    if fs and fs:IsShown() and fs:GetNumPoints() > 0 then
+                        local _,_,_,ox = fs:GetPoint(1)
+                        if ox and not isSecretValue(ox) then
+                            local a = math.abs(ox)
+                            if a > dk2a then dk2a = a end
+                            local t = fs:GetText()
+                            if t and not isSecretValue(t) and t ~= "" then
+                                local w = fs:GetStringWidth() or 0
+                                if w > dk2w then dk2w = w end
+                            end
+                        end
+                    end
+                    -- Our ilvl width
+                    if iv then
+                        local iw = cols.ilvlFS:GetStringWidth() or 0
+                        if iw > dMaxIlvl then dMaxIlvl = iw end
+                    end
+                end
+            end
+
+            -- Compute anchors (mirror RefreshAllColumns logic)
+            local leftA, leftW, secA, secW = 0, 0, 0, 0
+            if dk2a > 0 then
+                leftA, leftW = dk2a, dk2w
+                if dk3a > 0 then secA, secW = dk3a, dk3w
+                elseif dk4a > 0 then secA, secW = dk4a, dk4w end
+            elseif dk3a > 0 then
+                leftA, leftW = dk3a, dk3w
+                if dk4a > 0 then secA, secW = dk4a, dk4w end
+            elseif dk4a > 0 then
+                leftA, leftW = dk4a, dk4w
+            end
+            if leftA == 0 then leftA = 73 end
+            local gap = 5
+            if secA > 0 then
+                local m = leftA - secA - secW
+                if m >= 3 then gap = m end
+            end
+            local ilvlAnc = leftA + leftW + gap
+            local tierAnc = ilvlAnc + dMaxIlvl + gap
+
+            print("  --- Spacing ---")
+            print(string.format("    Details! cols: text4(a=%.1f w=%.1f) text3(a=%.1f w=%.1f) text2(a=%.1f w=%.1f)",
+                dk4a, dk4w, dk3a, dk3w, dk2a, dk2w))
+            local cacheStr = cachedColLayout and string.format("YES(gap=%.1f)", cachedColLayout.gap) or "NO"
+            print(string.format("    leftmost: a=%.1f w=%.1f  second: a=%.1f w=%.1f  gap=%.1f  cache=%s",
+                leftA, leftW, secA, secW, gap, cacheStr))
+            print(string.format("    ilvlAnchor=%.1f  tierAnchor=%.1f  maxWidthIlvl=%.1f",
+                ilvlAnc, tierAnc, dMaxIlvl))
+            -- Hide thresholds
+            local sampleWidth = 0
+            for bar in pairs(barColumns) do
+                if bar:IsShown() and bar.statusbar then
+                    sampleWidth = bar.statusbar:GetWidth()
+                    break
+                end
+            end
+            print(string.format("    barWidth=%.1f  nameLeft=%.1f  hideIlvl@<%.1f  hideTier@<%.1f",
+                sampleWidth,
+                sampleWidth - (tierAnc + COL_TIER_WIDTH) - gap,
+                ilvlAnc + dMaxIlvl + MIN_NAME_WIDTH,
+                tierAnc + COL_TIER_WIDTH + MIN_NAME_WIDTH))
+
+            print(string.format("    bars: %d shown, %d cleanText, %d ilvlMatch", shown, hasText, hasIlvl))
+            if perfStats.calls > 0 then
+                print(string.format("    perf: %d calls, avg=%.2fms, last=%.2fms, peak=%.2fms",
+                    perfStats.calls, perfStats.totalMs / perfStats.calls, perfStats.lastMs, perfStats.peak))
+            else
+                print("    perf: no calls yet")
+            end
+        end
 
         -- Cache: show all entries with iLvl + set bonus
         if cacheCount > 0 then
@@ -1038,13 +1486,35 @@ SlashCmdList["DILVL"] = function(msg)
         db.elvuiTag = false
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
+
+    elseif msg == "layout" or msg == "layout inline" or msg == "layout columns" then
+        if msg == "layout inline" then
+            db.layout = "inline"
+        elseif msg == "layout columns" then
+            db.layout = "columns"
+        else
+            db.layout = (db.layout == "columns") and "inline" or "columns"
+        end
+        if db.layout == "columns" then
+            ClearAllBarTags()   -- remove inline tags
+            HookAllBars()       -- ensure all bars have column FontStrings
+            RebuildNameIlvlMap()
+            RefreshAllColumns()
+        else
+            ClearAllColumns()
+            RebuildNameIlvlMap()
+            RefreshAllBarTexts()
+        end
+        print("|cFF00FF00Details! iLvl Display:|r Layout: " .. db.layout)
+
     else
-        print("|cFF00FF00Details! iLvl Display|r v1.0.2.3")
+        print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion)
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
+        print("  /dilvl layout          — Toggle inline/columns layout")
         print("  /dilvl inspect         — Manually trigger group inspect")
         print("  /dilvl debug           — Full status report (paste when reporting a bug)")
         print("  /dilvl cache           — Show cached iLvl entries")

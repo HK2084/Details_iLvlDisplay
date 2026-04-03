@@ -7,6 +7,25 @@ Versioning: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.2.0] - 2026-04-03
+
+### Added
+
+- **Column layout mode**: new `/dilvl layout` command toggles between `inline` (classic — appended to name) and `columns` (separate right-aligned columns for iLvl and tier set, positioned left of Details!' own DPS/total/percent columns)
+- Columns are created as dedicated FontStrings on each bar, inheriting Details!' font settings for visual consistency
+- Dynamic positioning: columns measure the actual extent of Details!' right-side text and anchor themselves just left of it
+- Tiered resize: tier column hides first (below 200 px), iLvl column hides last (below 150 px) — graceful degradation on narrow windows
+- `lineText1` (player name) width is constrained in column mode to prevent text overlap with the new columns
+- Debounced next-frame refresh (`C_Timer.After(0)`) ensures columns update after Details! finishes its own sizing pass
+- `/dilvl layout inline` and `/dilvl layout columns` for explicit mode selection
+- `/dilvl debug` now shows layout mode and column count
+
+### Known Limitations
+
+- `bars_inverted` (RTL) mode is not yet supported in column layout; inverted bars will show no iLvl/tier data in column mode (use `inline` as fallback)
+
+---
+
 ## [1.1.0] - 2026-04-02
 
 ### Added

@@ -1,4 +1,4 @@
-# Details! iLvl Display
+# Details! Item Level Display
 
 Shows **item level** and **tier set bonus** next to every player name on [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) bars — the combat meter addon by [Tercioo](https://github.com/Tercioo).
 
@@ -126,7 +126,14 @@ The tag updates instantly when inspect data arrives, on gear swaps, or when the 
 **"Nothing is showing at all"**
 → Run `/dilvl debug` and check that `Details-bars` and `Addon` are both `ON`. If `Details-bars: OFF`, run `/dilvl details` to re-enable. Then `/dilvl inspect`.
 
-**Reporting a bug:** run `/dilvl debug` and include the full output in your report.
+**Reporting a bug:** run `/dilvl debug` and include the full output in your report. You can also [open an issue on GitHub](https://github.com/HK2084/Details_iLvlDisplay/issues).
+
+---
+
+## Links
+
+- [CurseForge](https://www.curseforge.com/wow/addons/details-item-level-display) — download & install
+- [GitHub Issues](https://github.com/HK2084/Details_iLvlDisplay/issues) — bug reports & feature requests
 
 ---
 
