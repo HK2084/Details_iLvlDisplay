@@ -54,7 +54,7 @@ local function trace(msg)
     if #traceLog > MAX_TRACE then table.remove(traceLog, 1) end
 end
 
-local function traceFrameState(tag)
+local function traceFrameState(tag, detailed)
     if not traceEnabled then return end
     if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
     local total, secret, tagged, noGuid = 0, 0, 0, 0
@@ -71,6 +71,19 @@ local function traceFrameState(tag)
                     secret = secret + 1
                 else
                     if type(txt) == "string" and txt:find("%[%d+%]") then tagged = tagged + 1 end
+                end
+                -- Detailed per-frame log: what data is readable right now?
+                if detailed then
+                    local sn = frame.sourceName
+                    local snS = (not sn and "nil") or (isSecret(sn) and "SEC") or tostring(sn):sub(1,15)
+                    local nt = frame.nameText
+                    local ntS = (not nt and "nil") or (isSecret(nt) and "SEC") or tostring(nt):sub(1,20)
+                    local gnt = frame.GetNameText and frame:GetNameText()
+                    local gntS = (not gnt and "nil") or (isSecret(gnt) and "SEC") or tostring(gnt):sub(1,20)
+                    local lp = frame.isLocalPlayer == true and "YOU" or ""
+                    local gd = frame._dilvlGUID and "GUID" or "noGUID"
+                    trace(format("  [%d] sn=%s nt=%s gnt=%s %s %s",
+                        total, snS, ntS, gntS, gd, lp))
                 end
             end)
         end)
@@ -108,27 +121,16 @@ do
     if icl == true then inCombat = true end
 end
 
--- Check if ANY group member is in combat. Cached for 1s to avoid
--- scanning 25 units on every InjectIlvl call.
--- If UnitAffectingCombat ever returns secret (future Blizzard restriction),
--- we treat it as "in combat" (safe default).
-local groupCombatTime = 0
-local groupCombatResult = false
+-- Combat guard: should we inject right now?
+-- Only checks OUR combat state + boss encounter.
+-- In LFR, someone in the 25-man raid is almost ALWAYS in combat
+-- (tank pulls next trash before everyone is OOC). Scanning all
+-- members with UnitAffectingCombat blocked us permanently.
+-- Our own REGEN events + IsEncounterInProgress is sufficient:
+-- secrets on OUR frames unlock when WE leave combat.
 local function IsGroupInCombat()
     if inCombat then return true end
     if IsEncounterInProgress() then return true end
-    local now = GetTime()
-    if now - groupCombatTime < 1 then return groupCombatResult end
-    groupCombatTime = now
-    local count = GetNumGroupMembers()
-    if count == 0 then groupCombatResult = false; return false end
-    local prefix = IsInRaid() and "raid" or "party"
-    for i = 1, count do
-        local afc = UnitAffectingCombat(prefix .. i)
-        if isSecret(afc) then groupCombatResult = true; return true end
-        if afc == true then groupCombatResult = true; return true end
-    end
-    groupCombatResult = false
     return false
 end
 
@@ -161,6 +163,22 @@ local function BuildTag(guid)
 end
 
 ---------------------------------------------------------------
+-- Strip our iLvl/tier tags from a text string.
+-- Used by StripAllTags (combat start) and ResolveFrameGUID
+-- (parse nameText for roster lookup).
+---------------------------------------------------------------
+local function StripTagFromText(txt)
+    if not txt or type(txt) ~= "string" then return txt end
+    -- Strip colored iLvl tags: " |cFFxxxxxx[245]|r"
+    txt = txt:gsub("%s*|c%x%x%x%x%x%x%x%x%[%d+%]|r", "")
+    -- Strip uncolored iLvl tags: " [245]"
+    txt = txt:gsub("%s*%[%d+%]", "")
+    -- Strip colored tier tags: " |cFF00FF00[2P]|r" / " |cFF00FF00[4P]|r"
+    txt = txt:gsub("%s*|c%x%x%x%x%x%x%x%x%[%d[PT]%]|r", "")
+    return txt
+end
+
+---------------------------------------------------------------
 -- Resolve GUID for a DamageMeter entry frame.
 -- Reads self.* fields set by Blizzard's untainted code.
 -- Strategy:
@@ -175,17 +193,50 @@ local function ResolveFrameGUID(frame)
         return UnitGUID("player")
     end
 
-    -- Prefer GUID captured from Init (sourceGUID has no secret annotation)
     local cachedGUID = frame._dilvlGUID
+    local name = frame.sourceName
+    local nameReadable = name and not isSecret(name)
+
+    -- Validate cached GUID against current sourceName.
+    -- ScrollBox recycles frames — cached GUID can belong to a different player.
+    -- Ambiguate API resolves the authoritative GUID from the roster.
     if cachedGUID and not isSecret(cachedGUID) then
+        if nameReadable then
+            local freshGUID = API.ResolveGUIDByName(name)
+            if freshGUID and freshGUID ~= cachedGUID then
+                frame._dilvlGUID = freshGUID
+                return freshGUID
+            end
+        end
         return cachedGUID
     end
 
-    -- Fallback: sourceName roster lookup (ConditionalSecret during combat)
-    local name = frame.sourceName
-    if not name or isSecret(name) then return nil end
+    -- No cached GUID — resolve from sourceName
+    if nameReadable then
+        local guid = API.ResolveGUIDByName(name)
+        if guid then frame._dilvlGUID = guid end
+        return guid
+    end
 
-    return API.ResolveGUIDByName(name)
+    -- Fallback: sourceName is secret, but the raw nameText FIELD is readable
+    -- (no secret wrapper on the field itself, only on GetNameText() method).
+    -- Confirmed via trace: sn=SEC, gnt=SEC, but nt="1. Quinroth" is readable.
+    -- Parse player name from ranked text → roster/cache lookup.
+    local nt = frame.nameText
+    if nt and not isSecret(nt) then
+        local parsed = tostring(nt):match("^%d+%.%s*(.+)") or tostring(nt)
+        parsed = StripTagFromText(parsed)
+        parsed = parsed and parsed:match("^%s*(.-)%s*$")
+        if parsed and parsed ~= "" then
+            local guid = API.ResolveGUIDByName(parsed)
+            if guid then
+                frame._dilvlGUID = guid
+                return guid
+            end
+        end
+    end
+
+    return nil
 end
 
 ---------------------------------------------------------------
@@ -266,12 +317,6 @@ end
 -- combat, SetToDefaults() clears the secret aspect so Blizzard's
 -- own text becomes visible again (even without our iLvl tag).
 ---------------------------------------------------------------
----------------------------------------------------------------
--- Strip our iLvl tags from ALL visible frames.
--- Called on combat start — restores pure Blizzard display text.
--- Uses Blizzard's own GetNameText() which returns the formatted
--- name with rank prefix (e.g. "1. Quinroth").
----------------------------------------------------------------
 local function StripAllTags()
     if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
     trace("StripAllTags")
@@ -281,12 +326,12 @@ local function StripAllTags()
             if frame._dilvlNameFS then frame._dilvlNameFS:Hide() end
             local nameFS = frame.GetName and frame:GetName()
             if not nameFS or type(nameFS) == "string" then return end
-            -- Try to restore Blizzard's native text
-            local blizzText = frame.GetNameText and frame:GetNameText()
-            if blizzText and not isSecret(blizzText) then
-                nameFS:SetText(blizzText)
+            local ok, txt = pcall(nameFS.GetText, nameFS)
+            if not ok or not txt or isSecret(txt) then return end
+            local clean = StripTagFromText(txt)
+            if clean ~= txt then
+                nameFS:SetText(clean)
             end
-            -- If text is secret, Blizzard will handle it — we don't touch it
         end)
     end)
     traceFrameState("StripAllTags_DONE")
@@ -342,12 +387,10 @@ end
 -- hide the native text (SetAlpha 0), and display there instead.
 ---------------------------------------------------------------
 local function InjectIlvl(frame)
-    -- Skip when ANY group member is in combat — not just us.
-    -- Blizzard's Secret Value system locks ALL name fields group-wide.
-    -- IsGroupInCombat checks: our inCombat flag, IsEncounterInProgress(),
-    -- and UnitAffectingCombat on all group members (cached 1s).
-    -- If any check returns secret → assume combat (future-safe).
-    if IsGroupInCombat() then ClearOverlay(frame) return end
+    -- Combat = we don't exist. Pure return, no writes, no ClearOverlay.
+    -- StripAllTags already cleaned up on combat start.
+    -- RefreshAllFrames will re-inject when everyone is OOC.
+    if IsGroupInCombat() then return end
 
     local guid = ResolveFrameGUID(frame)
     if not guid then ClearOverlay(frame) return end
@@ -477,26 +520,27 @@ end
 -- than Init which only fires on ScrollBox frame creation.
 ---------------------------------------------------------------
 hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
+    -- Combat = we don't exist. No reads, no writes, no traces.
+    -- Full group combat check (inCombat + IsEncounterInProgress + UnitAffectingCombat).
+    if IsGroupInCombat() then return end
+
+    -- Capture GUID from sourceName when readable (OOC).
+    -- Init hook misses ScrollBox-recycled frames, this catches them.
+    local name = self.sourceName
+    if name and not isSecret(name) then
+        local guid = API.ResolveGUIDByName(name)
+        if guid then self._dilvlGUID = guid end
+    end
+
     -- Trace: log when Blizzard calls UpdateName and what state the frame is in
     if traceEnabled then
         local nameFS = self.GetName and self:GetName()
         local txtOk, txt = pcall(function() return nameFS and nameFS:GetText() end)
         local display = (txtOk and txt and not isSecret(txt)) and tostring(txt):sub(1, 30) or "(secret)"
-        local combat = IsGroupInCombat()
-        trace(format("UpdateName [%s] combat=%s nameText=%s",
-            self.sourceName and not isSecret(self.sourceName) and tostring(self.sourceName) or "?",
-            tostring(combat), display))
+        trace(format("UpdateName [%s] nameText=%s",
+            name and not isSecret(name) and tostring(name) or "?", display))
     end
 
-    -- Capture GUID from sourceName when readable (OOC).
-    -- Init hook misses ScrollBox-recycled frames, this catches them.
-    if not self._dilvlGUID or isSecret(self._dilvlGUID) then
-        local name = self.sourceName
-        if name and not isSecret(name) then
-            local guid = API.ResolveGUIDByName(name)
-            if guid then self._dilvlGUID = guid end
-        end
-    end
     InjectIlvl(self)
 end)
 
@@ -552,70 +596,51 @@ local function ScheduleRefresh()
 end
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
-    -- === Combat START signals — strip our tags immediately ===
+    -- === Combat START signals — strip our tags, go silent ===
+    -- Every combat-start path sets inCombat=true and resets
+    -- postCombatRefreshDone so the backup refresh after the NEXT
+    -- combat-end always fires.
     if event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
-        groupCombatTime = 0
-        StripAllTags()  -- remove our iLvl tags, restore Blizzard text
+        postCombatRefreshDone = false
+        StripAllTags()
         return
     end
     if event == "PLAYER_IN_COMBAT_CHANGED" then
-        -- Blizzard DM's own synchronous combat signal (12.0+).
-        -- Payload: inCombat (bool). Fires same frame as state change.
         local combatState = ...
         if combatState == true or isSecret(combatState) then
             inCombat = true
-            groupCombatTime = 0
-            trace("COMBAT_CHANGED → IN")
+            postCombatRefreshDone = false
+                trace("COMBAT_CHANGED → IN")
             StripAllTags()
         else
             inCombat = false
-            groupCombatTime = 0
-            trace("COMBAT_CHANGED → OUT")
-            traceFrameState("COMBAT_CHANGED_OUT")
-            -- Primary post-combat refresh: this is Blizzard DM's own synchronous
-            -- signal, fires same frame as state change. Most secrets are already
-            -- unlocked here. Direct RefreshAllFrames (not coalesced).
+                trace("COMBAT_CHANGED → OUT")
+            traceFrameState("COMBAT_CHANGED_OUT", true)
             RefreshAllFrames()
-            traceFrameState("COMBAT_CHANGED_POST_REFRESH")
+            traceFrameState("COMBAT_CHANGED_POST_REFRESH", true)
         end
         return
     end
     if event == "ENCOUNTER_START" or event == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" then
-        -- Boss detected — force combat state even if REGEN hasn't fired yet
-        groupCombatTime = 0
+        inCombat = true
+        postCombatRefreshDone = false
         StripAllTags()
         return
     end
-    if event == "UNIT_FLAGS" then
-        -- A unit's combat state changed. Invalidate cache so
-        -- IsGroupInCombat() re-scans on next InjectIlvl call.
-        groupCombatTime = 0
-        -- If someone just entered combat, clear overlays immediately.
-        -- If someone left combat, schedule a refresh (might be safe to inject).
-        local unit = ...
-        if unit then
-            local afc = UnitAffectingCombat(unit)
-            if afc == true or isSecret(afc) then
-                StripAllTags()
-                return
-            end
-        end
-        ScheduleRefresh()
-        return
-    end
+    -- UNIT_FLAGS: no longer used for combat detection.
+    -- We rely on our own REGEN + COMBAT_CHANGED + ENCOUNTER events.
+    if event == "UNIT_FLAGS" then return end
 
     -- === Combat END signals — safe to inject again ===
     if event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
-        groupCombatTime = 0
         trace("REGEN_ENABLED")
-        traceFrameState("REGEN_ENABLED")
+        traceFrameState("REGEN_ENABLED", true)
         ScheduleRefresh()
         return
     end
     if event == "ENCOUNTER_END" then
-        groupCombatTime = 0
         trace("ENCOUNTER_END")
         traceFrameState("ENCOUNTER_END")
         ScheduleRefresh()
@@ -625,7 +650,6 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     -- === Transition events — clean slate, safe to refresh ===
     if event == "LOADING_SCREEN_DISABLED" or event == "PLAYER_ENTERING_WORLD" then
         inCombat = false
-        groupCombatTime = 0
         ScheduleRefresh()
         return
     end
@@ -636,17 +660,12 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     -- Run a full RefreshAllFrames (not coalesced) to catch stale Gesamt
     -- frames that the earlier REGEN_ENABLED pass couldn't fix yet.
     if event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
-        if not IsGroupInCombat() then
-            -- Only refresh once after combat ends, not on every DM update.
-            if not postCombatRefreshDone then
-                postCombatRefreshDone = true
-                trace("DM_SESSION_UPDATED → POST-COMBAT REFRESH")
-                traceFrameState("DM_SESSION_PRE")
-                RefreshAllFrames()
-                traceFrameState("DM_SESSION_POST")
-            end
-        else
-            postCombatRefreshDone = false  -- reset flag when in combat
+        if not IsGroupInCombat() and not postCombatRefreshDone then
+            postCombatRefreshDone = true
+            trace("DM_SESSION_UPDATED → POST-COMBAT REFRESH")
+            traceFrameState("DM_SESSION_PRE", true)
+            RefreshAllFrames()
+            traceFrameState("DM_SESSION_POST", true)
         end
         return
     end
@@ -671,7 +690,21 @@ if DamageMeter.ForEachSessionWindow then
             hooksecurefunc(sessionWindow, "Show", function() ScheduleRefresh() end)
         end
         if sessionWindow.Refresh then
-            hooksecurefunc(sessionWindow, "Refresh", function() ScheduleRefresh() end)
+            hooksecurefunc(sessionWindow, "Refresh", function(sw)
+                -- Session switch (DPS→Gesamt, Heal→DPS): frames get recycled
+                -- for different players. Clear per-frame caches so InjectIlvl
+                -- re-resolves everything fresh via Ambiguate API.
+                if sw.ForEachEntryFrame then
+                    sw:ForEachEntryFrame(function(frame)
+                        frame._dilvlGUID = nil
+                        frame._dilvlFontFile = nil
+                        frame._dilvlFontSize = nil
+                        frame._dilvlFontFlags = nil
+                        frame._dilvlTextScale = nil
+                    end)
+                end
+                ScheduleRefresh()
+            end)
         end
     end)
 end

@@ -1804,6 +1804,13 @@ Details_iLvlDisplayAPI = {
                 if UnitName(unit) == shortName then
                     return UnitGUID(unit)
                 end
+                -- Cross-realm: UnitName returns "Name" without realm,
+                -- but shortName may be "Name-Realm" (non-connected realms).
+                -- Match via GetUnitName(unit, true) which includes realm.
+                local fullName = GetUnitName(unit, true)
+                if fullName and fullName ~= shortName and Ambiguate(fullName, "short") == shortName then
+                    return UnitGUID(unit)
+                end
             end
         end
         -- Fallback: reverse lookup from ilvlCache (players who left group)
