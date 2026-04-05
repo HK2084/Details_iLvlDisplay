@@ -1301,6 +1301,8 @@ local function ShowDebugWindow(text)
     DILvlDebugFrame.editBox:HighlightText()
     DILvlDebugFrame:Show()
 end
+-- Expose for blizzdm.lua trace output
+Details_iLvlDisplay_ShowDebugWindow = ShowDebugWindow
 
 ---------------------------------------------------------------
 -- Slash command
@@ -1718,6 +1720,14 @@ SlashCmdList["DILVL"] = function(msg)
             print("|cFFFFFF00  Note:|r Blizzard DM overlay is experimental. It hooks into Blizzard's")
             print("|cFFFFFF00  built-in damage meter which may change without notice. Only active")
             print("|cFFFFFF00  outside of combat. Report issues: /dilvl debug")
+        end
+
+    elseif msg == "blizztrace" then
+        -- Toggle event trace for post-combat debugging in blizzdm.lua
+        if Details_iLvlDisplay_BlizzTrace then
+            Details_iLvlDisplay_BlizzTrace(true)  -- toggle + print
+        else
+            print("|cFF00FF00Details! iLvl Display:|r Blizz DM trace not available (blizzdm.lua not loaded)")
         end
 
     elseif msg == "layout" or msg == "layout inline" or msg == "layout columns" then

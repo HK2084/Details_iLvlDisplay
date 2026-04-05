@@ -38,6 +38,52 @@ local function isSecret(val)
 end
 
 ---------------------------------------------------------------
+-- Event trace for post-combat debugging.
+-- Toggle: /dilvl blizztrace
+-- Logs combat→OOC event sequence + frame secret state.
+---------------------------------------------------------------
+local traceEnabled = false
+local traceLog = {}
+local MAX_TRACE = 200
+
+local function trace(msg)
+    if not traceEnabled then return end
+    local t = GetTime()
+    local entry = format("%.1f %s", t, msg)
+    table.insert(traceLog, entry)
+    if #traceLog > MAX_TRACE then table.remove(traceLog, 1) end
+end
+
+local function traceFrameState(tag)
+    if not traceEnabled then return end
+    if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
+    local total, secret, tagged, noGuid = 0, 0, 0, 0
+    local ok, err = pcall(function()
+        DamageMeter:ForEachSessionWindow(function(sw)
+            if not sw.ForEachEntryFrame then return end
+            sw:ForEachEntryFrame(function(frame)
+                total = total + 1
+                if not frame._dilvlGUID then noGuid = noGuid + 1 end
+                local nameFS = frame.GetName and frame:GetName()
+                if not nameFS or type(nameFS) == "string" then return end
+                local hasTxt, txt = pcall(nameFS.GetText, nameFS)
+                if not hasTxt or not txt or isSecret(txt) then
+                    secret = secret + 1
+                else
+                    if type(txt) == "string" and txt:find("%[%d+%]") then tagged = tagged + 1 end
+                end
+            end)
+        end)
+    end)
+    if ok then
+        trace(format("[%s] frames=%d secret=%d tagged=%d noGuid=%d",
+            tag, total, secret, tagged, noGuid))
+    else
+        trace(format("[%s] ERROR: %s", tag, tostring(err)))
+    end
+end
+
+---------------------------------------------------------------
 -- Combat state tracking.
 -- We skip injection entirely when ANYONE in the group is in combat,
 -- not just the player. Blizzard's Secret Value system locks down
@@ -50,9 +96,11 @@ end
 -- PLAYER_REGEN_ENABLED + delayed passes for stale FontStrings.
 ---------------------------------------------------------------
 local inCombat = false
-local globalFontFile = nil    -- cached from first CLEAN frame: font file path
-local globalFontSize = nil    -- cached from first CLEAN frame: font size (includes TextScale)
-local globalFontFlags = nil   -- cached from first CLEAN frame: font flags ("OUTLINE" etc.)
+local postCombatRefreshDone = false  -- ensures only one RefreshAllFrames after DM_SESSION_UPDATED post-combat
+local globalFontFile = nil     -- cached from first CLEAN frame: font file path
+local globalFontSize = nil     -- cached from first CLEAN frame: font size
+local globalFontFlags = nil    -- cached from first CLEAN frame: font flags ("OUTLINE" etc.)
+local globalTextScale = nil    -- cached from first CLEAN frame: Blizzard's runtime text scale
 do
     local icl = InCombatLockdown()
     -- InCombatLockdown() returns secret in instances (Issue #2).
@@ -184,6 +232,12 @@ local function RestoreNameFS(frame, nameFS)
     else
         nameFS:SetFontObject(NumberFontNormal)
     end
+    -- Restore TextScale — SetToDefaults resets to 1.0, Blizzard sets a runtime scale.
+    if frame._dilvlTextScale then
+        nameFS:SetTextScale(frame._dilvlTextScale)
+    elseif globalTextScale then
+        nameFS:SetTextScale(globalTextScale)
+    end
     nameFS:SetWordWrap(false)  -- XML default, SetToDefaults resets to true → text wraps & squishes bars
     nameFS:SetAlpha(1)
 end
@@ -212,6 +266,32 @@ end
 -- combat, SetToDefaults() clears the secret aspect so Blizzard's
 -- own text becomes visible again (even without our iLvl tag).
 ---------------------------------------------------------------
+---------------------------------------------------------------
+-- Strip our iLvl tags from ALL visible frames.
+-- Called on combat start — restores pure Blizzard display text.
+-- Uses Blizzard's own GetNameText() which returns the formatted
+-- name with rank prefix (e.g. "1. Quinroth").
+---------------------------------------------------------------
+local function StripAllTags()
+    if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
+    trace("StripAllTags")
+    DamageMeter:ForEachSessionWindow(function(sw)
+        if not sw.ForEachEntryFrame then return end
+        sw:ForEachEntryFrame(function(frame)
+            if frame._dilvlNameFS then frame._dilvlNameFS:Hide() end
+            local nameFS = frame.GetName and frame:GetName()
+            if not nameFS or type(nameFS) == "string" then return end
+            -- Try to restore Blizzard's native text
+            local blizzText = frame.GetNameText and frame:GetNameText()
+            if blizzText and not isSecret(blizzText) then
+                nameFS:SetText(blizzText)
+            end
+            -- If text is secret, Blizzard will handle it — we don't touch it
+        end)
+    end)
+    traceFrameState("StripAllTags_DONE")
+end
+
 local function ClearOverlay(frame)
     if frame._dilvlNameFS then
         frame._dilvlNameFS:Hide()
@@ -330,6 +410,11 @@ local function InjectIlvl(frame)
             globalFontFlags = fontFlags or ""
         end
     end
+    local textScale = nameFS:GetTextScale()
+    if textScale and not isSecret(textScale) then
+        frame._dilvlTextScale = textScale
+        if not globalTextScale then globalTextScale = textScale end
+    end
 
     -- Write-first: try SetText directly (works when FontString is clean).
     nameFS:SetText(displayText)
@@ -345,6 +430,11 @@ local function InjectIlvl(frame)
             nameFS:SetFont(frame._dilvlFontFile, frame._dilvlFontSize, frame._dilvlFontFlags)
         elseif globalFontFile then
             nameFS:SetFont(globalFontFile, globalFontSize, globalFontFlags)
+        end
+        if frame._dilvlTextScale then
+            nameFS:SetTextScale(frame._dilvlTextScale)
+        elseif globalTextScale then
+            nameFS:SetTextScale(globalTextScale)
         end
         return  -- Clean path: SetText succeeded
     end
@@ -387,6 +477,17 @@ end
 -- than Init which only fires on ScrollBox frame creation.
 ---------------------------------------------------------------
 hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
+    -- Trace: log when Blizzard calls UpdateName and what state the frame is in
+    if traceEnabled then
+        local nameFS = self.GetName and self:GetName()
+        local txtOk, txt = pcall(function() return nameFS and nameFS:GetText() end)
+        local display = (txtOk and txt and not isSecret(txt)) and tostring(txt):sub(1, 30) or "(secret)"
+        local combat = IsGroupInCombat()
+        trace(format("UpdateName [%s] combat=%s nameText=%s",
+            self.sourceName and not isSecret(self.sourceName) and tostring(self.sourceName) or "?",
+            tostring(combat), display))
+    end
+
     -- Capture GUID from sourceName when readable (OOC).
     -- Init hook misses ScrollBox-recycled frames, this catches them.
     if not self._dilvlGUID or isSecret(self._dilvlGUID) then
@@ -451,11 +552,11 @@ local function ScheduleRefresh()
 end
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
-    -- === Combat START signals — clear overlays immediately ===
+    -- === Combat START signals — strip our tags immediately ===
     if event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
-        groupCombatTime = 0 -- force recheck on next IsGroupInCombat()
-        RefreshAllFrames()  -- ClearOverlay on all frames
+        groupCombatTime = 0
+        StripAllTags()  -- remove our iLvl tags, restore Blizzard text
         return
     end
     if event == "PLAYER_IN_COMBAT_CHANGED" then
@@ -465,18 +566,25 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if combatState == true or isSecret(combatState) then
             inCombat = true
             groupCombatTime = 0
-            RefreshAllFrames()
+            trace("COMBAT_CHANGED → IN")
+            StripAllTags()
         else
             inCombat = false
             groupCombatTime = 0
-            ScheduleRefresh()
+            trace("COMBAT_CHANGED → OUT")
+            traceFrameState("COMBAT_CHANGED_OUT")
+            -- Primary post-combat refresh: this is Blizzard DM's own synchronous
+            -- signal, fires same frame as state change. Most secrets are already
+            -- unlocked here. Direct RefreshAllFrames (not coalesced).
+            RefreshAllFrames()
+            traceFrameState("COMBAT_CHANGED_POST_REFRESH")
         end
         return
     end
     if event == "ENCOUNTER_START" or event == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" then
         -- Boss detected — force combat state even if REGEN hasn't fired yet
         groupCombatTime = 0
-        RefreshAllFrames()
+        StripAllTags()
         return
     end
     if event == "UNIT_FLAGS" then
@@ -489,7 +597,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if unit then
             local afc = UnitAffectingCombat(unit)
             if afc == true or isSecret(afc) then
-                RefreshAllFrames()
+                StripAllTags()
                 return
             end
         end
@@ -501,13 +609,15 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
         groupCombatTime = 0
+        trace("REGEN_ENABLED")
+        traceFrameState("REGEN_ENABLED")
         ScheduleRefresh()
         return
     end
     if event == "ENCOUNTER_END" then
-        -- Boss killed or wiped — names become readable soon.
-        -- Delay slightly: Blizzard unlocks secrets after this event.
         groupCombatTime = 0
+        trace("ENCOUNTER_END")
+        traceFrameState("ENCOUNTER_END")
         ScheduleRefresh()
         return
     end
@@ -520,7 +630,27 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         return
     end
 
-    -- === Data events — standard refresh ===
+    -- === Data events ===
+    -- DAMAGE_METER_COMBAT_SESSION_UPDATED fires after Blizzard finishes
+    -- processing combat data — secrets are unlocked by this point.
+    -- Run a full RefreshAllFrames (not coalesced) to catch stale Gesamt
+    -- frames that the earlier REGEN_ENABLED pass couldn't fix yet.
+    if event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
+        if not IsGroupInCombat() then
+            -- Only refresh once after combat ends, not on every DM update.
+            if not postCombatRefreshDone then
+                postCombatRefreshDone = true
+                trace("DM_SESSION_UPDATED → POST-COMBAT REFRESH")
+                traceFrameState("DM_SESSION_PRE")
+                RefreshAllFrames()
+                traceFrameState("DM_SESSION_POST")
+            end
+        else
+            postCombatRefreshDone = false  -- reset flag when in combat
+        end
+        return
+    end
+
     ScheduleRefresh()
 end)
 
@@ -746,4 +876,32 @@ API.GetBlizzDMDebug = function()
         end)
     end)
     return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo
+end
+
+---------------------------------------------------------------
+-- Global trace toggle — called from /dilvl blizztrace
+---------------------------------------------------------------
+function Details_iLvlDisplay_BlizzTrace(showWindow)
+    traceEnabled = not traceEnabled
+    if traceEnabled then
+        wipe(traceLog)
+        print("|cFF00FF00Details! iLvl Display:|r Blizz trace |cFF00FF00ON|r — fight, leave combat, then /dilvl blizztrace")
+    else
+        print("|cFF00FF00Details! iLvl Display:|r Blizz trace |cFFFF0000OFF|r")
+        if showWindow and #traceLog > 0 then
+            local buf = {"=== Blizz DM Event Trace (" .. #traceLog .. " entries) ===\n"}
+            for _, entry in ipairs(traceLog) do
+                table.insert(buf, entry)
+            end
+            table.insert(buf, "\n=== End Trace ===")
+            local text = table.concat(buf, "\n")
+            if Details_iLvlDisplay_ShowDebugWindow then
+                Details_iLvlDisplay_ShowDebugWindow(text)
+            else
+                print(text)
+            end
+        elseif showWindow then
+            print("  (no events captured)")
+        end
+    end
 end
