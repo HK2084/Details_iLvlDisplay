@@ -1467,6 +1467,12 @@ SlashCmdList["DILVL"] = function(msg)
                     ci.encounterSecret and "(SECRET)" or "",
                     ci.unitFlags and "YES" or "no",
                     ci.members or 0))
+                print(string.format("    refresh: active=%s  passes=%d  tagged=%d/%d  lastPass=%.1fs ago",
+                    ci.refreshActive and "YES" or "idle",
+                    ci.refreshPasses or 0,
+                    ci.refreshTagged or 0,
+                    ci.refreshTotal or 0,
+                    ci.refreshLastPass and (GetTime() - ci.refreshLastPass) or 0))
             else
                 -- Fallback for old format
                 print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d  inCombat: %s",

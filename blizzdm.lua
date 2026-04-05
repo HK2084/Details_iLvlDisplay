@@ -109,7 +109,6 @@ end
 -- PLAYER_REGEN_ENABLED + delayed passes for stale FontStrings.
 ---------------------------------------------------------------
 local inCombat = false
-local postCombatRefreshDone = false  -- ensures only one RefreshAllFrames after DM_SESSION_UPDATED post-combat
 local globalFontFile = nil     -- cached from first CLEAN frame: font file path
 local globalFontSize = nil     -- cached from first CLEAN frame: font size
 local globalFontFlags = nil    -- cached from first CLEAN frame: font flags ("OUTLINE" etc.)
@@ -584,25 +583,100 @@ eventFrame:RegisterEvent("PLAYER_IN_COMBAT_CHANGED")
 eventFrame:RegisterEvent("LOADING_SCREEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
-local pendingRefresh = false
-local function ScheduleRefresh()
-    if not pendingRefresh then
-        pendingRefresh = true
-        C_Timer.After(0, function()
-            pendingRefresh = false
-            RefreshAllFrames()
-        end)
+---------------------------------------------------------------
+-- Dirty-flag refresh system (replaces C_Timer.After ScheduleRefresh).
+-- Multiple events in the same frame only trigger ONE refresh.
+-- After combat ends, OnUpdate keeps checking for untagged frames
+-- whose secrets have unlocked, refreshing them incrementally
+-- until all visible frames are tagged (then goes idle).
+-- Zero closure allocation, purely event-driven.
+---------------------------------------------------------------
+local refreshDirty = false      -- set by events/hooks, consumed by OnUpdate
+local refreshActive = false     -- true while post-combat catch-up is running
+local refreshThrottle = 0       -- throttle post-combat catch-up to every 0.5s
+local REFRESH_INTERVAL = 0.5    -- seconds between catch-up passes
+local refreshStats = {total = 0, tagged = 0, passes = 0, lastPass = 0}
+
+local refreshFrame = CreateFrame("Frame")
+refreshFrame:Hide()  -- starts idle, no CPU cost
+
+refreshFrame:SetScript("OnUpdate", function(self, elapsed)
+    if IsGroupInCombat() then
+        refreshDirty = false
+        self:Hide()
+        return
     end
+
+    if refreshDirty then
+        refreshDirty = false
+        refreshStats.passes = refreshStats.passes + 1
+        refreshStats.lastPass = GetTime()
+        RefreshAllFrames()
+    end
+
+    -- Post-combat catch-up: throttled to every 0.5s.
+    -- If no progress since last pass → go idle (avoid endless loop
+    -- when frames have readable nameText but GUID can't be resolved).
+    if refreshActive then
+        refreshThrottle = refreshThrottle - elapsed
+        if refreshThrottle > 0 then return end
+        refreshThrottle = REFRESH_INTERVAL
+        local tagged = 0
+        local total = 0
+        if DamageMeter.ForEachSessionWindow then
+            DamageMeter:ForEachSessionWindow(function(sw)
+                if not sw.ForEachEntryFrame then return end
+                sw:ForEachEntryFrame(function(frame)
+                    total = total + 1
+                    local nameFS = frame.GetName and frame:GetName()
+                    if not nameFS or type(nameFS) == "string" then return end
+                    local txt = nameFS:GetText()
+                    if txt and not isSecret(txt) and type(txt) == "string" and txt:find("%[%d+%]") then
+                        tagged = tagged + 1
+                    end
+                end)
+            end)
+        end
+        refreshStats.total = total
+        local prevTagged = refreshStats.tagged
+        refreshStats.tagged = tagged
+        if tagged > prevTagged then
+            -- Made progress — keep going
+            refreshDirty = true
+        else
+            -- No progress — go idle
+            refreshActive = false
+            if not refreshDirty then
+                self:Hide()
+                trace(format("RefreshIdle: %d/%d tagged in %d passes",
+                    tagged, total, refreshStats.passes))
+            end
+        end
+    elseif not refreshDirty then
+        self:Hide()  -- no work left, go idle
+    end
+end)
+
+local function ScheduleRefresh()
+    refreshDirty = true
+    refreshFrame:Show()  -- wake up OnUpdate
+end
+
+-- Start post-combat catch-up: OnUpdate keeps running until all frames tagged
+local function StartPostCombatRefresh()
+    refreshActive = true
+    refreshStats.passes = 0
+    ScheduleRefresh()
 end
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     -- === Combat START signals — strip our tags, go silent ===
-    -- Every combat-start path sets inCombat=true and resets
-    -- postCombatRefreshDone so the backup refresh after the NEXT
-    -- combat-end always fires.
+    -- Every combat-start path sets inCombat=true and stops
+    -- the refresh OnUpdate (go silent during combat).
     if event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
-        postCombatRefreshDone = false
+        refreshActive = false
+        refreshFrame:Hide()
         StripAllTags()
         return
     end
@@ -610,21 +684,18 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         local combatState = ...
         if combatState == true or isSecret(combatState) then
             inCombat = true
-            postCombatRefreshDone = false
-                trace("COMBAT_CHANGED → IN")
+                    trace("COMBAT_CHANGED → IN")
             StripAllTags()
         else
             inCombat = false
-                trace("COMBAT_CHANGED → OUT")
+            trace("COMBAT_CHANGED → OUT")
             traceFrameState("COMBAT_CHANGED_OUT", true)
-            RefreshAllFrames()
-            traceFrameState("COMBAT_CHANGED_POST_REFRESH", true)
+            StartPostCombatRefresh()
         end
         return
     end
     if event == "ENCOUNTER_START" or event == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" then
         inCombat = true
-        postCombatRefreshDone = false
         StripAllTags()
         return
     end
@@ -637,13 +708,13 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         inCombat = false
         trace("REGEN_ENABLED")
         traceFrameState("REGEN_ENABLED", true)
-        ScheduleRefresh()
+        StartPostCombatRefresh()
         return
     end
     if event == "ENCOUNTER_END" then
         trace("ENCOUNTER_END")
         traceFrameState("ENCOUNTER_END")
-        ScheduleRefresh()
+        StartPostCombatRefresh()
         return
     end
 
@@ -656,16 +727,11 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
     -- === Data events ===
     -- DAMAGE_METER_COMBAT_SESSION_UPDATED fires after Blizzard finishes
-    -- processing combat data — secrets are unlocked by this point.
-    -- Run a full RefreshAllFrames (not coalesced) to catch stale Gesamt
-    -- frames that the earlier REGEN_ENABLED pass couldn't fix yet.
+    -- processing combat data. Just set dirty — the OnUpdate loop handles the rest.
     if event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
-        if not IsGroupInCombat() and not postCombatRefreshDone then
-            postCombatRefreshDone = true
-            trace("DM_SESSION_UPDATED → POST-COMBAT REFRESH")
-            traceFrameState("DM_SESSION_PRE", true)
-            RefreshAllFrames()
-            traceFrameState("DM_SESSION_POST", true)
+        if not IsGroupInCombat() then
+            trace("DM_SESSION_UPDATED → dirty")
+            ScheduleRefresh()
         end
         return
     end
@@ -739,6 +805,11 @@ API.GetBlizzDMDebug = function()
         encounterSecret = eip and isSecret(eip),
         unitFlags = unitFlagsCombat,
         members = count,
+        refreshActive = refreshActive,
+        refreshPasses = refreshStats.passes,
+        refreshTagged = refreshStats.tagged,
+        refreshTotal = refreshStats.total,
+        refreshLastPass = refreshStats.lastPass,
     }
 
     if not DamageMeter.ForEachSessionWindow then
