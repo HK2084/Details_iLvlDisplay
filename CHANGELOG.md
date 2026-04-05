@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.1
+
+### Improved
+
+- **Smart cache refresh** — group members are automatically re-inspected when they equip new gear (`UNIT_INVENTORY_CHANGED`), so iLvl updates without manual refresh
+- **Ambiguate cleanup** — replaced manual realm-stripping regex with WoW's built-in `Ambiguate()` API for more reliable cross-realm name matching (#10)
+
+---
+
 ## v1.2.0
 
 ### New
