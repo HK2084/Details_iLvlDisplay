@@ -8,6 +8,8 @@ local defaults = {
     showInDetails = true,  -- show iLvl on Details! bars (requires Details!)
     elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
     layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
+    -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
+    --          true/false = user override via /dilvl blizzdm
 }
 
 local db
@@ -912,7 +914,13 @@ local function QueueGroupInspect()
 
     for i = 1, count do
         local unit = prefix .. i
-        if UnitExists(unit) and UnitIsPlayer(unit) and not UnitIsUnit(unit, "player") then
+        -- UnitGUID compare instead of UnitIsUnit(unit, "player"):
+        -- Blizzard is hotfixing UnitIsUnit to return secret values (April 2026,
+        -- Race to World First L'ura — used by interrupt anchor addons on nameplates).
+        -- Secret values are truthy, so `not UnitIsUnit(...)` would always be false
+        -- and skip ALL units, breaking our inspect queue entirely.
+        -- UnitGUID is fundamental infrastructure — safe from secret restrictions.
+        if UnitExists(unit) and UnitIsPlayer(unit) and UnitGUID(unit) ~= UnitGUID("player") then
             local guid = UnitGUID(unit)
             if guid then
                 -- Pre-populate nameToIlvl/nameToSetBonus from cache now while we have the unit.
@@ -1064,19 +1072,22 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if not detailsReady and not tickerStarted then
             tickerStarted = true
             C_Timer.After(3, function()
+                detailsReady = true
                 if Details then
-                    detailsReady = true
                     RebuildNameIlvlMap()
                     HookAllBars()
-                    C_Timer.NewTicker(2, OnTick)
-                    print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded. /dilvl")
-                else
-                    -- ElvUI-only mode: Details! not loaded, but we can still
-                    -- inspect group and serve data via the [dilvl] ElvUI tag.
-                    detailsReady = true  -- prevent re-init on next zone
-                    C_Timer.NewTicker(2, OnTick)  -- needed for inspect queue processing
-                    print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (ElvUI-only mode). /dilvl")
                 end
+                C_Timer.NewTicker(2, OnTick)
+
+                -- Build mode string for login message
+                local modes = {}
+                if Details then modes[#modes + 1] = "Details!" end
+                if db.blizzDM == true or (db.blizzDM == nil and not Details) then
+                    modes[#modes + 1] = "Blizzard DM"
+                end
+                if db.elvuiTag and ElvUI then modes[#modes + 1] = "ElvUI" end
+                local modeStr = #modes > 0 and table.concat(modes, " + ") or "cache-only"
+                print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (" .. modeStr .. "). /dilvl")
                 -- Inspect in both modes (Details + ElvUI-only)
                 C_Timer.After(5, QueueGroupInspect)
                 -- LFR: unit tokens for all 25 players may not exist yet after 5s.
@@ -1249,6 +1260,51 @@ local function ClearAllBarTags()
 end
 
 ---------------------------------------------------------------
+-- Debug popup — scrollable, copy-pasteable output window
+---------------------------------------------------------------
+local function ShowDebugWindow(text)
+    if not DILvlDebugFrame then
+        local f = CreateFrame("Frame", "DILvlDebugFrame", UIParent, "BackdropTemplate")
+        f:SetSize(700, 500)
+        f:SetPoint("CENTER")
+        f:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        f:SetBackdropColor(0, 0, 0, 0.9)
+        f:SetMovable(true)
+        f:EnableMouse(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        f:SetFrameStrata("DIALOG")
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -8)
+        title:SetText("Details! iLvl Display — Debug")
+        local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", -2, -2)
+        local scroll = CreateFrame("ScrollFrame", "DILvlDebugScroll", f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 10, -30)
+        scroll:SetPoint("BOTTOMRIGHT", -30, 10)
+        local eb = CreateFrame("EditBox", nil, scroll)
+        eb:SetMultiLine(true)
+        eb:SetFontObject(GameFontHighlightSmall)
+        eb:SetWidth(650)
+        eb:SetAutoFocus(false)
+        eb:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
+        scroll:SetScrollChild(eb)
+        f.editBox = eb
+    end
+    DILvlDebugFrame.editBox:SetText(text)
+    DILvlDebugFrame.editBox:HighlightText()
+    DILvlDebugFrame:Show()
+end
+-- Expose for blizzdm.lua trace output
+Details_iLvlDisplay_ShowDebugWindow = ShowDebugWindow
+
+---------------------------------------------------------------
 -- Slash command
 ---------------------------------------------------------------
 SLASH_DILVL1 = "/dilvl"
@@ -1318,7 +1374,17 @@ SlashCmdList["DILVL"] = function(msg)
         end
 
     elseif msg == "debug" then
-        -- Full bug-report output — user can paste this entire block
+        -- Full bug-report output — also shown in scrollable popup for easy copy-paste.
+        -- Temporarily wrap print() to capture all output into a buffer.
+        local debugBuf = {}
+        local origPrint = print
+        print = function(m)
+            origPrint(m)
+            local s = tostring(m)
+            if isSecretValue(s) then s = "(secret)" end
+            debugBuf[#debugBuf + 1] = s
+        end
+
         local cacheCount, mapCount, hookCount, setBonusCount, bonusMapCount, colCount = 0, 0, 0, 0, 0, 0
         for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
         for _ in pairs(nameToIlvl) do mapCount = mapCount + 1 end
@@ -1337,10 +1403,12 @@ SlashCmdList["DILVL"] = function(msg)
 
         print("=== Details! iLvl Display v" .. addonVersion .. " — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
-        print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s  Layout: %s",
+        local blizzDMState = db.blizzDM == nil and ("AUTO(" .. (Details and "off" or "on") .. ")") or (db.blizzDM and "ON" or "OFF")
+        print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s  BlizzDM: %s  Layout: %s",
             db.enabled and "ON" or "OFF",
             db.showInDetails and "ON" or "OFF",
             db.elvuiTag and "ON" or "OFF",
+            blizzDMState,
             db.layout or "inline"))
         print(string.format("  Color: %s  SetBonus: %s",
             db.colorIlvl and "ON" or "OFF",
@@ -1374,6 +1442,55 @@ SlashCmdList["DILVL"] = function(msg)
         print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
             openRaidLib and "active" or "n/a"))
+
+        -- BlizzDM diagnostics
+        if Details_iLvlDisplayAPI.GetBlizzDMDebug then
+            local windows, frames, hasGuid, hasTag, secretName, entries, ci = Details_iLvlDisplayAPI.GetBlizzDMDebug()
+            print("  --- Blizzard Damage Meter ---")
+            if type(ci) == "table" then
+                print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d",
+                    windows, frames, hasGuid, hasTag, secretName))
+                print(string.format("    combat: group=%s  self=%s  encounter=%s%s  unitFlags=%s  members=%d",
+                    ci.groupCombat and "YES" or "no",
+                    ci.inCombat and "YES" or "no",
+                    ci.encounter and "YES" or "no",
+                    ci.encounterSecret and "(SECRET)" or "",
+                    ci.unitFlags and "YES" or "no",
+                    ci.members or 0))
+            else
+                -- Fallback for old format
+                print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d  inCombat: %s",
+                    windows, frames, hasGuid, hasTag, secretName, tostring(ci)))
+            end
+            if entries then
+                for i, e in ipairs(entries) do
+                    local flags = ""
+                    if e.secret then flags = flags .. " SECRET" end
+                    if e.alphaHidden then flags = flags .. " ALPHA0" end
+                    if e.overlay then flags = flags .. " OVR" end
+                    flags = flags .. " [" .. (e.path or "?") .. "]"
+                    if e.nameFSType then flags = flags .. " fs:" .. e.nameFSType end
+                    print(string.format("    [%d] %s%s  guid:%s  cache:%s  tag:%s%s",
+                        i, e.name,
+                        e.isLocal and " (YOU)" or "",
+                        e.guid and "yes" or "NO",
+                        e.cached and "yes" or "no",
+                        e.tagged and "yes" or "no",
+                        flags))
+                    -- Extended debug: show native text, overlay text, cache name
+                    local extra = "        "
+                    if e.nativeTxt then extra = extra .. "native:" .. e.nativeTxt end
+                    if e.ovrTxt then extra = extra .. "  ovr:" .. e.ovrTxt end
+                    if e.cacheName then extra = extra .. "  cName:" .. e.cacheName end
+                    print(extra)
+                end
+            end
+            if frames == 0 then
+                print("    (open Blizzard DM window to see entries)")
+            end
+        else
+            print("  --- Blizzard Damage Meter: not loaded ---")
+        end
 
         -- Column diagnostics
         if db.layout == "columns" then
@@ -1546,6 +1663,9 @@ SlashCmdList["DILVL"] = function(msg)
         end
         print("=== end ===")
 
+        -- Restore original print and show copy-paste popup
+        print = origPrint
+        ShowDebugWindow(table.concat(debugBuf, "\n"))
 
     elseif msg == "auras" then
         print("|cFF00FF00Details! iLvl Display:|r Player auras (looking for tier bonus):")
@@ -1587,6 +1707,29 @@ SlashCmdList["DILVL"] = function(msg)
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
 
+    elseif msg == "blizzdm" then
+        -- nil (auto) → force ON; true → OFF; false → ON
+        if db.blizzDM == nil then
+            db.blizzDM = true
+        else
+            db.blizzDM = not db.blizzDM
+        end
+        NotifyElvUI()
+        print("|cFF00FF00Details! iLvl Display:|r Blizzard Damage Meter " .. (db.blizzDM and "ON" or "OFF"))
+        if db.blizzDM then
+            print("|cFFFFFF00  Note:|r Blizzard DM overlay is experimental. It hooks into Blizzard's")
+            print("|cFFFFFF00  built-in damage meter which may change without notice. Only active")
+            print("|cFFFFFF00  outside of combat. Report issues: /dilvl debug")
+        end
+
+    elseif msg == "blizztrace" then
+        -- Toggle event trace for post-combat debugging in blizzdm.lua
+        if Details_iLvlDisplay_BlizzTrace then
+            Details_iLvlDisplay_BlizzTrace(true)  -- toggle + print
+        else
+            print("|cFF00FF00Details! iLvl Display:|r Blizz DM trace not available (blizzdm.lua not loaded)")
+        end
+
     elseif msg == "layout" or msg == "layout inline" or msg == "layout columns" then
         if msg == "layout inline" then
             db.layout = "inline"
@@ -1612,6 +1755,7 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
+        print("  /dilvl blizzdm         — Toggle iLvl on Blizzard Damage Meter")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
         print("  /dilvl layout          — Toggle inline/columns layout")
@@ -1635,20 +1779,69 @@ Details_iLvlDisplayAPI = {
         if not guid or not ilvlCache then return nil, nil end
         return ilvlCache[guid], setBonusCache[guid]
     end,
+    -- Resolve a player name to GUID via group roster, with ilvlCache fallback.
+    -- Iterates party/raid units — O(n) but n ≤ 40, called by blizzdm.lua on
+    -- UpdateName hook and event-driven refresh (not a per-frame hot-path).
+    -- Handles cross-realm names: sourceName may be "Name-Realm" while
+    -- UnitName() returns just "Name". Ambiguate() strips the realm suffix.
+    -- Fallback: if player left the group, reverse-lookup from ilvlCache
+    -- so Blizz DM can still show iLvl for past sessions.
+    ResolveGUIDByName = function(name)
+        if not name then return nil end
+        local shortName = Ambiguate(name, "short")
+        local pName = UnitName("player")
+        if pName == shortName then return UnitGUID("player") end
+        -- Try roster first
+        local prefix, count
+        if IsInRaid() then
+            prefix, count = "raid", GetNumGroupMembers()
+        elseif IsInGroup() then
+            prefix, count = "party", GetNumGroupMembers() - 1
+        end
+        if prefix then
+            for i = 1, count do
+                local unit = prefix .. i
+                if UnitName(unit) == shortName then
+                    return UnitGUID(unit)
+                end
+                -- Cross-realm: UnitName returns "Name" without realm,
+                -- but shortName may be "Name-Realm" (non-connected realms).
+                -- Match via GetUnitName(unit, true) which includes realm.
+                local fullName = GetUnitName(unit, true)
+                if fullName and fullName ~= shortName and Ambiguate(fullName, "short") == shortName then
+                    return UnitGUID(unit)
+                end
+            end
+        end
+        -- Fallback: reverse lookup from ilvlCache (players who left group)
+        if ilvlCache then
+            for guid, cached in pairs(ilvlCache) do
+                if cached.name and Ambiguate(cached.name, "short") == shortName then
+                    return guid
+                end
+            end
+        end
+        return nil
+    end,
     -- Shared color function so ElvUI tag uses the same tier colors.
     GetIlvlColor = GetIlvlColor,
     -- Live db reference — elvui_tags.lua checks db.elvuiTag at call time.
     GetDb = function() return db end,
-    -- Callback set by elvui_tags.lua — called whenever cached data changes.
+    -- Callback registry — multiple consumers (elvui_tags, blizzdm) register here.
     -- Fires on: INSPECT_READY, UpdatePlayerCache, GROUP_ROSTER_UPDATE.
-    -- elvui_tags.lua uses this to call Tags:RefreshMethods("dilvl") so
-    -- frames update immediately instead of waiting for a poll timer.
-    OnDataChanged = nil,
+    _callbacks = {},
+    RegisterCallback = function(self, name, fn)
+        self._callbacks[name] = fn
+    end,
+    UnregisterCallback = function(self, name)
+        self._callbacks[name] = nil
+    end,
 }
 
 -- Internal helper — call once after any cache write that should update UI.
 -- Forward-declared at top of file so event handlers can reference it.
 NotifyElvUI = function()
-    local cb = Details_iLvlDisplayAPI.OnDataChanged
-    if cb then pcall(cb) end
+    for _, cb in pairs(Details_iLvlDisplayAPI._callbacks) do
+        pcall(cb)
+    end
 end

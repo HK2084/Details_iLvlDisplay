@@ -12,9 +12,9 @@
 -- TOGGLE: /dilvl elvui on|off  (saved between sessions)
 --
 -- UPDATE STRATEGY: event-driven, no polling timer.
--- core.lua calls API.OnDataChanged after: INSPECT_READY, gear swap,
--- GROUP_ROSTER_UPDATE. This calls Tags:RefreshMethods("dilvl") which
--- re-renders all frames using [dilvl] immediately.
+-- core.lua fires registered callbacks after: INSPECT_READY, gear swap,
+-- GROUP_ROSTER_UPDATE. Our callback calls Tags:RefreshMethods("dilvl")
+-- which re-renders all frames using [dilvl] immediately.
 -- During 3h farming with no group changes: zero extra calls.
 
 if not ElvUI then return end -- no ElvUI installed → silent exit
@@ -59,11 +59,12 @@ E:AddTagInfo("dilvl", "Details! iLvl Display",
     "Respects your /dilvl color and setbonus settings.")
 
 ---------------------------------------------------------------
--- Register callback: core.lua calls API.OnDataChanged whenever
--- cached iLvl data changes. We respond by calling RefreshMethods
--- which re-renders every visible frame using [dilvl] immediately.
--- This is the official oUF API for forcing a tag re-evaluation.
+-- Register callback: core.lua fires all registered callbacks
+-- whenever cached iLvl data changes. We respond by calling
+-- RefreshMethods which re-renders every visible frame using
+-- [dilvl] immediately. This is the official oUF API for
+-- forcing a tag re-evaluation.
 ---------------------------------------------------------------
-API.OnDataChanged = function()
+API:RegisterCallback("elvui", function()
     pcall(E.oUF.Tags.RefreshMethods, E.oUF.Tags, "dilvl")
-end
+end)

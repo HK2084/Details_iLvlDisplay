@@ -1,15 +1,16 @@
 # Details! Item Level Display
 
-Shows **item level** and **tier set bonus** next to every player name on [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) bars — the combat meter addon by [Tercioo](https://github.com/Tercioo).
+Shows **item level** and **tier set bonus** next to player names on your damage meter — works with **Details!**, **Blizzard's built-in Damage Meter** (12.0+), and **ElvUI** party frames.
 
-Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item levels in Midnight — this addon brings that back.
+No configuration needed. The addon **auto-detects** which meters you use and activates accordingly.
 
 ---
 
 ## Features
 
 - Item level displayed next to each player name: `Quinroth [254]`
-- **Two layout modes**: `inline` (appended to name) or `columns` (separate right-aligned columns)
+- **Auto-detection**: works on Details!, Blizzard Damage Meter, or both at the same time
+- **Two layout modes** (Details! only): `inline` (appended to name) or `columns` (separate right-aligned columns)
 - **Column mode works during combat** — uses addon-created overlays, no taint
 - Color-coded by gear tier (see table below)
 - **2P / 4P tier set bonus** detection for Midnight Season 1 tier pieces
@@ -20,7 +21,7 @@ Built for **WoW: Midnight** (12.0+). Details! stopped exposing third-party item 
 - Your own iLvl and set bonus update instantly on gear swap — no inspect needed
 - Cross-realm, LFR and LFD support (up to 40 players)
 - Manual inspect protection — background queue pauses when you inspect someone
-- **Independent toggles** — enable Details! bars and/or ElvUI frames separately
+- **Independent toggles** — enable Details! bars, Blizzard DM, and/or ElvUI frames separately
 - Optional **ElvUI integration**: adds a `[dilvl]` tag for party/raid unit frames
 
 ---
@@ -57,12 +58,17 @@ Column mode shows iLvl and tier set during combat. Columns auto-hide on narrow w
 
 ---
 
-## Requirements
+## Supported Meters
 
-- [Details! Damage Meter](https://www.curseforge.com/wow/addons/details) — optional (bars feature only)
-- [ElvUI](https://www.tukui.org/download.php?ui=elvui) — optional (party frame tag only)
+| Meter | Default | Toggle |
+| --- | --- | --- |
+| **Details! Damage Meter** | ON when Details! is installed (primary) | `/dilvl details` |
+| **Blizzard Damage Meter** (12.0+) | AUTO — ON when Details! is **not** installed, OFF otherwise | `/dilvl blizzdm` |
+| **ElvUI party frames** | OFF (opt-in), requires [ElvUI](https://tukui.org/elvui) | `/dilvl elvui on` |
 
-The addon works without either — install only what you use.
+**Smart auto-detection:** The addon is primarily a Details! plugin. If Details! is installed, iLvl shows on Details! bars and the Blizzard Damage Meter is left untouched. If you don't have Details!, the addon automatically falls back to Blizzard's built-in meter. You can always force both on with `/dilvl blizzdm`.
+
+**No dependencies required.** Install the addon, and it works with whatever you have.
 
 ---
 
@@ -78,11 +84,13 @@ iLvl data is cached for 2 hours per player.
 **Expected behavior — not bugs:**
 
 - **First pull:** iLvl may not show for all players yet. Inspection runs after you join the group and takes a few seconds per player.
-- **In combat (inline mode):** tags pause until combat ends. Use **column mode** to see iLvl during combat.
-- **In combat (column mode):** iLvl and tier columns stay visible throughout combat. When DPS rankings change and bars swap positions, columns may briefly disappear and reappear — this is normal and ensures every bar always shows the correct player's data.
+- **In combat (all meters):** during combat, the addon does **nothing** — no tags, no writes, no UI changes. This is intentional. Blizzard locks player data with Secret Values during combat, and writing to bars while they're being repositioned causes display glitches. Tags are stripped cleanly at combat start and re-applied when combat ends.
+- **In combat (Details! column mode):** iLvl and tier columns stay visible throughout combat. When DPS rankings change and bars swap positions, columns may briefly disappear and reappear — this is normal and ensures every bar always shows the correct player's data.
+- **Blizzard DM after combat:** tags appear automatically on the Healing window. DPS and Overall windows may need a quick window toggle (close/open or switch between A/G) to refresh. This is because Blizzard unlocks player data at different times for different windows.
+- **Blizzard DM after `/reload` during combat:** do **not** `/reload` while in combat. Blizzard recreates all frames during `/reload`, and in combat all player data is locked — this permanently corrupts the frame data until the next session switch or window toggle. `/reload` between pulls is fine.
 - **After the first fight:** everyone should be fully tagged.
 - **After a boss kill:** the whole group gets re-inspected automatically.
-- **On `/reload`:** cached data is restored instantly. Only new or uncached players get re-inspected.
+- **On `/reload` (out of combat):** cached data is restored instantly. Only new or uncached players get re-inspected.
 
 **Tier set bonus `[2P]` / `[4P]`:**
 
@@ -99,7 +107,8 @@ iLvl data is cached for 2 hours per player.
 | `/dilvl` | Show all commands |
 | `/dilvl on` / `off` | Enable / disable the addon |
 | `/dilvl details` | Toggle iLvl display on Details! bars |
-| `/dilvl layout` | Toggle between `inline` and `columns` mode |
+| `/dilvl blizzdm` | Toggle iLvl display on Blizzard Damage Meter |
+| `/dilvl layout` | Toggle between `inline` and `columns` mode (Details! only) |
 | `/dilvl layout inline` | Switch to inline mode (appended to name) |
 | `/dilvl layout columns` | Switch to column mode (separate columns, works in combat) |
 | `/dilvl elvui on` / `off` | Toggle ElvUI `[dilvl]` party frame tag |
@@ -139,7 +148,16 @@ The tag updates instantly when inspect data arrives, on gear swaps, or when the 
 → Fixed in v1.0.1. Tags re-appear automatically within 0.3s after you stop resizing.
 
 **"Nothing is showing at all"**
-→ Run `/dilvl debug` and check that `Details-bars` and `Addon` are both `ON`. If `Details-bars: OFF`, run `/dilvl details` to re-enable. Then `/dilvl inspect`.
+→ Run `/dilvl debug` and check that `Addon` is `ON` and at least one output is enabled (`Details-bars`, `BlizzDM`, or `ElvUI-tag`). Then `/dilvl inspect`.
+
+**"iLvl shows on Details! but not on Blizzard DM" (or vice versa)**
+→ Both are independent toggles. Run `/dilvl blizzdm` or `/dilvl details` to toggle each one.
+
+**"Blizzard DM shows names but no iLvl tags"**
+→ Switch the window (A→G→A or close/reopen). This triggers Blizzard to refresh the frames so our addon can read player data. See [#12](https://github.com/HK2084/Details_iLvlDisplay/issues/12) for details.
+
+**"Blizzard DM tags disappeared after `/reload` in a fight"**
+→ Don't `/reload` during combat. Wait until the fight ends, then `/reload` if needed.
 
 **Reporting a bug:** run `/dilvl debug` and include the full output in your report. You can also [open an issue on GitHub](https://github.com/HK2084/Details_iLvlDisplay/issues).
 

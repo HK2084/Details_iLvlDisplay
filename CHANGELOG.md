@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.3.0
+
+### New
+
+- **Blizzard Damage Meter integration** — iLvl and tier set bonus displayed on WoW's built-in Damage Meter (12.0+). Experimental feature, auto-enabled when Details! is not installed. Force on/off with `/dilvl blizzdm` (#9)
+- Works on DPS, Healing, and Overall windows simultaneously
+- Fully **event-driven** — no timers, no polling
+- **Defensive combat guard** — during combat the addon does absolutely nothing on Blizzard DM frames. Tags are stripped at combat start, re-applied when combat ends
+- Supports LFR 25-man, cross-realm players, and special characters in names
+
+### Fixed
+
+- **Cross-realm GUID resolution** — `ResolveGUIDByName` now correctly matches players on non-connected realms using `GetUnitName(unit, true)` with `Ambiguate`. Previously, cross-realm players like "Skizzor-Blackrock" could fail to match because `UnitName` returns just "Skizzor"
+- **StripAllTags uses pattern matching** — combat-start tag removal now strips our tags via Lua pattern instead of relying on `GetNameText()` which can cache our own tags in Blizzard's dirty-check
+
+### Known Limitations (Blizzard DM)
+
+- After combat ends, DPS/Overall windows may need a quick window toggle (A→G→A) to show all tags. Healing window updates automatically. See #12
+- Do not `/reload` during combat — Blizzard recreates frames with locked data that cannot be read afterwards
+
+---
+
 ## v1.2.1
 
 ### Improved
