@@ -39,6 +39,22 @@ local columnRefreshPending = false -- debounce flag for next-frame column refres
 local perfStats = {calls = 0, totalMs = 0, lastMs = 0, peak = 0} -- column refresh perf tracking
 local cachedColLayout = nil -- cached {leftA, leftW, secA, secW, gap, yOff} from last good measurement
 
+-- Safety kill-switch: if our hooks error too many times, disable the addon
+-- to avoid breaking Details! or Blizzard DM for the user.
+local hookErrors = 0
+local HOOK_ERROR_LIMIT = 5
+local function SafeCall(fn, ...)
+    if hookErrors >= HOOK_ERROR_LIMIT then return end
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        hookErrors = hookErrors + 1
+        if hookErrors >= HOOK_ERROR_LIMIT then
+            print("|cFFFF0000Details! iLvl Display:|r Too many errors — addon auto-disabled to protect your UI. /reload to re-enable. Error: " .. tostring(err))
+            if db then db.enabled = false end
+        end
+    end
+end
+
 -- Column layout constants
 local COL_ILVL_WIDTH = 36   -- px max text width for iLvl column (truncation threshold)
 local COL_TIER_WIDTH = 28   -- px max text width for tier column (truncation threshold)
@@ -676,57 +692,51 @@ local function HookBarTextIfNeeded(bar)
     hooksecurefunc(fontString, "SetText", function(self, text)
         if isOurSetText then return end
         if not db or not db.enabled then return end
-        -- Details! Itemlevelfinder passes "secret string" values to SetText.
-        -- Per-field guard: check the value, skip if tainted. No pcall needed.
-        if isSecretValue(text) then
-            -- Invalidate stale text and hide this bar's columns immediately.
-            -- During bar reshuffles, minha_tabela may still reference the old
-            -- actor when a scheduled refresh fires — showing wrong data.
-            -- Columns reappear when Details! sets the real (non-secret) text.
-            barCleanText[self] = nil
+        if hookErrors >= HOOK_ERROR_LIMIT then return end
+        SafeCall(function()
+            -- Details! Itemlevelfinder passes "secret string" values to SetText.
+            -- Per-field guard: check the value, skip if tainted. No pcall needed.
+            if isSecretValue(text) then
+                barCleanText[self] = nil
+                if db.layout == "columns" then
+                    local cols = barColumns[bar]
+                    if cols then
+                        cols.ilvlFS:SetText("")
+                        cols.ilvlFS:Hide()
+                        cols.tierFS:SetText("")
+                        cols.tierFS:Hide()
+                    end
+                end
+                return
+            end
+            if not text or type(text) ~= "string" or text:match("^%s*$") then return end
+            if text:find("%[%d+%]") then return end
+
+            -- Cache Details!'s clean text before we inject anything.
+            if text:match("^%d+%.%s") or not barCleanText[self] then
+                barCleanText[self] = text
+            end
+
+            if not db.showInDetails then return end
+
             if db.layout == "columns" then
-                local cols = barColumns[bar]
-                if cols then
-                    cols.ilvlFS:SetText("")
-                    cols.ilvlFS:Hide()
-                    cols.tierFS:SetText("")
-                    cols.tierFS:Hide()
+                ScheduleColumnRefresh()
+                return
+            end
+
+            -- Don't inject during combat (taint with secure UI elements)
+            if MayBeInCombat() then return end
+
+            local name = ExtractName(text)
+            if name then
+                local tag = BuildTag(name)
+                if tag then
+                    isOurSetText = true
+                    self:SetText(text .. tag)
+                    isOurSetText = false
                 end
             end
-            return
-        end
-        if not text or type(text) ~= "string" or text:match("^%s*$") then return end
-        if text:find("%[%d+%]") then return end
-
-        -- Cache Details!'s clean text before we inject anything.
-        -- Only store text with a rank prefix ("1. Name") — real player bars.
-        -- Details! may call SetText with placeholders like "warte Aktualisierung ab ..."
-        -- during data loading; those must NOT overwrite a stored player name.
-        if text:match("^%d+%.%s") or not barCleanText[self] then
-            barCleanText[self] = text
-        end
-
-        if not db.showInDetails then return end
-
-        -- Column mode: schedule next-frame refresh (after Details! finishes sizing).
-        -- No combat guard needed — we only write to our own FontStrings, not Details!'.
-        if db.layout == "columns" then
-            ScheduleColumnRefresh()
-            return
-        end
-
-        -- Don't inject during combat (taint with secure UI elements)
-        if MayBeInCombat() then return end
-
-        local name = ExtractName(text)
-        if name then
-            local tag = BuildTag(name)
-            if tag then
-                isOurSetText = true
-                self:SetText(text .. tag)
-                isOurSetText = false
-            end
-        end
+        end)
     end)
 
     -- 12.0.1 added FontString:ClearText() — hook it so barCleanText doesn't

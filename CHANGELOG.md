@@ -17,7 +17,7 @@
 
 ### Known Limitations (Blizzard DM)
 
-- After combat ends, DPS/Overall windows may need a quick window toggle (A→G→A) to show all tags. Healing window updates automatically. See #12
+- After combat ends, DPS/Overall & Heal/Overall windows may need a quick window toggle (A→G→A) to show all tags. See #12
 - Do not `/reload` during combat — Blizzard recreates frames with locked data that cannot be read afterwards
 
 ---

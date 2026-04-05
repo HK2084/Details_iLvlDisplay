@@ -86,7 +86,7 @@ iLvl data is cached for 2 hours per player.
 - **First pull:** iLvl may not show for all players yet. Inspection runs after you join the group and takes a few seconds per player.
 - **In combat (all meters):** during combat, the addon does **nothing** — no tags, no writes, no UI changes. This is intentional. Blizzard locks player data with Secret Values during combat, and writing to bars while they're being repositioned causes display glitches. Tags are stripped cleanly at combat start and re-applied when combat ends.
 - **In combat (Details! column mode):** iLvl and tier columns stay visible throughout combat. When DPS rankings change and bars swap positions, columns may briefly disappear and reappear — this is normal and ensures every bar always shows the correct player's data.
-- **Blizzard DM after combat:** tags appear automatically on the Healing window. DPS and Overall windows may need a quick window toggle (close/open or switch between A/G) to refresh. This is because Blizzard unlocks player data at different times for different windows.
+- **Blizzard DM after combat:** DPS/Overall & Heal/Overall windows may need a quick window toggle (close/open or switch between A/G) to refresh. This is because Blizzard unlocks player data at different times for different windows.
 - **Blizzard DM after `/reload` during combat:** do **not** `/reload` while in combat. Blizzard recreates all frames during `/reload`, and in combat all player data is locked — this permanently corrupts the frame data until the next session switch or window toggle. `/reload` between pulls is fine.
 - **After the first fight:** everyone should be fully tagged.
 - **After a boss kill:** the whole group gets re-inspected automatically.
