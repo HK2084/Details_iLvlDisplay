@@ -205,9 +205,9 @@ end
 local function StoreNameIlvl(name, ilvl)
     if not name or not ilvl then return end
     nameToIlvl[name] = ilvl
-    -- Also store without realm suffix for cross-realm players ("Name-Server" -> "Name")
-    local shortName = name:match("^([^%-]+%-[^%-]+)$") and name:match("^(.+)%-[^%-]+$")
-    if shortName and shortName ~= name then
+    -- Also store short name via Ambiguate for cross-realm players
+    local shortName = Ambiguate(name, "short")
+    if shortName ~= name then
         nameToIlvl[shortName] = ilvl
     end
 end
@@ -216,8 +216,8 @@ end
 local function StoreNameBonus(name, sb)
     if not name then return end
     nameToSetBonus[name] = sb
-    local shortName = name:match("^([^%-]+%-[^%-]+)$") and name:match("^(.+)%-[^%-]+$")
-    if shortName and shortName ~= name then
+    local shortName = Ambiguate(name, "short")
+    if shortName ~= name then
         nameToSetBonus[shortName] = sb
     end
 end
@@ -265,8 +265,8 @@ local function RebuildNameIlvlMap()
                 StoreNameBonus(cached.name, setBonusCache[guid])
                 -- Cross-realm: cached.name may be "Name-Realm". Also store short
                 -- name so Details! bars (which show only "Name") still match.
-                local shortName = cached.name:match("^([^%-]+)%-")
-                if shortName then
+                local shortName = Ambiguate(cached.name, "short")
+                if shortName ~= cached.name then
                     StoreNameIlvl(shortName, cached.ilvl)
                     StoreNameBonus(shortName, setBonusCache[guid])
                 end
@@ -972,6 +972,7 @@ frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 frame:RegisterEvent("ENCOUNTER_END")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 
@@ -1215,6 +1216,19 @@ frame:SetScript("OnEvent", function(self, event, ...)
             mapDirty = true
             NotifyElvUI()
             C_Timer.After(3, QueueGroupInspect)
+        end
+
+    elseif event == "UNIT_INVENTORY_CHANGED" then
+        -- Re-inspect group member when they equip new gear.
+        -- Fires per unit token ("party1", "raid5", etc.)
+        local unit = ...
+        if unit and UnitIsPlayer(unit) and not UnitIsUnit(unit, "player") and not IsInCombatSafe() then
+            local guid = UnitGUID(unit)
+            if guid and ilvlCache[guid] then
+                -- Invalidate stale cache so QueueGroupInspect picks them up
+                ilvlCache[guid].time = 0
+                C_Timer.After(2, QueueGroupInspect)
+            end
         end
     end
 end)
