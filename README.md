@@ -84,13 +84,13 @@ iLvl data is cached for 2 hours per player.
 **Expected behavior — not bugs:**
 
 - **First pull:** iLvl may not show for all players yet. Inspection runs after you join the group and takes a few seconds per player.
-- **In combat (Details! inline mode):** tags pause until combat ends. Use **column mode** to see iLvl during combat.
+- **In combat (all meters):** during combat, the addon does **nothing** — no tags, no writes, no UI changes. This is intentional. Blizzard locks player data with Secret Values during combat, and writing to bars while they're being repositioned causes display glitches. Tags are stripped cleanly at combat start and re-applied when combat ends.
 - **In combat (Details! column mode):** iLvl and tier columns stay visible throughout combat. When DPS rankings change and bars swap positions, columns may briefly disappear and reappear — this is normal and ensures every bar always shows the correct player's data.
-- **In combat (Blizzard DM):** player names may be secret-protected by Blizzard during combat. iLvl tags appear after combat ends when data becomes readable.
-- **Blizzard DM after login / `/reload`:** iLvl does **not** appear on the existing bars immediately. The Blizzard meter only updates its bars when new combat data arrives — start a new fight and iLvl will appear. This is normal.
+- **Blizzard DM after combat:** tags appear automatically on the Healing window. DPS and Overall windows may need a quick window toggle (close/open or switch between A/G) to refresh. This is because Blizzard unlocks player data at different times for different windows.
+- **Blizzard DM after `/reload` during combat:** do **not** `/reload` while in combat. Blizzard recreates all frames during `/reload`, and in combat all player data is locked — this permanently corrupts the frame data until the next session switch or window toggle. `/reload` between pulls is fine.
 - **After the first fight:** everyone should be fully tagged.
 - **After a boss kill:** the whole group gets re-inspected automatically.
-- **On `/reload`:** cached data is restored instantly. Only new or uncached players get re-inspected.
+- **On `/reload` (out of combat):** cached data is restored instantly. Only new or uncached players get re-inspected.
 
 **Tier set bonus `[2P]` / `[4P]`:**
 
@@ -152,6 +152,12 @@ The tag updates instantly when inspect data arrives, on gear swaps, or when the 
 
 **"iLvl shows on Details! but not on Blizzard DM" (or vice versa)**
 → Both are independent toggles. Run `/dilvl blizzdm` or `/dilvl details` to toggle each one.
+
+**"Blizzard DM shows names but no iLvl tags"**
+→ Switch the window (A→G→A or close/reopen). This triggers Blizzard to refresh the frames so our addon can read player data. See [#12](https://github.com/HK2084/Details_iLvlDisplay/issues/12) for details.
+
+**"Blizzard DM tags disappeared after `/reload` in a fight"**
+→ Don't `/reload` during combat. Wait until the fight ends, then `/reload` if needed.
 
 **Reporting a bug:** run `/dilvl debug` and include the full output in your report. You can also [open an issue on GitHub](https://github.com/HK2084/Details_iLvlDisplay/issues).
 
