@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.1
+
+### Fixed
+
+- **Blizz DM post-combat refresh** — replaced `C_Timer.After` with dirty-flag OnUpdate frame. After combat ends, the addon keeps checking for newly-readable frames and tags them automatically. Goes idle when done — zero CPU cost (#12, #17, #18)
+- **Cross-realm name resolution** — switched `Ambiguate` from `"short"` to `"none"` (BigWigs pattern). Always strips realm suffix, fixing NO-GUID for non-connected cross-realm players like Náirah-Nazjatar (#14)
+- **Endless refresh loop** — OnUpdate now tracks progress and stops when no new frames are tagged. Previously looped indefinitely when nameText was readable but GUID couldn't be resolved
+- **Refresh throttle** — post-combat catch-up limited to every 0.5s instead of every frame (60fps → 2 checks/sec)
+
+---
+
 ## v1.3.0
 
 ### New
