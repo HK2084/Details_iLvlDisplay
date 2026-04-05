@@ -1804,9 +1804,11 @@ Details_iLvlDisplayAPI = {
     -- so Blizz DM can still show iLvl for past sessions.
     ResolveGUIDByName = function(name)
         if not name then return nil end
-        local shortName = Ambiguate(name, "short")
+        -- "none" always strips realm (BigWigs pattern). "short" only strips
+        -- connected realms, which missed non-connected cross-realm players.
+        local cleanName = Ambiguate(name, "none")
         local pName = UnitName("player")
-        if pName == shortName then return UnitGUID("player") end
+        if pName == cleanName then return UnitGUID("player") end
         -- Try roster first
         local prefix, count
         if IsInRaid() then
@@ -1817,14 +1819,7 @@ Details_iLvlDisplayAPI = {
         if prefix then
             for i = 1, count do
                 local unit = prefix .. i
-                if UnitName(unit) == shortName then
-                    return UnitGUID(unit)
-                end
-                -- Cross-realm: UnitName returns "Name" without realm,
-                -- but shortName may be "Name-Realm" (non-connected realms).
-                -- Match via GetUnitName(unit, true) which includes realm.
-                local fullName = GetUnitName(unit, true)
-                if fullName and fullName ~= shortName and Ambiguate(fullName, "short") == shortName then
+                if UnitName(unit) == cleanName then
                     return UnitGUID(unit)
                 end
             end
@@ -1832,7 +1827,7 @@ Details_iLvlDisplayAPI = {
         -- Fallback: reverse lookup from ilvlCache (players who left group)
         if ilvlCache then
             for guid, cached in pairs(ilvlCache) do
-                if cached.name and Ambiguate(cached.name, "short") == shortName then
+                if cached.name and Ambiguate(cached.name, "none") == cleanName then
                     return guid
                 end
             end
