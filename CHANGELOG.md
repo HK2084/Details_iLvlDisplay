@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.3.2
+
+### Fixed
+
+- **Cache key mismatch after group disband** — `Ambiguate("short")` → `"none"` everywhere (core.lua + blizzdm.lua). Cross-realm players now retain iLvl tags after leaving a group (#21)
+- **Blizz DM: post-combat deferred retry** — when frames are still secret after combat ends (~0.5s Blizzard unlock delay), the addon now sets a one-shot flag and retries on the next `UpdateName` hook. Event-driven, no timer (#19)
+- **Blizz DM: truncated realm name resolution** — FontString text can truncate long realm names (e.g. "Гордун" instead of "Гордунни"). New name-only fallback strips the realm and matches by character name alone
+- **Secret value guard** — added `hasanysecretvalues()` batch guard on event args (`INSPECT_READY`, `ENCOUNTER_END`, `GET_ITEM_INFO_RECEIVED`, `UNIT_INVENTORY_CHANGED`, `PLAYER_IN_COMBAT_CHANGED`). Defense-in-depth against Blizzard's expanding Secret Value system (#15)
+- **Error routing** — `SafeCall` kill-switch now uses `geterrorhandler()` instead of `print()`. Errors route through WoW's error handler → BugSack picks them up automatically (#13)
+
+### Improved
+
+- **Debug output** — `/dilvl debug` now shows `HookErrors: 0/5` (SafeCall status) and `deferRetry=no/PENDING` (post-combat retry state)
+- **CurseForge FAQ** — added combat iLvl limitation explanation to CurseForge description
+
+---
+
 ## v1.3.1
 
 ### Fixed
