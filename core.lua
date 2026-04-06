@@ -49,8 +49,9 @@ local function SafeCall(fn, ...)
     if not ok then
         hookErrors = hookErrors + 1
         if hookErrors >= HOOK_ERROR_LIMIT then
-            print("|cFFFF0000Details! iLvl Display:|r Too many errors — addon auto-disabled to protect your UI. /reload to re-enable. Error: " .. tostring(err))
             if db then db.enabled = false end
+            -- Route through WoW's error handler → BugSack picks it up (#13)
+            geterrorhandler()("Details! iLvl Display: Too many errors — addon auto-disabled. /reload to re-enable. Error: " .. tostring(err))
         end
     end
 end
@@ -71,6 +72,9 @@ local function isSecretValue(val)
     if issecrettable and issecrettable(val) then return true end
     return false
 end
+
+-- Batch guard: true if ANY arg in the varargs is secret (#15)
+local _hasanysecretvalues = hasanysecretvalues or function() return false end
 
 ---------------------------------------------------------------
 -- Safe InCombatLockdown wrapper (WoW 12.0+)
@@ -223,8 +227,9 @@ end
 local function StoreNameIlvl(name, ilvl)
     if not name or not ilvl then return end
     nameToIlvl[name] = ilvl
-    -- Also store short name via Ambiguate for cross-realm players
-    local shortName = Ambiguate(name, "short")
+    -- "none" always strips realm; "short" only strips connected realms
+    -- which missed non-connected cross-realm players (#21).
+    local shortName = Ambiguate(name, "none")
     if shortName ~= name then
         nameToIlvl[shortName] = ilvl
     end
@@ -234,7 +239,7 @@ end
 local function StoreNameBonus(name, sb)
     if not name then return end
     nameToSetBonus[name] = sb
-    local shortName = Ambiguate(name, "short")
+    local shortName = Ambiguate(name, "none")
     if shortName ~= name then
         nameToSetBonus[shortName] = sb
     end
@@ -283,7 +288,9 @@ local function RebuildNameIlvlMap()
                 StoreNameBonus(cached.name, setBonusCache[guid])
                 -- Cross-realm: cached.name may be "Name-Realm". Also store short
                 -- name so Details! bars (which show only "Name") still match.
-                local shortName = Ambiguate(cached.name, "short")
+                -- "none" always strips realm; "short" only strips connected realms
+                -- which missed non-connected cross-realm players (#21).
+                local shortName = Ambiguate(cached.name, "none")
                 if shortName ~= cached.name then
                     StoreNameIlvl(shortName, cached.ilvl)
                     StoreNameBonus(shortName, setBonusCache[guid])
@@ -1123,6 +1130,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         UpdatePlayerCache()
 
     elseif event == "INSPECT_READY" then
+        if _hasanysecretvalues(...) then return end -- (#15)
         local guid = ...
         local prefix, count = GetGroupInfo()
 
@@ -1178,6 +1186,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         UpdatePlayerCache()
 
     elseif event == "GET_ITEM_INFO_RECEIVED" then
+        if _hasanysecretvalues(...) then return end -- (#15)
         -- C_Item.GetItemInfo is async — on fresh login, tier slot items may
         -- not be cached yet, causing GetSetBonusForUnit to undercount.
         -- Re-check only when a tier slot item finishes loading.
@@ -1208,6 +1217,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "ENCOUNTER_END" then
+        if _hasanysecretvalues(...) then return end -- (#15)
         -- ENCOUNTER_END fires on both kills (success=1) AND wipes (success=0).
         -- Only re-inspect on kills — loot (and potential ilvl gains) only drop on kills.
         local _, _, _, _, success = ...
@@ -1240,6 +1250,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "UNIT_INVENTORY_CHANGED" then
+        if _hasanysecretvalues(...) then return end -- (#15)
         -- Re-inspect group member when they equip new gear.
         -- Fires per unit token ("party1", "raid5", etc.)
         local unit = ...
@@ -1449,9 +1460,10 @@ SlashCmdList["DILVL"] = function(msg)
             local ago = string.format("%.0fs ago", GetTime() - lastInspectInfo.time)
             print(string.format("  Last inspect: %s → %d iLvl (%s)", lastInspectInfo.name, lastInspectInfo.ilvl, ago))
         end
-        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s",
+        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  HookErrors: %d/%d",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
-            openRaidLib and "active" or "n/a"))
+            openRaidLib and "active" or "n/a",
+            hookErrors, HOOK_ERROR_LIMIT))
 
         -- BlizzDM diagnostics
         if Details_iLvlDisplayAPI.GetBlizzDMDebug then
@@ -1467,12 +1479,13 @@ SlashCmdList["DILVL"] = function(msg)
                     ci.encounterSecret and "(SECRET)" or "",
                     ci.unitFlags and "YES" or "no",
                     ci.members or 0))
-                print(string.format("    refresh: active=%s  passes=%d  tagged=%d/%d  lastPass=%.1fs ago",
+                print(string.format("    refresh: active=%s  passes=%d  tagged=%d/%d  lastPass=%.1fs ago  deferRetry=%s",
                     ci.refreshActive and "YES" or "idle",
                     ci.refreshPasses or 0,
                     ci.refreshTagged or 0,
                     ci.refreshTotal or 0,
-                    ci.refreshLastPass and (GetTime() - ci.refreshLastPass) or 0))
+                    ci.refreshLastPass and (GetTime() - ci.refreshLastPass) or 0,
+                    ci.deferredRetry and "PENDING" or "no"))
             else
                 -- Fallback for old format
                 print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d  inCombat: %s",

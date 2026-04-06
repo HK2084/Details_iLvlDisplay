@@ -30,6 +30,7 @@ if not API then return end
 ---------------------------------------------------------------
 local _issecretvalue = issecretvalue or function() return false end
 local _issecrettable = issecrettable or function() return false end
+local _hasanysecretvalues = hasanysecretvalues or function() return false end
 
 local function isSecret(val)
     if _issecretvalue(val) then return true end
@@ -217,10 +218,7 @@ local function ResolveFrameGUID(frame)
         return guid
     end
 
-    -- Fallback: sourceName is secret, but the raw nameText FIELD is readable
-    -- (no secret wrapper on the field itself, only on GetNameText() method).
-    -- Confirmed via trace: sn=SEC, gnt=SEC, but nt="1. Quinroth" is readable.
-    -- Parse player name from ranked text → roster/cache lookup.
+    -- Fallback 1: nameText field (no secret wrapper on field itself)
     local nt = frame.nameText
     if nt and not isSecret(nt) then
         local parsed = tostring(nt):match("^%d+%.%s*(.+)") or tostring(nt)
@@ -231,6 +229,37 @@ local function ResolveFrameGUID(frame)
             if guid then
                 frame._dilvlGUID = guid
                 return guid
+            end
+        end
+    end
+
+    -- Fallback 2: read native FontString GetText() directly.
+    -- Post-combat, sourceName and nameText may be secret but the rendered
+    -- FontString often has the readable text (e.g. "1. Phaenthar-Silvermoon").
+    local nameFS = frame.GetName and frame:GetName()
+    if nameFS and type(nameFS) ~= "string" then
+        local ok, txt = pcall(nameFS.GetText, nameFS)
+        if ok and txt and not isSecret(txt) and type(txt) == "string" then
+            local parsed = txt:match("^%d+%.%s*(.+)") or txt
+            parsed = StripTagFromText(parsed)
+            parsed = parsed and parsed:match("^%s*(.-)%s*$")
+            if parsed and parsed ~= "" then
+                -- Try full name first (e.g. "Phaenthar-Silvermoon")
+                local guid = API.ResolveGUIDByName(parsed)
+                if guid then
+                    frame._dilvlGUID = guid
+                    return guid
+                end
+                -- Fallback: FontString may truncate realm names (e.g. "Тобальд-Гордун"
+                -- instead of "Тобальд-Гордунни"). Strip realm and try name-only.
+                local nameOnly = parsed:match("^([^%-]+)")
+                if nameOnly and nameOnly ~= parsed then
+                    guid = API.ResolveGUIDByName(nameOnly)
+                    if guid then
+                        frame._dilvlGUID = guid
+                        return guid
+                    end
+                end
             end
         end
     end
@@ -360,7 +389,7 @@ local function ClearOverlay(frame)
                 if guid then
                     local cached = API.GetCacheData(guid)
                     if cached and cached.name and not isSecret(cached.name) then
-                        restoreText = Ambiguate(cached.name, "short")
+                        restoreText = Ambiguate(cached.name, "none")
                     end
                 end
             end
@@ -428,7 +457,7 @@ local function InjectIlvl(frame)
             if not name or isSecret(name) then
                 local cached = API.GetCacheData(guid)
                 if cached and cached.name and not isSecret(cached.name) then
-                    name = Ambiguate(cached.name, "short")
+                    name = Ambiguate(cached.name, "none")
                 end
             end
             if not name or isSecret(name) then ClearOverlay(frame) return end
@@ -495,6 +524,11 @@ end
 -- Uses DamageMeter:ForEachSessionWindow → ForEachEntryFrame
 -- (official Blizzard iteration API, same pattern ElvUI uses).
 ---------------------------------------------------------------
+-- One-shot deferred retry flag: when RefreshAllFrames finds frames still
+-- secret after combat ends (~0.5s unlock delay), it sets this flag so the
+-- next UpdateName hook fires a full refresh. Event-driven, no timer (#19).
+local deferredRetryPending = false
+
 local function RefreshAllFrames()
     local db = API.GetDb()
     if not db or not db.enabled then return end
@@ -503,12 +537,23 @@ local function RefreshAllFrames()
 
     if not DamageMeter.ForEachSessionWindow then return end
 
+    local hasSecret = false
     DamageMeter:ForEachSessionWindow(function(sessionWindow)
         if not sessionWindow.ForEachEntryFrame then return end
         sessionWindow:ForEachEntryFrame(function(frame)
             InjectIlvl(frame)
+            -- Check if any frame still has secret data (post-combat unlock delay)
+            if not hasSecret and frame.sourceName and isSecret(frame.sourceName) then
+                hasSecret = true
+            end
         end)
     end)
+
+    -- If frames are still secret after combat, defer retry to next UpdateName (#19)
+    if hasSecret and not IsGroupInCombat() then
+        deferredRetryPending = true
+        trace("RefreshAllFrames: frames still secret, deferred retry pending")
+    end
 end
 
 ---------------------------------------------------------------
@@ -529,6 +574,14 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
     if name and not isSecret(name) then
         local guid = API.ResolveGUIDByName(name)
         if guid then self._dilvlGUID = guid end
+    end
+
+    -- Deferred retry: post-combat RefreshAllFrames found secret frames,
+    -- now UpdateName fired (secrets unlocked ~0.5s later) → full refresh (#19)
+    if deferredRetryPending then
+        deferredRetryPending = false
+        trace("UpdateName: deferred retry → RefreshAllFrames")
+        ScheduleRefresh()
     end
 
     -- Trace: log when Blizzard calls UpdateName and what state the frame is in
@@ -681,10 +734,17 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         return
     end
     if event == "PLAYER_IN_COMBAT_CHANGED" then
-        local combatState = ...
-        if combatState == true or isSecret(combatState) then
+        -- Guard: if any event arg is secret, treat as combat-start (safe default) (#15)
+        if _hasanysecretvalues(...) then
             inCombat = true
-                    trace("COMBAT_CHANGED → IN")
+            trace("COMBAT_CHANGED → SECRET args, assume IN")
+            StripAllTags()
+            return
+        end
+        local combatState = ...
+        if combatState == true then
+            inCombat = true
+            trace("COMBAT_CHANGED → IN")
             StripAllTags()
         else
             inCombat = false
@@ -810,6 +870,7 @@ API.GetBlizzDMDebug = function()
         refreshTagged = refreshStats.tagged,
         refreshTotal = refreshStats.total,
         refreshLastPass = refreshStats.lastPass,
+        deferredRetry = deferredRetryPending, -- (#19)
     }
 
     if not DamageMeter.ForEachSessionWindow then
