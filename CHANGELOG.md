@@ -4,15 +4,15 @@
 
 ### Fixed
 
-- **Delve crash: ENCOUNTER_END secret boolean** — `success` param in Delves is lazy-tainted (not caught by `hasanysecretvalues`). Boolean test on the secret value crashed the addon. Added per-arg `isSecretValue()` guards on all event args after destructuring: ENCOUNTER_END, INSPECT_READY, GET_ITEM_INFO_RECEIVED, UNIT_INVENTORY_CHANGED (reported by NiGhTwAlKeR559)
-- **UnitIsUnit secret value bug** — `UNIT_INVENTORY_CHANGED` handler used `not UnitIsUnit(unit, "player")` which always evaluated to false when UnitIsUnit returned a secret value (truthy). Replaced with `UnitGUID` comparison
+- **Delve crash: ENCOUNTER_END secret value** — the `success` parameter in Delves is lazy-tainted and bypasses the standard secret check. Comparing it crashed the addon. Added individual secret guards on all event parameters (reported by NiGhTwAlKeR559)
+- **UnitIsUnit secret value bug** — gear change detection incorrectly skipped all units when UnitIsUnit returned a secret value. Replaced with reliable GUID comparison
+- **Blizzard DM combat state stuck** — in Delves and M+, combat state could get permanently stuck after secret event args. Added safety reset that cross-checks InCombatLockdown + IsEncounterInProgress
+- **IsEncounterInProgress secret guard** — encounter check could return a secret value (always truthy), blocking all tag injection indefinitely
 
 ### Improved
 
-- **SafeUnitName wrapper** — all `UnitName()` calls (12 sites across core.lua + blizzdm.lua) now go through a secret-value guard. Prepares for 12.0.5 where `UnitName` becomes `AllowedWhenUntainted`
-- **SafeUnitIsUnit wrapper** — uses the new `C_Secrets.CanCompareUnitTokens` API (12.0.5+) with pcall fallback for current live
-- **Debug output** — `/dilvl debug` shows SecretAPI status (CanCompareUnitTokens, UnitNameBlocked, UnitIsUnitBlocked counters)
-- **Blizztrace** — name resolution path logging, ResolveGUID failure reasons
+- **12.0.5 preparation** — all UnitName() calls now go through a secret-safe wrapper, ready for upcoming `AllowedWhenUntainted` restriction. UnitIsUnit wrapper uses the new `CanCompareUnitTokens` API
+- **Debug output** — `/dilvl debug` now shows Secret API status and block counters. `/dilvl blizztrace` logs name resolution paths and GUID failure reasons
 
 ---
 
