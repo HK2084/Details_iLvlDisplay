@@ -76,6 +76,39 @@ end
 -- Batch guard: true if ANY arg in the varargs is secret (#15)
 local _hasanysecretvalues = hasanysecretvalues or function() return false end
 
+-- Safe UnitIsUnit wrapper (12.0.5+: UnitIsUnit requires CanCompareUnitTokens guard).
+-- Returns true/false, never a secret value. nil when comparison is blocked.
+local CanCompareUnitTokens = C_Secrets and C_Secrets.CanCompareUnitTokens
+local secretStats = {unitNameBlocked = 0, unitIsUnitBlocked = 0}
+local function SafeUnitIsUnit(unit1, unit2)
+    if CanCompareUnitTokens then
+        if not CanCompareUnitTokens(unit1, unit2) then
+            secretStats.unitIsUnitBlocked = secretStats.unitIsUnitBlocked + 1
+            return nil
+        end
+        return not not UnitIsUnit(unit1, unit2)
+    end
+    -- Pre-12.0.5 fallback: pcall to catch secret errors
+    local ok, result = pcall(UnitIsUnit, unit1, unit2)
+    if not ok then
+        secretStats.unitIsUnitBlocked = secretStats.unitIsUnitBlocked + 1
+        return nil
+    end
+    return not not result
+end
+
+-- Safe UnitName wrapper (12.0.5+: UnitName may become AllowedWhenUntainted).
+-- Returns name, realm or nil, nil when blocked by secrets.
+local function SafeUnitName(unit)
+    local name, realm = UnitName(unit)
+    if name and isSecretValue(name) then
+        secretStats.unitNameBlocked = secretStats.unitNameBlocked + 1
+        return nil, nil
+    end
+    if realm and isSecretValue(realm) then realm = nil end
+    return name, realm
+end
+
 ---------------------------------------------------------------
 -- Safe InCombatLockdown wrapper (WoW 12.0+)
 -- Inside instances, InCombatLockdown() can return a secret value.
@@ -267,7 +300,7 @@ local function RebuildNameIlvlMap()
                 local cached = guid and ilvlCache[guid]
                 if cached and cached.ilvl then
                     seenGuids[guid] = true
-                    local name, realm = UnitName(unit)
+                    local name, realm = SafeUnitName(unit)
                     if name then
                         local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
                         StoreNameIlvl(name, cached.ilvl)
@@ -302,9 +335,11 @@ local function RebuildNameIlvlMap()
         local pguid = UnitGUID("player")
         local pcached = pguid and ilvlCache[pguid]
         if pcached and pcached.ilvl then
-            local pname = UnitName("player")
-            StoreNameIlvl(pname, pcached.ilvl)
-            StoreNameBonus(pname, setBonusCache[pguid])
+            local pname = SafeUnitName("player")
+            if pname then
+                StoreNameIlvl(pname, pcached.ilvl)
+                StoreNameBonus(pname, setBonusCache[pguid])
+            end
         end
     end
 
@@ -931,12 +966,9 @@ local function QueueGroupInspect()
 
     for i = 1, count do
         local unit = prefix .. i
-        -- UnitGUID compare instead of UnitIsUnit(unit, "player"):
-        -- Blizzard is hotfixing UnitIsUnit to return secret values (April 2026,
-        -- Race to World First L'ura — used by interrupt anchor addons on nameplates).
-        -- Secret values are truthy, so `not UnitIsUnit(...)` would always be false
-        -- and skip ALL units, breaking our inspect queue entirely.
-        -- UnitGUID is fundamental infrastructure — safe from secret restrictions.
+        -- UnitGUID compare instead of UnitIsUnit: UnitIsUnit returns secret values
+        -- in combat (12.0+) and requires CanCompareUnitTokens guard (12.0.5+).
+        -- UnitGUID is fundamental infrastructure — always safe.
         if UnitExists(unit) and UnitIsPlayer(unit) and UnitGUID(unit) ~= UnitGUID("player") then
             local guid = UnitGUID(unit)
             if guid then
@@ -945,7 +977,7 @@ local function QueueGroupInspect()
                 -- may already be stale if the player moved or reloaded.
                 local cached = ilvlCache[guid]
                 if cached and cached.ilvl then
-                    local name, realm = UnitName(unit)
+                    local name, realm = SafeUnitName(unit)
                     if name then
                         local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
                         StoreNameIlvl(fullName, cached.ilvl)
@@ -977,7 +1009,8 @@ local function UpdatePlayerCache()
     if not equipped or equipped <= 0 then return end
     local guid = UnitGUID("player")
     if not guid then return end
-    local pname = UnitName("player")
+    local pname = SafeUnitName("player")
+    if not pname then return end
     local sb = GetSetBonusForUnit("player")
     local ilvl = math.floor(equipped)
     ilvlCache[guid] = {ilvl = ilvl, time = time(), name = pname, source = "self"}
@@ -1064,7 +1097,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                                         -- Only update if newer than what we have
                                         local existing = ilvlCache[guid]
                                         if not existing or ilvl ~= existing.ilvl or (time() - existing.time) > 300 then
-                                            local name, realm = UnitName(unit)
+                                            local name, realm = SafeUnitName(unit)
+                                            if not name then break end
                                             local storedName = (realm and realm ~= "") and (name.."-"..realm) or name
                                             ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName, source = "lor"}
                                             StoreNameIlvl(storedName, ilvl)
@@ -1132,6 +1166,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "INSPECT_READY" then
         if _hasanysecretvalues(...) then return end -- (#15)
         local guid = ...
+        if isSecretValue(guid) then return end
         local prefix, count = GetGroupInfo()
 
         for i = 1, count do
@@ -1141,7 +1176,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 if guid == UnitGUID("player") then break end
                 local ilvl = C_PaperDollInfo.GetInspectItemLevel(u)
                 if ilvl and ilvl > 0 then
-                    local name, realm = UnitName(u)
+                    local name, realm = SafeUnitName(u)
                     local ilvlFloor = math.floor(ilvl)
                     local fullName = name and (realm and realm ~= "") and (name .. "-" .. realm) or name
                     local setBonus = GetSetBonusForUnit(u)
@@ -1191,6 +1226,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- not be cached yet, causing GetSetBonusForUnit to undercount.
         -- Re-check only when a tier slot item finishes loading.
         local itemID = ...
+        if isSecretValue(itemID) then return end
         if itemID then
             for _, slotID in ipairs(TIER_SLOTS) do
                 if GetInventoryItemID("player", slotID) == itemID then
@@ -1221,6 +1257,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- ENCOUNTER_END fires on both kills (success=1) AND wipes (success=0).
         -- Only re-inspect on kills — loot (and potential ilvl gains) only drop on kills.
         local _, _, _, _, success = ...
+        if isSecretValue(success) then return end -- Delves: success can be lazy-tainted
         if db and db.enabled and success == 1 then
             -- Don't force-expire ALL entries: players out of inspect range (common
             -- in LFR) would lose their tags and never get them back this session.
@@ -1254,7 +1291,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- Re-inspect group member when they equip new gear.
         -- Fires per unit token ("party1", "raid5", etc.)
         local unit = ...
-        if unit and UnitIsPlayer(unit) and not UnitIsUnit(unit, "player") and not IsInCombatSafe() then
+        if isSecretValue(unit) then return end
+        if unit and UnitIsPlayer(unit) and UnitGUID(unit) ~= UnitGUID("player") and not IsInCombatSafe() then
             local guid = UnitGUID(unit)
             if guid and ilvlCache[guid] then
                 -- Invalidate stale cache so QueueGroupInspect picks them up
@@ -1369,7 +1407,7 @@ SlashCmdList["DILVL"] = function(msg)
         for guid, data in pairs(ilvlCache) do
             local name = data.name or "Unknown"
             if guid == UnitGUID("player") then
-                name = UnitName("player") or name
+                name = SafeUnitName("player") or name
             end
             if name == "Unknown" and Details and Details.item_level_pool and Details.item_level_pool[guid] then
                 name = Details.item_level_pool[guid].name or name
@@ -1464,6 +1502,9 @@ SlashCmdList["DILVL"] = function(msg)
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
             openRaidLib and "active" or "n/a",
             hookErrors, HOOK_ERROR_LIMIT))
+        print(string.format("  SecretAPI: CanCompareUnitTokens=%s  UnitNameBlocked: %d  UnitIsUnitBlocked: %d",
+            CanCompareUnitTokens and "yes" or "no",
+            secretStats.unitNameBlocked, secretStats.unitIsUnitBlocked))
 
         -- BlizzDM diagnostics
         if Details_iLvlDisplayAPI.GetBlizzDMDebug then
@@ -1472,9 +1513,10 @@ SlashCmdList["DILVL"] = function(msg)
             if type(ci) == "table" then
                 print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d",
                     windows, frames, hasGuid, hasTag, secretName))
-                print(string.format("    combat: group=%s  self=%s  encounter=%s%s  unitFlags=%s  members=%d",
+                print(string.format("    combat: group=%s  self=%s  ICL=%s  encounter=%s%s  unitFlags=%s  members=%d",
                     ci.groupCombat and "YES" or "no",
                     ci.inCombat and "YES" or "no",
+                    ci.iclRaw or "?",
                     ci.encounter and "YES" or "no",
                     ci.encounterSecret and "(SECRET)" or "",
                     ci.unitFlags and "YES" or "no",
@@ -1820,7 +1862,7 @@ Details_iLvlDisplayAPI = {
         -- "none" always strips realm (BigWigs pattern). "short" only strips
         -- connected realms, which missed non-connected cross-realm players.
         local cleanName = Ambiguate(name, "none")
-        local pName = UnitName("player")
+        local pName = SafeUnitName("player")
         if pName == cleanName then return UnitGUID("player") end
         -- Try roster first
         local prefix, count
@@ -1832,7 +1874,8 @@ Details_iLvlDisplayAPI = {
         if prefix then
             for i = 1, count do
                 local unit = prefix .. i
-                if UnitName(unit) == cleanName then
+                local uName = SafeUnitName(unit)
+                if uName == cleanName then
                     return UnitGUID(unit)
                 end
             end

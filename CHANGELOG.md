@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.3.3
+
+### Fixed
+
+- **Delve crash: ENCOUNTER_END secret boolean** — `success` param in Delves is lazy-tainted (not caught by `hasanysecretvalues`). Boolean test on the secret value crashed the addon. Added per-arg `isSecretValue()` guards on all event args after destructuring: ENCOUNTER_END, INSPECT_READY, GET_ITEM_INFO_RECEIVED, UNIT_INVENTORY_CHANGED (reported by NiGhTwAlKeR559)
+- **UnitIsUnit secret value bug** — `UNIT_INVENTORY_CHANGED` handler used `not UnitIsUnit(unit, "player")` which always evaluated to false when UnitIsUnit returned a secret value (truthy). Replaced with `UnitGUID` comparison
+
+### Improved
+
+- **SafeUnitName wrapper** — all `UnitName()` calls (12 sites across core.lua + blizzdm.lua) now go through a secret-value guard. Prepares for 12.0.5 where `UnitName` becomes `AllowedWhenUntainted`
+- **SafeUnitIsUnit wrapper** — uses the new `C_Secrets.CanCompareUnitTokens` API (12.0.5+) with pcall fallback for current live
+- **Debug output** — `/dilvl debug` shows SecretAPI status (CanCompareUnitTokens, UnitNameBlocked, UnitIsUnitBlocked counters)
+- **Blizztrace** — name resolution path logging, ResolveGUID failure reasons
+
+---
+
 ## v1.3.2
 
 ### Fixed

@@ -130,7 +130,9 @@ end
 -- secrets on OUR frames unlock when WE leave combat.
 local function IsGroupInCombat()
     if inCombat then return true end
-    if IsEncounterInProgress() then return true end
+    local eip = IsEncounterInProgress()
+    -- IsEncounterInProgress() can return secret in instances — treat as false
+    if eip == true then return true end
     return false
 end
 
@@ -264,6 +266,15 @@ local function ResolveFrameGUID(frame)
         end
     end
 
+    -- All fallbacks exhausted — trace why
+    if traceEnabled then
+        local snS = (not name and "nil") or (isSecret(name) and "SEC") or "ok"
+        local ntS = (not frame.nameText and "nil") or (isSecret(frame.nameText) and "SEC") or "ok"
+        trace(format("ResolveGUID FAIL: sn=%s nt=%s cached=%s lp=%s",
+            snS, ntS,
+            cachedGUID and (isSecret(cachedGUID) and "SEC" or "ok") or "nil",
+            tostring(frame.isLocalPlayer)))
+    end
     return nil
 end
 
@@ -437,30 +448,44 @@ local function InjectIlvl(frame)
     -- happen between pulls). Cache-name fallback handles this reliably because
     -- we captured the name during inspect when it was still readable.
     local baseName
+    local nameSource -- trace: which priority resolved the name
     -- Priority 1: Blizzard's formatted text with rank prefix ("1. Quinroth")
     local nameText = frame.nameText
     if nameText and not isSecret(nameText) then
         baseName = nameText
+        nameSource = "nameText"
     else
         -- Priority 2: GetNameText() — formatted with rank, readable post-combat
         local fmtText = frame.GetNameText and frame:GetNameText()
         if fmtText and not isSecret(fmtText) then
             baseName = fmtText
+            nameSource = "GetNameText"
         else
             -- Priority 3: sourceName / player name / cache name (no rank prefix)
             local name = frame.sourceName
             if not name or isSecret(name) then
                 if frame.isLocalPlayer == true then
-                    name = UnitName("player")
+                    local pn = UnitName("player")
+                    if pn and not isSecret(pn) then name = pn end
+                    nameSource = name and "UnitName(player)" or nil
                 end
+            else
+                nameSource = "sourceName"
             end
             if not name or isSecret(name) then
                 local cached = API.GetCacheData(guid)
                 if cached and cached.name and not isSecret(cached.name) then
                     name = Ambiguate(cached.name, "none")
+                    nameSource = "cache"
                 end
             end
-            if not name or isSecret(name) then ClearOverlay(frame) return end
+            if not name or isSecret(name) then
+                trace(format("InjectIlvl SKIP: no readable name for GUID %s (nameText=%s sn=%s)",
+                    guid:sub(1,8) .. "..",
+                    nameText and (isSecret(nameText) and "SEC" or "ok") or "nil",
+                    frame.sourceName and (isSecret(frame.sourceName) and "SEC" or "ok") or "nil"))
+                ClearOverlay(frame) return
+            end
             baseName = name
         end
     end
@@ -535,6 +560,17 @@ local function RefreshAllFrames()
     if db.blizzDM == false then return end
     if db.blizzDM == nil and Details then return end
 
+    -- Safety reset: if inCombat is stuck but we're clearly OOC, force-reset.
+    -- Catches Delve/M+ edge cases where combat events fire in unexpected order.
+    if inCombat then
+        local icl = InCombatLockdown()
+        local eip = IsEncounterInProgress()
+        if icl ~= true and eip ~= true then
+            inCombat = false
+            trace("RefreshAllFrames: inCombat stuck, ICL+EIP both false → FORCE RESET")
+        end
+    end
+
     if not DamageMeter.ForEachSessionWindow then return end
 
     local hasSecret = false
@@ -587,7 +623,7 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
     -- Trace: log when Blizzard calls UpdateName and what state the frame is in
     if traceEnabled then
         local nameFS = self.GetName and self:GetName()
-        local txtOk, txt = pcall(function() return nameFS and nameFS:GetText() end)
+        local txtOk, txt = nameFS and pcall(nameFS.GetText, nameFS)
         local display = (txtOk and txt and not isSecret(txt)) and tostring(txt):sub(1, 30) or "(secret)"
         trace(format("UpdateName [%s] nameText=%s",
             name and not isSecret(name) and tostring(name) or "?", display))
@@ -654,6 +690,17 @@ local refreshFrame = CreateFrame("Frame")
 refreshFrame:Hide()  -- starts idle, no CPU cost
 
 refreshFrame:SetScript("OnUpdate", function(self, elapsed)
+    -- Safety reset: if inCombat is stuck but ICL + EIP both say OOC, force-reset.
+    -- Must run BEFORE IsGroupInCombat() check, otherwise we never reach RefreshAllFrames.
+    if inCombat then
+        local icl = InCombatLockdown()
+        local eip = IsEncounterInProgress()
+        if icl ~= true and eip ~= true then
+            inCombat = false
+            trace("OnUpdate: inCombat stuck, ICL+EIP both false → FORCE RESET")
+            StartPostCombatRefresh()
+        end
+    end
     if IsGroupInCombat() then
         refreshDirty = false
         self:Hide()
@@ -734,15 +781,39 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         return
     end
     if event == "PLAYER_IN_COMBAT_CHANGED" then
-        -- Guard: if any event arg is secret, treat as combat-start (safe default) (#15)
+        -- Guard: if any event arg is secret, fall back to InCombatLockdown().
+        -- Previous approach: always assume combat-start on secret args.
+        -- Problem: in Delves, PLAYER_IN_COMBAT_CHANGED fires with secret args
+        -- AFTER combat ends. inCombat got stuck true with no event to reset it.
         if _hasanysecretvalues(...) then
-            inCombat = true
-            trace("COMBAT_CHANGED → SECRET args, assume IN")
-            StripAllTags()
+            local icl = InCombatLockdown()
+            if icl == true then
+                inCombat = true
+                trace("COMBAT_CHANGED → SECRET args, ICL=true → IN")
+                StripAllTags()
+            else
+                inCombat = false
+                trace("COMBAT_CHANGED → SECRET args, ICL=false → OUT")
+                traceFrameState("COMBAT_CHANGED_SECRET_OUT", true)
+                StartPostCombatRefresh()
+            end
             return
         end
         local combatState = ...
-        if combatState == true then
+        if isSecret(combatState) then
+            -- Lazy-taint: hasanysecretvalues passed but individual arg is secret
+            local icl = InCombatLockdown()
+            if icl == true then
+                inCombat = true
+                trace("COMBAT_CHANGED → lazy-secret, ICL=true → IN")
+                StripAllTags()
+            else
+                inCombat = false
+                trace("COMBAT_CHANGED → lazy-secret, ICL=false → OUT")
+                traceFrameState("COMBAT_CHANGED_LAZY_OUT", true)
+                StartPostCombatRefresh()
+            end
+        elseif combatState == true then
             inCombat = true
             trace("COMBAT_CHANGED → IN")
             StripAllTags()
@@ -772,7 +843,13 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         return
     end
     if event == "ENCOUNTER_END" then
-        trace("ENCOUNTER_END")
+        -- Don't blindly set inCombat=false here — trash packs after a boss can
+        -- mean we're still in combat. Use InCombatLockdown() as truth.
+        local icl = InCombatLockdown()
+        if icl ~= true then
+            inCombat = false
+        end
+        trace(format("ENCOUNTER_END icl=%s inCombat=%s", tostring(icl), tostring(inCombat)))
         traceFrameState("ENCOUNTER_END")
         StartPostCombatRefresh()
         return
@@ -789,6 +866,17 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     -- DAMAGE_METER_COMBAT_SESSION_UPDATED fires after Blizzard finishes
     -- processing combat data. Just set dirty — the OnUpdate loop handles the rest.
     if event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
+        -- Safety reset on data events too (OnUpdate may be hidden/idle)
+        if inCombat then
+            local icl = InCombatLockdown()
+            local eip = IsEncounterInProgress()
+            if icl ~= true and eip ~= true then
+                inCombat = false
+                trace("DM_SESSION_UPDATED: inCombat stuck → FORCE RESET")
+                StartPostCombatRefresh()
+                return
+            end
+        end
         if not IsGroupInCombat() then
             trace("DM_SESSION_UPDATED → dirty")
             ScheduleRefresh()
@@ -846,6 +934,7 @@ API.GetBlizzDMDebug = function()
 
     -- Detailed combat state for debug output
     local eip = IsEncounterInProgress()
+    local icl = InCombatLockdown()
     local unitFlagsCombat = false
     local count = GetNumGroupMembers()
     if count > 0 then
@@ -860,6 +949,7 @@ API.GetBlizzDMDebug = function()
     end
     local combatInfo = {
         groupCombat = IsGroupInCombat(),
+        iclRaw = (icl == true and "YES") or (isSecret(icl) and "SECRET") or "no",
         inCombat = inCombat,
         encounter = eip == true,
         encounterSecret = eip and isSecret(eip),
