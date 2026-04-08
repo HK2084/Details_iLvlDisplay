@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3.4
+
+### Fixed
+
+- **StartPostCombatRefresh nil crash** — forward-reference bug: the safety reset in OnUpdate called `StartPostCombatRefresh()` before its `local function` definition. Added forward declarations so Lua resolves the function correctly (reported by aisenfaire)
+
+---
+
 ## v1.3.3
 
 ### Fixed

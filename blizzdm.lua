@@ -689,6 +689,10 @@ local refreshStats = {total = 0, tagged = 0, passes = 0, lastPass = 0}
 local refreshFrame = CreateFrame("Frame")
 refreshFrame:Hide()  -- starts idle, no CPU cost
 
+-- Forward declarations (used in OnUpdate before the full bodies are defined)
+local ScheduleRefresh
+local StartPostCombatRefresh
+
 refreshFrame:SetScript("OnUpdate", function(self, elapsed)
     -- Safety reset: if inCombat is stuck but ICL + EIP both say OOC, force-reset.
     -- Must run BEFORE IsGroupInCombat() check, otherwise we never reach RefreshAllFrames.
@@ -757,13 +761,13 @@ refreshFrame:SetScript("OnUpdate", function(self, elapsed)
     end
 end)
 
-local function ScheduleRefresh()
+function ScheduleRefresh()
     refreshDirty = true
     refreshFrame:Show()  -- wake up OnUpdate
 end
 
 -- Start post-combat catch-up: OnUpdate keeps running until all frames tagged
-local function StartPostCombatRefresh()
+function StartPostCombatRefresh()
     refreshActive = true
     refreshStats.passes = 0
     ScheduleRefresh()
