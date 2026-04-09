@@ -1162,6 +1162,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 if db.elvuiTag and ElvUI then modes[#modes + 1] = "ElvUI" end
                 local modeStr = #modes > 0 and table.concat(modes, " + ") or "cache-only"
                 print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (" .. modeStr .. "). /dilvl")
+
+                -- One-time feature hint (shown once per new feature, stored in SavedVariables)
+                if not db.seenHint_position then
+                    db.seenHint_position = true
+                    C_Timer.After(8, function()
+                        print("|cFF00FF00Details! iLvl Display|r |cFFFFD100New:|r /dilvl position — place iLvl before or after player name.")
+                    end)
+                end
+
                 -- Inspect in both modes (Details + ElvUI-only)
                 C_Timer.After(5, QueueGroupInspect)
                 -- LFR: unit tokens for all 25 players may not exist yet after 5s.
@@ -1577,6 +1586,7 @@ SlashCmdList["DILVL"] = function(msg)
                     if e.nativeTxt then extra = extra .. "native:" .. e.nativeTxt end
                     if e.ovrTxt then extra = extra .. "  ovr:" .. e.ovrTxt end
                     if e.cacheName then extra = extra .. "  cName:" .. e.cacheName end
+                    if e.textColor then extra = extra .. "  color:" .. e.textColor end
                     print(extra)
                 end
             end

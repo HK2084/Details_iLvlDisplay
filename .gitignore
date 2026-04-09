@@ -4,6 +4,9 @@ Thumbs.db
 
 # Scratch files
 logo_copy.png
+claude_prompt.txt
+icon_source.png
+test_befehle.md
 
 # Packager output
 *.zip

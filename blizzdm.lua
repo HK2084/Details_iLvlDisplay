@@ -427,14 +427,30 @@ end
 -- In that case we create a thin overlay FontString that we own,
 -- hide the native text (SetAlpha 0), and display there instead.
 ---------------------------------------------------------------
+local MAX_RESOLVE_FAILS = 3  -- stop retrying after this many consecutive failures per frame
+
 local function InjectIlvl(frame)
     -- Combat = we don't exist. Pure return, no writes, no ClearOverlay.
     -- StripAllTags already cleaned up on combat start.
     -- RefreshAllFrames will re-inject when everyone is OOC.
     if IsGroupInCombat() then return end
 
+    -- Give-up: stop retrying frames that are permanently secret (e.g. Schadensklassen segment)
+    if frame._dilvlResolveFails and frame._dilvlResolveFails >= MAX_RESOLVE_FAILS then
+        return
+    end
+
     local guid = ResolveFrameGUID(frame)
-    if not guid then ClearOverlay(frame) return end
+    if not guid then
+        -- Track consecutive failures
+        frame._dilvlResolveFails = (frame._dilvlResolveFails or 0) + 1
+        if frame._dilvlResolveFails >= MAX_RESOLVE_FAILS and traceEnabled then
+            trace(format("InjectIlvl: giving up on frame after %d resolve fails", MAX_RESOLVE_FAILS))
+        end
+        ClearOverlay(frame) return
+    end
+    -- Reset fail counter on success
+    frame._dilvlResolveFails = 0
 
     local tag = BuildTag(guid)
     if not tag then ClearOverlay(frame) return end
@@ -546,6 +562,8 @@ local function InjectIlvl(frame)
         elseif globalTextScale then
             nameFS:SetTextScale(globalTextScale)
         end
+        -- Clean path: do NOT touch color — Blizzard's own SetTextColor is correct.
+        -- We only restore color after ClearSecretText (clear path below).
         return  -- Clean path: SetText succeeded
     end
 
@@ -556,6 +574,22 @@ local function InjectIlvl(frame)
 
     -- NOW SetText works — secret aspect is cleared
     nameFS:SetText(displayText)
+
+    -- Clear path: ClearSecretText nuked the color, restore from cache.
+    -- Use cached Blizzard color (captured in UpdateName hook when frame was clean).
+    -- Do NOT use GetPlayerInfoByGUID — GUID mapping is unreliable in LFR.
+    if frame._dilvlTextColor then
+        pcall(nameFS.SetTextColor, nameFS, unpack(frame._dilvlTextColor))
+        frame._dilvlColorSetByAddon = "cached"
+        if traceEnabled then
+            trace(format("InjectIlvl: restore cached color (clear path) for %s", baseName and baseName:sub(1, 20) or "?"))
+        end
+    else
+        frame._dilvlColorSetByAddon = nil
+        if traceEnabled then
+            trace(format("InjectIlvl: NO cached color for %s — Blizz default", baseName and baseName:sub(1, 20) or "?"))
+        end
+    end
 end
 
 ---------------------------------------------------------------
@@ -587,22 +621,27 @@ local function RefreshAllFrames()
 
     if not DamageMeter.ForEachSessionWindow then return end
 
-    local hasSecret = false
+    local hasRetriableSecret = false
     DamageMeter:ForEachSessionWindow(function(sessionWindow)
         if not sessionWindow.ForEachEntryFrame then return end
         sessionWindow:ForEachEntryFrame(function(frame)
             InjectIlvl(frame)
-            -- Check if any frame still has secret data (post-combat unlock delay)
-            if not hasSecret and frame.sourceName and isSecret(frame.sourceName) then
-                hasSecret = true
+            -- Check if any frame still has secret data AND hasn't given up
+            if not hasRetriableSecret
+                and frame.sourceName and isSecret(frame.sourceName)
+                and (not frame._dilvlResolveFails or frame._dilvlResolveFails < MAX_RESOLVE_FAILS) then
+                hasRetriableSecret = true
             end
         end)
     end)
 
-    -- If frames are still secret after combat, defer retry to next UpdateName (#19)
-    if hasSecret and not IsGroupInCombat() then
+    -- Only defer retry if there are frames that haven't given up yet
+    if hasRetriableSecret and not IsGroupInCombat() then
         deferredRetryPending = true
         trace("RefreshAllFrames: frames still secret, deferred retry pending")
+    elseif not hasRetriableSecret and deferredRetryPending then
+        deferredRetryPending = false
+        trace("RefreshAllFrames: all secret frames gave up, retry stopped")
     end
 end
 
@@ -626,9 +665,23 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
         if guid then self._dilvlGUID = guid end
     end
 
+    -- Cache class color from native FontString while readable (OOC).
+    -- ClearSecretText resets color to default; we restore it in InjectIlvl.
+    local nameFS = self.GetName and self:GetName()
+    if nameFS and nameFS.GetTextColor then
+        local ok, r, g, b, a = pcall(nameFS.GetTextColor, nameFS)
+        if ok and r and not isSecret(r) and not isSecret(g) and not isSecret(b) then
+            self._dilvlTextColor = {r, g, b, a or 1}
+            if traceEnabled then
+                trace(format("UpdateName: cached color r=%.2f g=%.2f b=%.2f for %s",
+                    r, g, b, name and not isSecret(name) and tostring(name) or "?"))
+            end
+        end
+    end
+
     -- Deferred retry: post-combat RefreshAllFrames found secret frames,
     -- now UpdateName fired (secrets unlocked ~0.5s later) → full refresh (#19)
-    if deferredRetryPending then
+    if deferredRetryPending and ScheduleRefresh then
         deferredRetryPending = false
         trace("UpdateName: deferred retry → RefreshAllFrames")
         ScheduleRefresh()
@@ -933,6 +986,10 @@ if DamageMeter.ForEachSessionWindow then
                         frame._dilvlFontSize = nil
                         frame._dilvlFontFlags = nil
                         frame._dilvlTextScale = nil
+                        frame._dilvlTextColor = nil
+                        frame._dilvlColorSetByAddon = nil
+                        frame._dilvlResolveFails = nil
+                        frame._dilvlNameFS = nil
                     end)
                 end
                 ScheduleRefresh()
@@ -1095,7 +1152,11 @@ API.GetBlizzDMDebug = function()
             if IsGroupInCombat() then
                 path = "COMBAT-SKIP"
             elseif not guid then
-                path = "NO-GUID"
+                if frame._dilvlResolveFails and frame._dilvlResolveFails >= 3 then
+                    path = "GAVE-UP"
+                else
+                    path = "NO-GUID"
+                end
             elseif not API.GetCacheData(guid) or not API.GetCacheData(guid).ilvl then
                 path = "NO-CACHE"
             else
@@ -1143,6 +1204,24 @@ API.GetBlizzDMDebug = function()
                 nativeTxt = nativeTxt,
                 ovrTxt = ovrTxt,
                 cacheName = cacheName,
+                textColor = (function()
+                    -- Show current FS color + source for debug
+                    local colorStr = ""
+                    if nameFS and type(nameFS) ~= "string" then
+                        local ok, r, g, b = pcall(nameFS.GetTextColor, nameFS)
+                        if ok and r and not isSecret(r) then
+                            colorStr = format("%.2f/%.2f/%.2f", r, g, b)
+                        else
+                            colorStr = "secret"
+                        end
+                    end
+                    -- Determine color source
+                    local src = "blizz"
+                    if frame._dilvlColorSetByAddon then
+                        src = frame._dilvlColorSetByAddon
+                    end
+                    return colorStr ~= "" and (colorStr .. "(" .. src .. ")") or nil
+                end)(),
                 path = path,
                 nameFSType = nameFSType,
             }
