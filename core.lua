@@ -8,6 +8,7 @@ local defaults = {
     showInDetails = true,  -- show iLvl on Details! bars (requires Details!)
     elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
     layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
+    ilvlPosition = "right", -- "right" (after name) or "left" (between rank and name)
     -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
     --          true/false = user override via /dilvl blizzdm
 }
@@ -391,15 +392,16 @@ end
 -- Build the iLvl tag string for a given player name
 -- Returns e.g. " |cFF0070DD[252]|r |cFF00FF00[2P]|r" or nil
 ---------------------------------------------------------------
-local function BuildTag(name)
+local function BuildTag(name, noLeadingSpace)
     local ilvl = nameToIlvl[name]
     if not ilvl then return nil end
 
+    local prefix = noLeadingSpace and "" or " "
     local tag
     if db.colorIlvl then
-        tag = " " .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r"
+        tag = prefix .. GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r"
     else
-        tag = " [" .. ilvl .. "]"
+        tag = prefix .. "[" .. ilvl .. "]"
     end
 
     -- O(1) set bonus lookup — nameToSetBonus is kept in sync with nameToIlvl.
@@ -771,10 +773,21 @@ local function HookBarTextIfNeeded(bar)
 
             local name = ExtractName(text)
             if name then
-                local tag = BuildTag(name)
+                local isLeft = db.ilvlPosition == "left"
+                local tag = BuildTag(name, isLeft)
                 if tag then
                     isOurSetText = true
-                    self:SetText(text .. tag)
+                    if isLeft then
+                        -- Insert between rank prefix and name: "1. [272] Playername"
+                        local rank, rest = text:match("^(%d+%.%s*)(.*)")
+                        if rank then
+                            self:SetText(rank .. tag .. " " .. rest)
+                        else
+                            self:SetText(tag .. " " .. text)
+                        end
+                    else
+                        self:SetText(text .. tag)
+                    end
                     isOurSetText = false
                 end
             end
@@ -828,6 +841,7 @@ local function RefreshAllBarTexts()
     -- Inline mode: skip during combat (modifies Details!' FontStrings → taint)
     if MayBeInCombat() then return end
 
+    local isLeft = db.ilvlPosition == "left"
     isOurSetText = true
     for fontString in pairs(hookedFontStrings) do
         -- barCleanText values are pre-validated on insert (isSecretValue checked
@@ -837,9 +851,18 @@ local function RefreshAllBarTexts()
             if text then
                 local name = ExtractName(text)
                 if name then
-                    local tag = BuildTag(name)
+                    local tag = BuildTag(name, isLeft)
                     if tag then
-                        fontString:SetText(text .. tag)
+                        if isLeft then
+                            local rank, rest = text:match("^(%d+%.%s*)(.*)")
+                            if rank then
+                                fontString:SetText(rank .. tag .. " " .. rest)
+                            else
+                                fontString:SetText(tag .. " " .. text)
+                            end
+                        else
+                            fontString:SetText(text .. tag)
+                        end
                     end
                 end
             end
@@ -1463,12 +1486,13 @@ SlashCmdList["DILVL"] = function(msg)
         print("=== Details! iLvl Display v" .. addonVersion .. " — Bug Report ===")
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         local blizzDMState = db.blizzDM == nil and ("AUTO(" .. (Details and "off" or "on") .. ")") or (db.blizzDM and "ON" or "OFF")
-        print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s  BlizzDM: %s  Layout: %s",
+        print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s  BlizzDM: %s  Layout: %s  Position: %s",
             db.enabled and "ON" or "OFF",
             db.showInDetails and "ON" or "OFF",
             db.elvuiTag and "ON" or "OFF",
             blizzDMState,
-            db.layout or "inline"))
+            db.layout or "inline",
+            db.ilvlPosition or "right"))
         print(string.format("  Color: %s  SetBonus: %s",
             db.colorIlvl and "ON" or "OFF",
             db.showSetBonus and "ON" or "OFF"))
@@ -1801,6 +1825,21 @@ SlashCmdList["DILVL"] = function(msg)
             print("|cFF00FF00Details! iLvl Display:|r Blizz DM trace not available (blizzdm.lua not loaded)")
         end
 
+    elseif msg == "position" or msg == "position left" or msg == "position right" then
+        if msg == "position left" then
+            db.ilvlPosition = "left"
+        elseif msg == "position right" then
+            db.ilvlPosition = "right"
+        else
+            db.ilvlPosition = (db.ilvlPosition == "left") and "right" or "left"
+        end
+        -- Refresh to apply new position
+        if db.layout == "inline" then
+            ClearAllBarTags()
+            RefreshAllBarTexts()
+        end
+        print("|cFF00FF00Details! iLvl Display:|r Position: " .. db.ilvlPosition)
+
     elseif msg == "layout" or msg == "layout inline" or msg == "layout columns" then
         if msg == "layout inline" then
             db.layout = "inline"
@@ -1830,6 +1869,7 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
         print("  /dilvl layout          — Toggle inline/columns layout")
+        print("  /dilvl position        — Toggle iLvl left/right of name (inline mode)")
         print("  /dilvl inspect         — Manually trigger group inspect")
         print("  /dilvl debug           — Full status report (paste when reporting a bug)")
         print("  /dilvl cache           — Show cached iLvl entries")

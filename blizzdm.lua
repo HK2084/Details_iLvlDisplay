@@ -150,11 +150,13 @@ local function BuildTag(guid)
     local cached, setBonus = API.GetCacheData(guid)
     if not cached or not cached.ilvl then return nil end
 
+    local isLeft = db.ilvlPosition == "left"
+    local prefix = isLeft and "" or " "
     local tag
     if db.colorIlvl then
-        tag = " " .. API.GetIlvlColor(cached.ilvl) .. "[" .. cached.ilvl .. "]|r"
+        tag = prefix .. API.GetIlvlColor(cached.ilvl) .. "[" .. cached.ilvl .. "]|r"
     else
-        tag = " [" .. cached.ilvl .. "]"
+        tag = prefix .. "[" .. cached.ilvl .. "]"
     end
 
     if db.showSetBonus and setBonus then
@@ -490,7 +492,19 @@ local function InjectIlvl(frame)
         end
     end
 
-    local displayText = baseName .. tag
+    local displayText
+    local db = API.GetDb()
+    if db and db.ilvlPosition == "left" then
+        -- Insert between rank prefix and name: "1. [272] Playername"
+        local rank, rest = baseName:match("^(%d+%.%s*)(.*)")
+        if rank then
+            displayText = rank .. tag .. " " .. rest
+        else
+            displayText = tag .. " " .. baseName
+        end
+    else
+        displayText = baseName .. tag
+    end
 
     -- Cache actual font properties from native FontString while readable.
     -- GetFont() returns the rendered font (file, size, flags) regardless of how it was set.
