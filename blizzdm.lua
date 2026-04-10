@@ -445,7 +445,8 @@ local function PropagateGUID(sourceName, guid)
     DamageMeter:ForEachSessionWindow(function(sw)
         if not sw.ForEachEntryFrame then return end
         sw:ForEachEntryFrame(function(f)
-            if f.sourceName == sourceName and f._dilvlGUID ~= guid then
+            if f.sourceName and not isSecret(f.sourceName)
+               and f.sourceName == sourceName and f._dilvlGUID ~= guid then
                 local prev = f._dilvlGUID
                 f._dilvlGUID = guid
                 if traceEnabled then
