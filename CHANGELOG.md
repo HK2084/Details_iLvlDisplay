@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.3.6
+
+### Fixed
+
+- **Blizz DM: left-position frames missing data** — when iLvl position was set to "left", 1-2 frames per window could permanently show no iLvl/tier data. Root cause: `StripTagFromText` only matched leading spaces before tags, but left-position places the space *after* the tag. Name parsing broke → GUID resolve failed → frame gave up
+- **Blizz DM: per-frame give-up too aggressive** — resolve fail counter was tracked per frame, not per player. The same player on Window 1 could give up while Window 3 resolved fine. Now tracked per `sourceName` so all frames for a player share one counter
+- **Blizz DM: GUID lost on segment switch** — toggling A→G→A cleared `_dilvlGUID` on all frames, but if `sourceName` was still secret (Blizzard keeps it locked after boss fights), the GUID couldn't be re-resolved. Now preserves GUID when sourceName is secret
+- **Blizz DM: PropagateGUID crash** — comparing `f.sourceName` threw a Lua error when the field was a secret value. Added `isSecret()` guard before equality check
+
+### New
+
+- **Cross-frame GUID propagation** — when a GUID resolves on any frame, it's automatically shared with all other visible frames for the same player. Fixes left-position data gaps across multiple Blizz DM windows
+- **Debug: per-player resolve fails** — `/dilvl debug` now shows `fails:N/3` per frame entry and a "Resolve Fails (per player)" summary section with GAVE-UP status
+
+---
+
+## v1.3.5
+
+### New
+
+- **iLvl position toggle** — `/dilvl position left` places the iLvl tag between rank and name ("1. [272] Playername"), `/dilvl position right` appends after name (default). `/dilvl position` toggles between both
+- **One-time feature hint** — first-time notification about the new position command (saved in `seenHint_position`)
+
+### Fixed
+
+- **Blizz DM: color override on clean path** — native FontString color was being overwritten even when SetText succeeded. Now only restores cached color after ClearSecretText (clear path)
+- **Retry limit** — 3 consecutive resolve failures per frame, then give up. Reset on session switch
+- **ScheduleRefresh nil guard** — forward-reference bug where ScheduleRefresh was called before definition
+- **Session cleanup** — all `_dilvl*` frame properties including TextColor, ColorSetByAddon, ResolveFails, NameFS are now properly cleaned on session switch
+
+---
+
 ## v1.3.4
 
 ### Fixed
