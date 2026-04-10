@@ -1263,10 +1263,21 @@ API.GetBlizzDMDebug = function()
                 end)(),
                 path = path,
                 nameFSType = nameFSType,
+                resolveFails = (function()
+                    local sn = frame.sourceName
+                    local snK = sn and not isSecret(sn) and tostring(sn) or nil
+                    return snK and nameResolveFails[snK] or 0
+                end)(),
             }
         end)
     end)
-    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo
+    -- Expose per-player resolve fail counts for debug
+    local resolveFails = {}
+    for name, count in pairs(nameResolveFails) do
+        resolveFails[#resolveFails + 1] = { name = name, fails = count, gaveUp = count >= MAX_RESOLVE_FAILS }
+    end
+
+    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails
 end
 
 ---------------------------------------------------------------

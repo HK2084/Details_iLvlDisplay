@@ -1541,7 +1541,7 @@ SlashCmdList["DILVL"] = function(msg)
 
         -- BlizzDM diagnostics
         if Details_iLvlDisplayAPI.GetBlizzDMDebug then
-            local windows, frames, hasGuid, hasTag, secretName, entries, ci = Details_iLvlDisplayAPI.GetBlizzDMDebug()
+            local windows, frames, hasGuid, hasTag, secretName, entries, ci, resolveFails = Details_iLvlDisplayAPI.GetBlizzDMDebug()
             print("  --- Blizzard Damage Meter ---")
             if type(ci) == "table" then
                 print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d",
@@ -1574,13 +1574,17 @@ SlashCmdList["DILVL"] = function(msg)
                     if e.overlay then flags = flags .. " OVR" end
                     flags = flags .. " [" .. (e.path or "?") .. "]"
                     if e.nameFSType then flags = flags .. " fs:" .. e.nameFSType end
-                    print(string.format("    [%d] %s%s  guid:%s  cache:%s  tag:%s%s",
+                    local failStr = ""
+                    if e.resolveFails and e.resolveFails > 0 then
+                        failStr = string.format("  fails:%d/3", e.resolveFails)
+                    end
+                    print(string.format("    [%d] %s%s  guid:%s  cache:%s  tag:%s%s%s",
                         i, e.name,
                         e.isLocal and " (YOU)" or "",
                         e.guid and "yes" or "NO",
                         e.cached and "yes" or "no",
                         e.tagged and "yes" or "no",
-                        flags))
+                        flags, failStr))
                     -- Extended debug: show native text, overlay text, cache name
                     local extra = "        "
                     if e.nativeTxt then extra = extra .. "native:" .. e.nativeTxt end
@@ -1592,6 +1596,15 @@ SlashCmdList["DILVL"] = function(msg)
             end
             if frames == 0 then
                 print("    (open Blizzard DM window to see entries)")
+            end
+            -- Per-player resolve fail tracker
+            if resolveFails and #resolveFails > 0 then
+                print("    --- Resolve Fails (per player) ---")
+                for _, rf in ipairs(resolveFails) do
+                    print(string.format("    %s: %d/%d%s",
+                        rf.name:sub(1, 20), rf.fails, 3,
+                        rf.gaveUp and " GAVE-UP" or ""))
+                end
             end
         else
             print("  --- Blizzard Damage Meter: not loaded ---")
