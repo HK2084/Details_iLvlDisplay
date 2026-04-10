@@ -446,11 +446,12 @@ local function PropagateGUID(sourceName, guid)
         if not sw.ForEachEntryFrame then return end
         sw:ForEachEntryFrame(function(f)
             if f.sourceName == sourceName and f._dilvlGUID ~= guid then
+                local prev = f._dilvlGUID
                 f._dilvlGUID = guid
                 if traceEnabled then
                     trace(format("PropagateGUID: %s → frame (was %s)",
                         sourceName and tostring(sourceName):sub(1,15) or "?",
-                        f._dilvlGUID and "cached" or "nil"))
+                        prev and "cached" or "nil"))
                 end
             end
         end)
@@ -1277,7 +1278,7 @@ API.GetBlizzDMDebug = function()
         resolveFails[#resolveFails + 1] = { name = name, fails = count, gaveUp = count >= MAX_RESOLVE_FAILS }
     end
 
-    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails
+    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails, MAX_RESOLVE_FAILS
 end
 
 ---------------------------------------------------------------

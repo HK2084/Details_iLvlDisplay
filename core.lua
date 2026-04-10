@@ -1541,7 +1541,8 @@ SlashCmdList["DILVL"] = function(msg)
 
         -- BlizzDM diagnostics
         if Details_iLvlDisplayAPI.GetBlizzDMDebug then
-            local windows, frames, hasGuid, hasTag, secretName, entries, ci, resolveFails = Details_iLvlDisplayAPI.GetBlizzDMDebug()
+            local windows, frames, hasGuid, hasTag, secretName, entries, ci, resolveFails, maxResolveFails = Details_iLvlDisplayAPI.GetBlizzDMDebug()
+            maxResolveFails = maxResolveFails or 3
             print("  --- Blizzard Damage Meter ---")
             if type(ci) == "table" then
                 print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d",
@@ -1576,7 +1577,7 @@ SlashCmdList["DILVL"] = function(msg)
                     if e.nameFSType then flags = flags .. " fs:" .. e.nameFSType end
                     local failStr = ""
                     if e.resolveFails and e.resolveFails > 0 then
-                        failStr = string.format("  fails:%d/3", e.resolveFails)
+                        failStr = string.format("  fails:%d/%d", e.resolveFails, maxResolveFails)
                     end
                     print(string.format("    [%d] %s%s  guid:%s  cache:%s  tag:%s%s%s",
                         i, e.name,
@@ -1602,7 +1603,7 @@ SlashCmdList["DILVL"] = function(msg)
                 print("    --- Resolve Fails (per player) ---")
                 for _, rf in ipairs(resolveFails) do
                     print(string.format("    %s: %d/%d%s",
-                        rf.name:sub(1, 20), rf.fails, 3,
+                        rf.name:sub(1, 20), rf.fails, maxResolveFails,
                         rf.gaveUp and " GAVE-UP" or ""))
                 end
             end
