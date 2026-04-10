@@ -173,12 +173,17 @@ end
 ---------------------------------------------------------------
 local function StripTagFromText(txt)
     if not txt or type(txt) ~= "string" then return txt end
-    -- Strip colored iLvl tags: " |cFFxxxxxx[245]|r"
-    txt = txt:gsub("%s*|c%x%x%x%x%x%x%x%x%[%d+%]|r", "")
-    -- Strip uncolored iLvl tags: " [245]"
-    txt = txt:gsub("%s*%[%d+%]", "")
+    -- Strip colored iLvl tags: " |cFFxxxxxx[245]|r" or "|cFFxxxxxx[245]|r "
+    -- Left-position places tag AFTER rank with trailing space, right-position
+    -- places tag at end with leading space. Handle both with surrounding %s*.
+    txt = txt:gsub("%s*|c%x%x%x%x%x%x%x%x%[%d+%]|r%s*", " ")
+    -- Strip uncolored iLvl tags: " [245]" or "[245] "
+    txt = txt:gsub("%s*%[%d+%]%s*", " ")
     -- Strip colored tier tags: " |cFF00FF00[2P]|r" / " |cFF00FF00[4P]|r"
-    txt = txt:gsub("%s*|c%x%x%x%x%x%x%x%x%[%d[PT]%]|r", "")
+    txt = txt:gsub("%s*|c%x%x%x%x%x%x%x%x%[%d[PT]%]|r%s*", " ")
+    -- Collapse any double spaces and trim
+    txt = txt:gsub("  +", " ")
+    txt = txt:match("^%s*(.-)%s*$") or txt
     return txt
 end
 
@@ -427,7 +432,30 @@ end
 -- In that case we create a thin overlay FontString that we own,
 -- hide the native text (SetAlpha 0), and display there instead.
 ---------------------------------------------------------------
-local MAX_RESOLVE_FAILS = 3  -- stop retrying after this many consecutive failures per frame
+local MAX_RESOLVE_FAILS = 3  -- stop retrying after this many consecutive failures per player
+local nameResolveFails = {}   -- sourceName → fail count (per-player, not per-frame)
+
+-- When a GUID resolves on one frame, propagate it to ALL other visible frames
+-- with the same sourceName. Fixes: left-position causes frame A to fail while
+-- frame B (same player, different window) succeeds — without propagation,
+-- frame A hits MAX_RESOLVE_FAILS and gives up permanently.
+local function PropagateGUID(sourceName, guid)
+    if not sourceName or not guid then return end
+    if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
+    DamageMeter:ForEachSessionWindow(function(sw)
+        if not sw.ForEachEntryFrame then return end
+        sw:ForEachEntryFrame(function(f)
+            if f.sourceName == sourceName and f._dilvlGUID ~= guid then
+                f._dilvlGUID = guid
+                if traceEnabled then
+                    trace(format("PropagateGUID: %s → frame (was %s)",
+                        sourceName and tostring(sourceName):sub(1,15) or "?",
+                        f._dilvlGUID and "cached" or "nil"))
+                end
+            end
+        end)
+    end)
+end
 
 local function InjectIlvl(frame)
     -- Combat = we don't exist. Pure return, no writes, no ClearOverlay.
@@ -435,22 +463,31 @@ local function InjectIlvl(frame)
     -- RefreshAllFrames will re-inject when everyone is OOC.
     if IsGroupInCombat() then return end
 
-    -- Give-up: stop retrying frames that are permanently secret (e.g. Schadensklassen segment)
-    if frame._dilvlResolveFails and frame._dilvlResolveFails >= MAX_RESOLVE_FAILS then
+    -- Give-up: stop retrying PLAYERS that are permanently secret (e.g. Schadensklassen segment)
+    -- Track by sourceName so ALL frames for the same player share one counter.
+    local sn = frame.sourceName
+    local snKey = sn and not isSecret(sn) and tostring(sn) or nil
+    if snKey and nameResolveFails[snKey] and nameResolveFails[snKey] >= MAX_RESOLVE_FAILS then
         return
     end
 
     local guid = ResolveFrameGUID(frame)
     if not guid then
-        -- Track consecutive failures
-        frame._dilvlResolveFails = (frame._dilvlResolveFails or 0) + 1
-        if frame._dilvlResolveFails >= MAX_RESOLVE_FAILS and traceEnabled then
-            trace(format("InjectIlvl: giving up on frame after %d resolve fails", MAX_RESOLVE_FAILS))
+        -- Track consecutive failures per player name
+        if snKey then
+            nameResolveFails[snKey] = (nameResolveFails[snKey] or 0) + 1
+            if nameResolveFails[snKey] >= MAX_RESOLVE_FAILS and traceEnabled then
+                trace(format("InjectIlvl: giving up on player '%s' after %d resolve fails",
+                    snKey:sub(1,15), MAX_RESOLVE_FAILS))
+            end
         end
         ClearOverlay(frame) return
     end
-    -- Reset fail counter on success
-    frame._dilvlResolveFails = 0
+    -- Reset fail counter on success + propagate GUID to sibling frames
+    if snKey then
+        nameResolveFails[snKey] = nil
+        PropagateGUID(sn, guid)
+    end
 
     local tag = BuildTag(guid)
     if not tag then ClearOverlay(frame) return end
@@ -627,9 +664,8 @@ local function RefreshAllFrames()
         sessionWindow:ForEachEntryFrame(function(frame)
             InjectIlvl(frame)
             -- Check if any frame still has secret data AND hasn't given up
-            if not hasRetriableSecret
-                and frame.sourceName and isSecret(frame.sourceName)
-                and (not frame._dilvlResolveFails or frame._dilvlResolveFails < MAX_RESOLVE_FAILS) then
+            if not hasRetriableSecret and frame.sourceName and isSecret(frame.sourceName) then
+                -- No per-player give-up for secret sourceName (can't read name to check)
                 hasRetriableSecret = true
             end
         end)
@@ -988,9 +1024,10 @@ if DamageMeter.ForEachSessionWindow then
                         frame._dilvlTextScale = nil
                         frame._dilvlTextColor = nil
                         frame._dilvlColorSetByAddon = nil
-                        frame._dilvlResolveFails = nil
                         frame._dilvlNameFS = nil
                     end)
+                    -- Reset per-player resolve fails (session switch = new context)
+                    wipe(nameResolveFails)
                 end
                 ScheduleRefresh()
             end)
@@ -1152,8 +1189,10 @@ API.GetBlizzDMDebug = function()
             if IsGroupInCombat() then
                 path = "COMBAT-SKIP"
             elseif not guid then
-                if frame._dilvlResolveFails and frame._dilvlResolveFails >= 3 then
-                    path = "GAVE-UP"
+                local sn = frame.sourceName
+                local snDbg = sn and not isSecret(sn) and tostring(sn) or nil
+                if snDbg and nameResolveFails[snDbg] and nameResolveFails[snDbg] >= MAX_RESOLVE_FAILS then
+                    path = "GAVE-UP(" .. snDbg:sub(1,10) .. ")"
                 else
                     path = "NO-GUID"
                 end
