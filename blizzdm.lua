@@ -738,14 +738,13 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
 end)
 
 ---------------------------------------------------------------
--- Event listener: refresh when Blizzard DM data changes.
--- DAMAGE_METER_COMBAT_SESSION_UPDATED fires after each combat
--- update. We delay by 1 frame so Blizzard finishes its Refresh
--- first, then we inject on top.
+-- Event dispatch system (self-registering handlers).
+-- RegisterHandler(event, fn) registers the event AND its handler
+-- in one call — can't forget one without the other.
 --
 -- Combat safeguards — layered defense against Secret Values:
 --   PLAYER_REGEN_DISABLED/ENABLED — own combat state
---   UNIT_FLAGS — instant detection when ANY group member enters/leaves combat
+--   UNIT_FLAGS — registered, no-op (kept for future use)
 --   ENCOUNTER_START/END — precise boss encounter boundaries
 --   INSTANCE_ENCOUNTER_ENGAGE_UNIT — earliest boss detection (frame appears)
 --   LOADING_SCREEN_DISABLED — safe moment after zone transitions
@@ -754,28 +753,12 @@ end)
 -- treats unknown/secret values as "in combat" (safe default).
 ---------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
--- Blizzard DM data events
-eventFrame:RegisterEvent("DAMAGE_METER_COMBAT_SESSION_UPDATED")
-eventFrame:RegisterEvent("DAMAGE_METER_CURRENT_SESSION_UPDATED")
-eventFrame:RegisterEvent("DAMAGE_METER_RESET")
--- Combat state tracking (own)
-eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
--- Group combat detection (instant, fires per-unit)
-eventFrame:RegisterEvent("UNIT_FLAGS")
--- Boss encounter boundaries (precise start/end)
-eventFrame:RegisterEvent("ENCOUNTER_START")
-eventFrame:RegisterEvent("ENCOUNTER_END")
--- Earliest boss detection (boss frame appears before ENCOUNTER_START)
-eventFrame:RegisterEvent("INSTANCE_ENCOUNTER_ENGAGE_UNIT")
--- Group changes
-eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
-eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
--- Blizzard DM's own combat signal (synchronous, 12.0+)
-eventFrame:RegisterEvent("PLAYER_IN_COMBAT_CHANGED")
--- Safe refresh moments after transitions
-eventFrame:RegisterEvent("LOADING_SCREEN_DISABLED")
-eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+local eventHandlers = {}
+
+local function RegisterHandler(event, handler)
+    eventHandlers[event] = handler
+    eventFrame:RegisterEvent(event)
+end
 
 ---------------------------------------------------------------
 -- Dirty-flag refresh system (replaces C_Timer.After ScheduleRefresh).
@@ -878,122 +861,130 @@ function StartPostCombatRefresh()
     ScheduleRefresh()
 end
 
-eventFrame:SetScript("OnEvent", function(_, event, ...)
-    -- === Combat START signals — strip our tags, go silent ===
-    -- Every combat-start path sets inCombat=true and stops
-    -- the refresh OnUpdate (go silent during combat).
-    if event == "PLAYER_REGEN_DISABLED" then
-        inCombat = true
-        refreshActive = false
-        refreshFrame:Hide()
-        StripAllTags()
-        return
-    end
-    if event == "PLAYER_IN_COMBAT_CHANGED" then
-        -- Guard: if any event arg is secret, fall back to InCombatLockdown().
-        -- Previous approach: always assume combat-start on secret args.
-        -- Problem: in Delves, PLAYER_IN_COMBAT_CHANGED fires with secret args
-        -- AFTER combat ends. inCombat got stuck true with no event to reset it.
-        if _hasanysecretvalues(...) then
-            local icl = InCombatLockdown()
-            if icl == true then
-                inCombat = true
-                trace("COMBAT_CHANGED → SECRET args, ICL=true → IN")
-                StripAllTags()
-            else
-                inCombat = false
-                trace("COMBAT_CHANGED → SECRET args, ICL=false → OUT")
-                traceFrameState("COMBAT_CHANGED_SECRET_OUT", true)
-                StartPostCombatRefresh()
-            end
-            return
-        end
-        local combatState = ...
-        if isSecret(combatState) then
-            -- Lazy-taint: hasanysecretvalues passed but individual arg is secret
-            local icl = InCombatLockdown()
-            if icl == true then
-                inCombat = true
-                trace("COMBAT_CHANGED → lazy-secret, ICL=true → IN")
-                StripAllTags()
-            else
-                inCombat = false
-                trace("COMBAT_CHANGED → lazy-secret, ICL=false → OUT")
-                traceFrameState("COMBAT_CHANGED_LAZY_OUT", true)
-                StartPostCombatRefresh()
-            end
-        elseif combatState == true then
+---------------------------------------------------------------
+-- Event handlers (self-registering: one call = register + define)
+---------------------------------------------------------------
+
+-- === Combat START signals — strip our tags, go silent ===
+RegisterHandler("PLAYER_REGEN_DISABLED", function()
+    inCombat = true
+    refreshActive = false
+    refreshFrame:Hide()
+    StripAllTags()
+end)
+
+RegisterHandler("PLAYER_IN_COMBAT_CHANGED", function(...)
+    -- Guard: if any event arg is secret, fall back to InCombatLockdown().
+    -- Previous approach: always assume combat-start on secret args.
+    -- Problem: in Delves, PLAYER_IN_COMBAT_CHANGED fires with secret args
+    -- AFTER combat ends. inCombat got stuck true with no event to reset it.
+    if _hasanysecretvalues(...) then
+        local icl = InCombatLockdown()
+        if icl == true then
             inCombat = true
-            trace("COMBAT_CHANGED → IN")
+            trace("COMBAT_CHANGED → SECRET args, ICL=true → IN")
             StripAllTags()
         else
             inCombat = false
-            trace("COMBAT_CHANGED → OUT")
-            traceFrameState("COMBAT_CHANGED_OUT", true)
+            trace("COMBAT_CHANGED → SECRET args, ICL=false → OUT")
+            traceFrameState("COMBAT_CHANGED_SECRET_OUT", true)
             StartPostCombatRefresh()
         end
         return
     end
-    if event == "ENCOUNTER_START" or event == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" then
-        inCombat = true
-        StripAllTags()
-        return
-    end
-    -- UNIT_FLAGS: no longer used for combat detection.
-    -- We rely on our own REGEN + COMBAT_CHANGED + ENCOUNTER events.
-    if event == "UNIT_FLAGS" then return end
-
-    -- === Combat END signals — safe to inject again ===
-    if event == "PLAYER_REGEN_ENABLED" then
-        inCombat = false
-        trace("REGEN_ENABLED")
-        traceFrameState("REGEN_ENABLED", true)
-        StartPostCombatRefresh()
-        return
-    end
-    if event == "ENCOUNTER_END" then
-        -- Don't blindly set inCombat=false here — trash packs after a boss can
-        -- mean we're still in combat. Use InCombatLockdown() as truth.
+    local combatState = ...
+    if isSecret(combatState) then
+        -- Lazy-taint: hasanysecretvalues passed but individual arg is secret
         local icl = InCombatLockdown()
-        if icl ~= true then
+        if icl == true then
+            inCombat = true
+            trace("COMBAT_CHANGED → lazy-secret, ICL=true → IN")
+            StripAllTags()
+        else
             inCombat = false
+            trace("COMBAT_CHANGED → lazy-secret, ICL=false → OUT")
+            traceFrameState("COMBAT_CHANGED_LAZY_OUT", true)
+            StartPostCombatRefresh()
         end
-        trace(format("ENCOUNTER_END icl=%s inCombat=%s", tostring(icl), tostring(inCombat)))
-        traceFrameState("ENCOUNTER_END")
-        StartPostCombatRefresh()
-        return
-    end
-
-    -- === Transition events — clean slate, safe to refresh ===
-    if event == "LOADING_SCREEN_DISABLED" or event == "PLAYER_ENTERING_WORLD" then
+    elseif combatState == true then
+        inCombat = true
+        trace("COMBAT_CHANGED → IN")
+        StripAllTags()
+    else
         inCombat = false
-        ScheduleRefresh()
-        return
+        trace("COMBAT_CHANGED → OUT")
+        traceFrameState("COMBAT_CHANGED_OUT", true)
+        StartPostCombatRefresh()
     end
+end)
 
-    -- === Data events ===
-    -- DAMAGE_METER_COMBAT_SESSION_UPDATED fires after Blizzard finishes
-    -- processing combat data. Just set dirty — the OnUpdate loop handles the rest.
-    if event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
-        -- Safety reset on data events too (OnUpdate may be hidden/idle)
-        if inCombat then
-            local icl = InCombatLockdown()
-            local eip = IsEncounterInProgress()
-            if icl ~= true and eip ~= true then
-                inCombat = false
-                trace("DM_SESSION_UPDATED: inCombat stuck → FORCE RESET")
-                StartPostCombatRefresh()
-                return
-            end
-        end
-        if not IsGroupInCombat() then
-            trace("DM_SESSION_UPDATED → dirty")
-            ScheduleRefresh()
-        end
-        return
+local function OnCombatStart()
+    inCombat = true
+    StripAllTags()
+end
+RegisterHandler("ENCOUNTER_START", OnCombatStart)
+RegisterHandler("INSTANCE_ENCOUNTER_ENGAGE_UNIT", OnCombatStart)
+
+-- No-op: no longer used for combat detection, kept registered for future use
+RegisterHandler("UNIT_FLAGS", function() end)
+
+-- === Combat END signals — safe to inject again ===
+RegisterHandler("PLAYER_REGEN_ENABLED", function()
+    inCombat = false
+    trace("REGEN_ENABLED")
+    traceFrameState("REGEN_ENABLED", true)
+    StartPostCombatRefresh()
+end)
+
+RegisterHandler("ENCOUNTER_END", function()
+    -- Don't blindly set inCombat=false here — trash packs after a boss can
+    -- mean we're still in combat. Use InCombatLockdown() as truth.
+    local icl = InCombatLockdown()
+    if icl ~= true then
+        inCombat = false
     end
+    trace(format("ENCOUNTER_END icl=%s inCombat=%s", tostring(icl), tostring(inCombat)))
+    traceFrameState("ENCOUNTER_END")
+    StartPostCombatRefresh()
+end)
 
+-- === Transition events — clean slate, safe to refresh ===
+local function OnTransition()
+    inCombat = false
     ScheduleRefresh()
+end
+RegisterHandler("LOADING_SCREEN_DISABLED", OnTransition)
+RegisterHandler("PLAYER_ENTERING_WORLD", OnTransition)
+
+-- === Data events ===
+RegisterHandler("DAMAGE_METER_COMBAT_SESSION_UPDATED", function()
+    -- Safety reset on data events too (OnUpdate may be hidden/idle)
+    if inCombat then
+        local icl = InCombatLockdown()
+        local eip = IsEncounterInProgress()
+        if icl ~= true and eip ~= true then
+            inCombat = false
+            trace("DM_SESSION_UPDATED: inCombat stuck → FORCE RESET")
+            StartPostCombatRefresh()
+            return
+        end
+    end
+    if not IsGroupInCombat() then
+        trace("DM_SESSION_UPDATED → dirty")
+        ScheduleRefresh()
+    end
+end)
+
+-- Fallback events — no special logic, just schedule a refresh
+RegisterHandler("DAMAGE_METER_CURRENT_SESSION_UPDATED", ScheduleRefresh)
+RegisterHandler("DAMAGE_METER_RESET", ScheduleRefresh)
+RegisterHandler("GROUP_ROSTER_UPDATE", ScheduleRefresh)
+RegisterHandler("ZONE_CHANGED_NEW_AREA", ScheduleRefresh)
+
+-- Dispatcher: O(1) table lookup, fallback for any future unhandled events
+eventFrame:SetScript("OnEvent", function(_, event, ...)
+    local handler = eventHandlers[event]
+    if handler then handler(...) else ScheduleRefresh() end
 end)
 
 -- Register with core.lua's callback system (inspect complete, gear swap, etc.)
