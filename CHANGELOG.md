@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.0
+
+### Improved
+
+- **Blizz DM: event-table dispatch** — replaced 120-line if/elseif event chain with O(1) table-driven dispatcher. `RegisterHandler(event, fn)` self-registers event + handler in one call. Shared functions for combat-start (`OnCombatStart`) and zone transitions (`OnTransition`). All handler logic preserved, no behavioral changes (#16)
+
+---
+
 ## v1.3.6
 
 ### Fixed
