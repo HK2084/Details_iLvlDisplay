@@ -46,16 +46,22 @@ end
 -- it up). Other integrations are unaffected.
 ---------------------------------------------------------------
 local BLIZZDM_ERROR_LIMIT = 5
-local blizzDMState = { errors = 0, lastError = nil, disabled = false }
+-- priorDb: stash db.blizzDM tristate (nil/true/false) BEFORE auto-disable
+-- so /dilvl blizzdm reset restores the user's prior auto/manual setting
+-- (instead of leaving them stuck on forced-OFF after a transient error).
+local blizzDMState = { errors = 0, lastError = nil, disabled = false, priorDb = nil }
 
 local function disableBlizzDMSelf(reason)
     if blizzDMState.disabled then return end
     blizzDMState.disabled = true
     local db = API.GetDb()
-    if db then db.blizzDM = false end
+    if db then
+        blizzDMState.priorDb = db.blizzDM -- preserve nil (auto) / true / false
+        db.blizzDM = false
+    end
     pcall(geterrorhandler(),
         "Details! iLvl Display: Blizzard DM integration auto-disabled after "
-        .. BLIZZDM_ERROR_LIMIT .. " errors. Last: " .. tostring(reason))
+        .. BLIZZDM_ERROR_LIMIT .. " errors. Recovery: /dilvl blizzdm. Last: " .. tostring(reason))
 end
 
 local function SafeBlizzCall(label, fn, ...)
@@ -71,11 +77,18 @@ local function SafeBlizzCall(label, fn, ...)
     return nil
 end
 
--- Public reset for /dilvl blizzdm (toggle on path) and debug section.
+-- Public reset for /dilvl blizzdm (toggle path) and debug section.
+-- Returns (wasDisabled, priorDb): if wasDisabled is true, caller should
+-- restore db.blizzDM to priorDb (which may be nil/auto, true, or false)
+-- to preserve the user's tristate intent across auto-disable + recovery.
 Details_iLvlDisplay_BlizzDMReset = function()
+    local wasDisabled = blizzDMState.disabled
+    local prior = blizzDMState.priorDb
     blizzDMState.errors = 0
     blizzDMState.lastError = nil
     blizzDMState.disabled = false
+    blizzDMState.priorDb = nil
+    return wasDisabled, prior
 end
 
 Details_iLvlDisplay_BlizzDMState = function()

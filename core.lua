@@ -73,7 +73,7 @@ local function SafeCall(fn, ...)
         if hookErrors >= HOOK_ERROR_LIMIT then
             if db then db.showInDetails = false end
             -- Route through WoW's error handler → BugSack picks it up (#13)
-            geterrorhandler()("Details! iLvl Display: too many Details!-bar hook errors — Details!-bars auto-disabled. Other integrations still active. Last error: " .. tostring(err))
+            geterrorhandler()("Details! iLvl Display: too many Details!-bar hook errors — Details!-bars auto-disabled. Recovery: /dilvl details. Other integrations still active. Last error: " .. tostring(err))
         end
     end
 end
@@ -1450,6 +1450,11 @@ SlashCmdList["DILVL"] = function(msg)
         if not db.showInDetails then
             ClearAllBarTags()
         else
+            -- Reset the hook-error counter so the user gets a fresh
+            -- 5-error budget after toggling back on. Otherwise a prior
+            -- auto-disable would remain at 5/5 and re-trip on the very
+            -- next error.
+            hookErrors = 0
             RefreshAllBarTexts()
         end
         print("|cFF00FF00Details! iLvl Display:|r Details bars " .. (db.showInDetails and "ON" or "OFF"))
@@ -1928,19 +1933,28 @@ SlashCmdList["DILVL"] = function(msg)
         end
 
     elseif msg == "blizzdm" then
-        -- nil (auto) → force ON; true → OFF; false → ON
-        if db.blizzDM == nil then
-            db.blizzDM = true
-        else
-            db.blizzDM = not db.blizzDM
+        -- Recovery-aware toggle. If BlizzDM was auto-disabled, restore the
+        -- tristate the user had BEFORE the disable (nil/auto, true, false)
+        -- instead of blindly toggling false → true (which would force ON
+        -- and lose the user's prior 'auto' setting).
+        local wasDisabled, prior = false, nil
+        if Details_iLvlDisplay_BlizzDMReset then
+            wasDisabled, prior = Details_iLvlDisplay_BlizzDMReset()
         end
-        -- Reset BlizzDM error counter when user explicitly turns it on,
-        -- so a previous auto-disable doesn't keep blocking a fresh attempt.
-        if db.blizzDM and Details_iLvlDisplay_BlizzDMReset then
-            Details_iLvlDisplay_BlizzDMReset()
+        if wasDisabled then
+            db.blizzDM = prior -- nil/true/false — restore prior intent
+        else
+            -- Normal user toggle: nil (auto) → force ON; true → OFF; false → ON
+            if db.blizzDM == nil then
+                db.blizzDM = true
+            else
+                db.blizzDM = not db.blizzDM
+            end
         end
         NotifyElvUI()
-        print("|cFF00FF00Details! iLvl Display:|r Blizzard Damage Meter " .. (db.blizzDM and "ON" or "OFF"))
+        local stateStr = db.blizzDM == nil and "AUTO" or (db.blizzDM and "ON" or "OFF")
+        print("|cFF00FF00Details! iLvl Display:|r Blizzard Damage Meter " .. stateStr
+            .. (wasDisabled and " (restored after auto-disable)" or ""))
         if db.blizzDM then
             print("|cFFFFFF00  Note:|r Blizzard DM overlay is experimental. It hooks into Blizzard's")
             print("|cFFFFFF00  built-in damage meter which may change without notice. Only active")
@@ -2072,9 +2086,17 @@ Details_iLvlDisplayAPI = {
     _callbacks = {},
     RegisterCallback = function(self, name, fn)
         self._callbacks[name] = fn
+        -- Clear any stale counters from a prior auto-unregister so the
+        -- newly-registered callback gets a fresh 0/5 budget. Without
+        -- this, a re-register after auto-unregister would inherit the
+        -- old 5 count and trip the limit on its first error.
+        _callbackErrors[name] = nil
+        _callbackErrorLogged[name] = nil
     end,
     UnregisterCallback = function(self, name)
         self._callbacks[name] = nil
+        _callbackErrors[name] = nil
+        _callbackErrorLogged[name] = nil
     end,
 }
 
