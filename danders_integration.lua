@@ -193,7 +193,9 @@ disableSelf = function(reason)
         if fs then pcall(fs.SetText, fs, "") end
     end
     if DandersFrames and DandersFrames.UnregisterCallback then
-        pcall(DandersFrames.UnregisterCallback, DandersFrames,
+        -- API signature: DandersFrames.UnregisterCallback(self, eventname)
+        -- where 'self' is the caller's token (NOT DandersFrames itself).
+        pcall(DandersFrames.UnregisterCallback,
             STATE.callbackToken, "OnFramesSorted")
     end
     local msg = "Details! iLvl Display: Danders integration auto-disabled after "
@@ -258,12 +260,28 @@ end
 local function tryInit(self)
     if not DandersFrames_IsReady() then return false end
     if not DandersFrames or not DandersFrames.RegisterCallback then return false end
+    -- API signature: DandersFrames.RegisterCallback(self, eventname, callback)
+    -- where 'self' is the caller's token (NOT DandersFrames itself).
     SafeCall("RegisterCallback", DandersFrames.RegisterCallback,
-        DandersFrames, STATE.callbackToken, "OnFramesSorted", refreshAll)
+        STATE.callbackToken, "OnFramesSorted", refreshAll)
     API:RegisterCallback("danders", refreshAll)
     refreshAll()
     self:UnregisterAllEvents()
     return true
+end
+
+-- Public reset — called by /dilvl danders on to give the integration a
+-- fresh chance after a transient error (no /reload needed).
+Details_iLvlDisplay_DandersReset = function()
+    STATE.dandersErrors = 0
+    STATE.lastError = nil
+    STATE.disabled = false
+    -- Re-register OnFramesSorted callback if we had unregistered it earlier.
+    if DandersFrames and DandersFrames.RegisterCallback then
+        pcall(DandersFrames.RegisterCallback,
+            STATE.callbackToken, "OnFramesSorted", refreshAll)
+    end
+    refreshAll()
 end
 
 local initFrame = CreateFrame("Frame")

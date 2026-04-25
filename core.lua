@@ -1868,6 +1868,11 @@ SlashCmdList["DILVL"] = function(msg)
             print("|cFF00FF00Details! iLvl Display:|r Danders Frames not installed.")
         else
             db.dandersText = true
+            -- Reset error counter + clear disabled state so user gets a
+            -- fresh chance without /reload.
+            if Details_iLvlDisplay_DandersReset then
+                Details_iLvlDisplay_DandersReset()
+            end
             NotifyElvUI()
             print("|cFF00FF00Details! iLvl Display:|r Danders Frames overlay enabled.")
         end
