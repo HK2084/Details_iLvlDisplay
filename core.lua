@@ -59,6 +59,12 @@ local cachedColLayout = nil -- cached {leftA, leftW, secA, secW, gap, yOff} from
 -- down the user's working overlays elsewhere.
 local hookErrors = 0
 local HOOK_ERROR_LIMIT = 5
+
+-- Per-callback fault isolation (forward-declared so /dilvl debug at
+-- line ~1561 can read them). Used by NotifyElvUI further down.
+local CALLBACK_ERROR_LIMIT = 5
+local _callbackErrors = {}      -- name -> consecutive error count
+local _callbackErrorLogged = {} -- name -> bool (logged-once flag)
 local function SafeCall(fn, ...)
     if hookErrors >= HOOK_ERROR_LIMIT then return end
     local ok, err = pcall(fn, ...)
@@ -1558,19 +1564,43 @@ SlashCmdList["DILVL"] = function(msg)
             local ago = string.format("%.0fs ago", GetTime() - lastInspectInfo.time)
             print(string.format("  Last inspect: %s → %d iLvl (%s)", lastInspectInfo.name, lastInspectInfo.ilvl, ago))
         end
-        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  HookErrors: %d/%d",
+        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  Details!-HookErrors: %d/%d",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
             openRaidLib and "active" or "n/a",
             hookErrors, HOOK_ERROR_LIMIT))
         print(string.format("  SecretAPI: CanCompareUnitTokens=%s  UnitNameBlocked: %d  UnitIsUnitBlocked: %d",
             CanCompareUnitTokens and "yes" or "no",
             secretStats.unitNameBlocked, secretStats.unitIsUnitBlocked))
+        -- Per-callback error counters (one row per registered callback).
+        -- Empty if all callbacks healthy; lists names + counts when not.
+        local cbErrSummary = {}
+        for name, n in pairs(_callbackErrors) do
+            if n and n > 0 then
+                cbErrSummary[#cbErrSummary + 1] = name .. "=" .. n
+            end
+        end
+        if #cbErrSummary > 0 then
+            print(string.format("  Callback errors (%d/%d limit): %s",
+                #cbErrSummary, CALLBACK_ERROR_LIMIT, table.concat(cbErrSummary, "  ")))
+        else
+            print(string.format("  Callback errors: 0  (limit: %d/cb, auto-unregister on breach)",
+                CALLBACK_ERROR_LIMIT))
+        end
 
         -- BlizzDM diagnostics
         if Details_iLvlDisplayAPI.GetBlizzDMDebug then
             local windows, frames, hasGuid, hasTag, secretName, entries, ci, resolveFails, maxResolveFails = Details_iLvlDisplayAPI.GetBlizzDMDebug()
             maxResolveFails = maxResolveFails or 3
             print("  --- Blizzard Damage Meter ---")
+            -- BlizzDM auto-disable counter (separate from Details!-HookErrors).
+            if Details_iLvlDisplay_BlizzDMState then
+                local state, limit = Details_iLvlDisplay_BlizzDMState()
+                print(string.format("    errors: %d/%d   disabled: %s",
+                    state.errors, limit, tostring(state.disabled)))
+                if state.lastError then
+                    print("    lastError: " .. state.lastError)
+                end
+            end
             if type(ci) == "table" then
                 print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d",
                     windows, frames, hasGuid, hasTag, secretName))
@@ -1904,6 +1934,11 @@ SlashCmdList["DILVL"] = function(msg)
         else
             db.blizzDM = not db.blizzDM
         end
+        -- Reset BlizzDM error counter when user explicitly turns it on,
+        -- so a previous auto-disable doesn't keep blocking a fresh attempt.
+        if db.blizzDM and Details_iLvlDisplay_BlizzDMReset then
+            Details_iLvlDisplay_BlizzDMReset()
+        end
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r Blizzard Damage Meter " .. (db.blizzDM and "ON" or "OFF"))
         if db.blizzDM then
@@ -2051,9 +2086,9 @@ Details_iLvlDisplayAPI = {
 -- picks it up, user is informed). After CALLBACK_ERROR_LIMIT consecutive
 -- errors, that callback is auto-unregistered — others keep working.
 -- Counter resets on success (transient errors don't accumulate forever).
-local CALLBACK_ERROR_LIMIT = 5
-local _callbackErrors = {}      -- name -> consecutive error count
-local _callbackErrorLogged = {} -- name -> bool (logged-once flag)
+-- Counter tables (_callbackErrors, _callbackErrorLogged) and limit are
+-- forward-declared near the top of this file so /dilvl debug can read
+-- them.
 NotifyElvUI = function()
     local registry = Details_iLvlDisplayAPI._callbacks
     for name, cb in pairs(registry) do
