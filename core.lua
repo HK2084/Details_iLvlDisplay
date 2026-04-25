@@ -1509,6 +1509,11 @@ SlashCmdList["DILVL"] = function(msg)
         print(string.format("  Color: %s  SetBonus: %s",
             db.colorIlvl and "ON" or "OFF",
             db.showSetBonus and "ON" or "OFF"))
+        print(string.format("  Grid2: %s (host: %s)  Danders: %s (host: %s)",
+            db.grid2Status and "ON" or "OFF",
+            Grid2 and "loaded" or "absent",
+            db.dandersText and "ON" or "OFF",
+            (DandersFrames_IsReady and DandersFrames_IsReady()) and "ready" or (DandersFrames_IsReady and "loaded" or "absent")))
         print(string.format("  Group: %s (%d members)  InCombat: %s",
             prefix, numGroup, inCombat))
         print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d bonusMap  %d hooks  %d columns",
