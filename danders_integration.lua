@@ -39,8 +39,12 @@ local function ensureFS(frame)
     local fs = fontStrings[frame]
     if fs then return fs end
     fs = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    fs:SetPoint("TOP", frame, "TOP", 0, -2)
+    -- Anchor ABOVE the frame (BOTTOM-of-FS to TOP-of-frame) so we don't
+    -- collide with Danders' health bar / name text rendered inside the frame.
+    fs:SetPoint("BOTTOM", frame, "TOP", 0, 2)
     fs:SetJustifyH("CENTER")
+    fs:SetDrawLayer("OVERLAY", 7) -- highest sublevel to beat any frame artwork
+    fs:SetTextColor(1, 1, 1, 1)
     fontStrings[frame] = fs
     return fs
 end
