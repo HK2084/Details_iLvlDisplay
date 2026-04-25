@@ -7,10 +7,22 @@ local defaults = {
     showSetBonus = true,
     showInDetails = true,  -- show iLvl on Details! bars (requires Details!)
     elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
+    grid2Status = false,   -- show iLvl in Grid2 raid frames via "dilvl" status (opt-in, requires Grid2)
+    dandersText = false,   -- show iLvl on Danders Frames as overlay FontString (opt-in, requires Danders Frames)
+    dandersPos = "topright", -- one of POS_KEYS_SET below; live-set via /dilvl danders pos <opt>
+    dandersFontSize = 10,  -- reserved for future /dilvl danders fontsize cmd; danders_integration reads this
     layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
     ilvlPosition = "right", -- "right" (after name) or "left" (between rank and name)
     -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
     --          true/false = user override via /dilvl blizzdm
+}
+
+-- Valid Danders position keys (mirror of POS in danders_integration.lua —
+-- duplicated here so the slash-command can validate without load-order coupling).
+local POS_KEYS_SET = {
+    top = true, topright = true, topleft = true,
+    bottom = true, bottomright = true, bottomleft = true,
+    center = true,
 }
 
 local db
@@ -40,19 +52,28 @@ local columnRefreshPending = false -- debounce flag for next-frame column refres
 local perfStats = {calls = 0, totalMs = 0, lastMs = 0, peak = 0} -- column refresh perf tracking
 local cachedColLayout = nil -- cached {leftA, leftW, secA, secW, gap, yOff} from last good measurement
 
--- Safety kill-switch: if our hooks error too many times, disable the addon
--- to avoid breaking Details! or Blizzard DM for the user.
+-- Safety kill-switch: if our Details!-bar hooks error too many times,
+-- disable JUST the Details!-bar feature (db.showInDetails = false). The
+-- master switch (db.enabled) and other integrations (BlizzDM, ElvUI,
+-- Grid2, Danders) are NOT affected — a Details! hook bug must not take
+-- down the user's working overlays elsewhere.
 local hookErrors = 0
 local HOOK_ERROR_LIMIT = 5
+
+-- Per-callback fault isolation (forward-declared so /dilvl debug at
+-- line ~1561 can read them). Used by NotifyElvUI further down.
+local CALLBACK_ERROR_LIMIT = 5
+local _callbackErrors = {}      -- name -> consecutive error count
+local _callbackErrorLogged = {} -- name -> bool (logged-once flag)
 local function SafeCall(fn, ...)
     if hookErrors >= HOOK_ERROR_LIMIT then return end
     local ok, err = pcall(fn, ...)
     if not ok then
         hookErrors = hookErrors + 1
         if hookErrors >= HOOK_ERROR_LIMIT then
-            if db then db.enabled = false end
+            if db then db.showInDetails = false end
             -- Route through WoW's error handler → BugSack picks it up (#13)
-            geterrorhandler()("Details! iLvl Display: Too many errors — addon auto-disabled. /reload to re-enable. Error: " .. tostring(err))
+            geterrorhandler()("Details! iLvl Display: too many Details!-bar hook errors — Details!-bars auto-disabled. Recovery: /dilvl details. Other integrations still active. Last error: " .. tostring(err))
         end
     end
 end
@@ -1160,6 +1181,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     modes[#modes + 1] = "Blizzard DM"
                 end
                 if db.elvuiTag and ElvUI then modes[#modes + 1] = "ElvUI" end
+                if db.grid2Status and Grid2 then modes[#modes + 1] = "Grid2" end
+                if db.dandersText and DandersFrames_IsReady then modes[#modes + 1] = "Danders" end
                 local modeStr = #modes > 0 and table.concat(modes, " + ") or "cache-only"
                 print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (" .. modeStr .. "). /dilvl")
 
@@ -1427,6 +1450,11 @@ SlashCmdList["DILVL"] = function(msg)
         if not db.showInDetails then
             ClearAllBarTags()
         else
+            -- Reset the hook-error counter so the user gets a fresh
+            -- 5-error budget after toggling back on. Otherwise a prior
+            -- auto-disable would remain at 5/5 and re-trip on the very
+            -- next error.
+            hookErrors = 0
             RefreshAllBarTexts()
         end
         print("|cFF00FF00Details! iLvl Display:|r Details bars " .. (db.showInDetails and "ON" or "OFF"))
@@ -1505,6 +1533,16 @@ SlashCmdList["DILVL"] = function(msg)
         print(string.format("  Color: %s  SetBonus: %s",
             db.colorIlvl and "ON" or "OFF",
             db.showSetBonus and "ON" or "OFF"))
+        print(string.format("  Grid2: %s (host: %s)  Danders: %s (host: %s)",
+            db.grid2Status and "ON" or "OFF",
+            Grid2 and "loaded" or "absent",
+            db.dandersText and "ON" or "OFF",
+            (DandersFrames_IsReady and DandersFrames_IsReady()) and "ready" or (DandersFrames_IsReady and "loaded" or "absent")))
+        if Details_iLvlDisplay_DandersDebug then
+            for _, line in ipairs(Details_iLvlDisplay_DandersDebug()) do
+                print(line)
+            end
+        end
         print(string.format("  Group: %s (%d members)  InCombat: %s",
             prefix, numGroup, inCombat))
         print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d bonusMap  %d hooks  %d columns",
@@ -1531,19 +1569,43 @@ SlashCmdList["DILVL"] = function(msg)
             local ago = string.format("%.0fs ago", GetTime() - lastInspectInfo.time)
             print(string.format("  Last inspect: %s → %d iLvl (%s)", lastInspectInfo.name, lastInspectInfo.ilvl, ago))
         end
-        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  HookErrors: %d/%d",
+        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  Details!-HookErrors: %d/%d",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
             openRaidLib and "active" or "n/a",
             hookErrors, HOOK_ERROR_LIMIT))
         print(string.format("  SecretAPI: CanCompareUnitTokens=%s  UnitNameBlocked: %d  UnitIsUnitBlocked: %d",
             CanCompareUnitTokens and "yes" or "no",
             secretStats.unitNameBlocked, secretStats.unitIsUnitBlocked))
+        -- Per-callback error counters (one row per registered callback).
+        -- Empty if all callbacks healthy; lists names + counts when not.
+        local cbErrSummary = {}
+        for name, n in pairs(_callbackErrors) do
+            if n and n > 0 then
+                cbErrSummary[#cbErrSummary + 1] = name .. "=" .. n
+            end
+        end
+        if #cbErrSummary > 0 then
+            print(string.format("  Callback errors (%d/%d limit): %s",
+                #cbErrSummary, CALLBACK_ERROR_LIMIT, table.concat(cbErrSummary, "  ")))
+        else
+            print(string.format("  Callback errors: 0  (limit: %d/cb, auto-unregister on breach)",
+                CALLBACK_ERROR_LIMIT))
+        end
 
         -- BlizzDM diagnostics
         if Details_iLvlDisplayAPI.GetBlizzDMDebug then
             local windows, frames, hasGuid, hasTag, secretName, entries, ci, resolveFails, maxResolveFails = Details_iLvlDisplayAPI.GetBlizzDMDebug()
             maxResolveFails = maxResolveFails or 3
             print("  --- Blizzard Damage Meter ---")
+            -- BlizzDM auto-disable counter (separate from Details!-HookErrors).
+            if Details_iLvlDisplay_BlizzDMState then
+                local state, limit = Details_iLvlDisplay_BlizzDMState()
+                print(string.format("    errors: %d/%d   disabled: %s",
+                    state.errors, limit, tostring(state.disabled)))
+                if state.lastError then
+                    print("    lastError: " .. state.lastError)
+                end
+            end
             if type(ci) == "table" then
                 print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d",
                     windows, frames, hasGuid, hasTag, secretName))
@@ -1826,15 +1888,73 @@ SlashCmdList["DILVL"] = function(msg)
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
 
-    elseif msg == "blizzdm" then
-        -- nil (auto) → force ON; true → OFF; false → ON
-        if db.blizzDM == nil then
-            db.blizzDM = true
+    elseif msg == "grid2" or msg == "grid2 on" then
+        if not Grid2 then
+            print("|cFF00FF00Details! iLvl Display:|r Grid2 not installed.")
         else
-            db.blizzDM = not db.blizzDM
+            db.grid2Status = true
+            NotifyElvUI()
+            print("|cFF00FF00Details! iLvl Display:|r Grid2 status |cFFFFD900dilvl|r enabled. Add it to a Grid2 text indicator.")
+        end
+    elseif msg == "grid2 off" then
+        db.grid2Status = false
+        NotifyElvUI()
+        print("|cFF00FF00Details! iLvl Display:|r Grid2 status |cFFFFD900dilvl|r disabled.")
+
+    elseif msg == "danders" or msg == "danders on" then
+        if not DandersFrames_IsReady then
+            print("|cFF00FF00Details! iLvl Display:|r Danders Frames not installed.")
+        else
+            db.dandersText = true
+            -- Reset error counter + clear disabled state so user gets a
+            -- fresh chance without /reload.
+            if Details_iLvlDisplay_DandersReset then
+                Details_iLvlDisplay_DandersReset()
+            end
+            NotifyElvUI()
+            print("|cFF00FF00Details! iLvl Display:|r Danders Frames overlay enabled.")
+        end
+    elseif msg == "danders off" then
+        db.dandersText = false
+        NotifyElvUI()
+        print("|cFF00FF00Details! iLvl Display:|r Danders Frames overlay disabled.")
+
+    elseif msg:match("^danders pos") then
+        local arg = msg:match("^danders pos%s+(%S+)")
+        if arg and POS_KEYS_SET[arg] then
+            db.dandersPos = arg
+            if Details_iLvlDisplay_DandersApplyPos then
+                Details_iLvlDisplay_DandersApplyPos(arg)
+            end
+            print("|cFF00FF00Details! iLvl Display:|r Danders position: " .. arg)
+        else
+            print("|cFF00FF00Details! iLvl Display:|r Current Danders position: " .. (db.dandersPos or "topright"))
+            print("  Options: top, topright, topleft, bottom, bottomright, bottomleft, center")
+        end
+
+    elseif msg == "blizzdm" then
+        -- Recovery-aware toggle. If BlizzDM was auto-disabled, restore the
+        -- tristate the user had BEFORE the disable (nil/auto, true, false)
+        -- instead of blindly toggling false → true (which would force ON
+        -- and lose the user's prior 'auto' setting).
+        local wasDisabled, prior = false, nil
+        if Details_iLvlDisplay_BlizzDMReset then
+            wasDisabled, prior = Details_iLvlDisplay_BlizzDMReset()
+        end
+        if wasDisabled then
+            db.blizzDM = prior -- nil/true/false — restore prior intent
+        else
+            -- Normal user toggle: nil (auto) → force ON; true → OFF; false → ON
+            if db.blizzDM == nil then
+                db.blizzDM = true
+            else
+                db.blizzDM = not db.blizzDM
+            end
         end
         NotifyElvUI()
-        print("|cFF00FF00Details! iLvl Display:|r Blizzard Damage Meter " .. (db.blizzDM and "ON" or "OFF"))
+        local stateStr = db.blizzDM == nil and "AUTO" or (db.blizzDM and "ON" or "OFF")
+        print("|cFF00FF00Details! iLvl Display:|r Blizzard Damage Meter " .. stateStr
+            .. (wasDisabled and " (restored after auto-disable)" or ""))
         if db.blizzDM then
             print("|cFFFFFF00  Note:|r Blizzard DM overlay is experimental. It hooks into Blizzard's")
             print("|cFFFFFF00  built-in damage meter which may change without notice. Only active")
@@ -1889,6 +2009,9 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
+        print("  /dilvl grid2 on|off    — Toggle iLvl status in Grid2 raid frames")
+        print("  /dilvl danders on|off  — Toggle iLvl overlay on Danders Frames")
+        print("  /dilvl danders pos <opt> — Danders text position (top/topright/...)")
         print("  /dilvl blizzdm         — Toggle iLvl on Blizzard Damage Meter")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
@@ -1963,16 +2086,57 @@ Details_iLvlDisplayAPI = {
     _callbacks = {},
     RegisterCallback = function(self, name, fn)
         self._callbacks[name] = fn
+        -- Clear any stale counters from a prior auto-unregister so the
+        -- newly-registered callback gets a fresh 0/5 budget. Without
+        -- this, a re-register after auto-unregister would inherit the
+        -- old 5 count and trip the limit on its first error.
+        _callbackErrors[name] = nil
+        _callbackErrorLogged[name] = nil
     end,
     UnregisterCallback = function(self, name)
         self._callbacks[name] = nil
+        _callbackErrors[name] = nil
+        _callbackErrorLogged[name] = nil
     end,
 }
 
 -- Internal helper — call once after any cache write that should update UI.
 -- Forward-declared at top of file so event handlers can reference it.
+--
+-- Per-callback fault isolation: each callback has its own error counter.
+-- First error per callback gets logged via geterrorhandler() (BugSack
+-- picks it up, user is informed). After CALLBACK_ERROR_LIMIT consecutive
+-- errors, that callback is auto-unregistered — others keep working.
+-- Counter resets on success (transient errors don't accumulate forever).
+-- Counter tables (_callbackErrors, _callbackErrorLogged) and limit are
+-- forward-declared near the top of this file so /dilvl debug can read
+-- them.
 NotifyElvUI = function()
-    for _, cb in pairs(Details_iLvlDisplayAPI._callbacks) do
-        pcall(cb)
+    local registry = Details_iLvlDisplayAPI._callbacks
+    for name, cb in pairs(registry) do
+        local ok, err = pcall(cb)
+        if ok then
+            -- Reset on success — transient errors don't accumulate forever.
+            if _callbackErrors[name] then
+                _callbackErrors[name] = 0
+                _callbackErrorLogged[name] = nil
+            end
+        else
+            local n = (_callbackErrors[name] or 0) + 1
+            _callbackErrors[name] = n
+            -- Log first error per callback so user/dev sees it in BugSack;
+            -- skip subsequent ones to avoid spam.
+            if not _callbackErrorLogged[name] then
+                _callbackErrorLogged[name] = true
+                geterrorhandler()("Details! iLvl Display: callback ["
+                    .. name .. "] error: " .. tostring(err))
+            end
+            if n >= CALLBACK_ERROR_LIMIT then
+                registry[name] = nil
+                geterrorhandler()("Details! iLvl Display: callback ["
+                    .. name .. "] auto-unregistered after "
+                    .. CALLBACK_ERROR_LIMIT .. " errors. Other integrations still active.")
+            end
+        end
     end
 end

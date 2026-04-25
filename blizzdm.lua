@@ -39,6 +39,63 @@ local function isSecret(val)
 end
 
 ---------------------------------------------------------------
+-- Local fault isolation (mirrors danders_integration.lua pattern).
+-- Counter resets on /reload (non-persistent). disableSelf flips
+-- db.blizzDM = false (NOT db.enabled — master switch stays user-owned)
+-- and routes a one-shot message via geterrorhandler() (BugSack picks
+-- it up). Other integrations are unaffected.
+---------------------------------------------------------------
+local BLIZZDM_ERROR_LIMIT = 5
+-- priorDb: stash db.blizzDM tristate (nil/true/false) BEFORE auto-disable
+-- so /dilvl blizzdm reset restores the user's prior auto/manual setting
+-- (instead of leaving them stuck on forced-OFF after a transient error).
+local blizzDMState = { errors = 0, lastError = nil, disabled = false, priorDb = nil }
+
+local function disableBlizzDMSelf(reason)
+    if blizzDMState.disabled then return end
+    blizzDMState.disabled = true
+    local db = API.GetDb()
+    if db then
+        blizzDMState.priorDb = db.blizzDM -- preserve nil (auto) / true / false
+        db.blizzDM = false
+    end
+    pcall(geterrorhandler(),
+        "Details! iLvl Display: Blizzard DM integration auto-disabled after "
+        .. BLIZZDM_ERROR_LIMIT .. " errors. Recovery: /dilvl blizzdm. Last: " .. tostring(reason))
+end
+
+local function SafeBlizzCall(label, fn, ...)
+    if blizzDMState.disabled then return nil end
+    if blizzDMState.errors >= BLIZZDM_ERROR_LIMIT then return nil end
+    local ok, a, b, c = pcall(fn, ...)
+    if ok then return a, b, c end
+    blizzDMState.errors = blizzDMState.errors + 1
+    blizzDMState.lastError = ("[%s] %s"):format(label, tostring(a))
+    if blizzDMState.errors >= BLIZZDM_ERROR_LIMIT then
+        disableBlizzDMSelf(blizzDMState.lastError)
+    end
+    return nil
+end
+
+-- Public reset for /dilvl blizzdm (toggle path) and debug section.
+-- Returns (wasDisabled, priorDb): if wasDisabled is true, caller should
+-- restore db.blizzDM to priorDb (which may be nil/auto, true, or false)
+-- to preserve the user's tristate intent across auto-disable + recovery.
+Details_iLvlDisplay_BlizzDMReset = function()
+    local wasDisabled = blizzDMState.disabled
+    local prior = blizzDMState.priorDb
+    blizzDMState.errors = 0
+    blizzDMState.lastError = nil
+    blizzDMState.disabled = false
+    blizzDMState.priorDb = nil
+    return wasDisabled, prior
+end
+
+Details_iLvlDisplay_BlizzDMState = function()
+    return blizzDMState, BLIZZDM_ERROR_LIMIT
+end
+
+---------------------------------------------------------------
 -- Event trace for post-combat debugging.
 -- Toggle: /dilvl blizztrace
 -- Logs combat→OOC event sequence + frame secret state.
@@ -642,6 +699,7 @@ end
 local deferredRetryPending = false
 
 local function RefreshAllFrames()
+    if blizzDMState.disabled then return end
     local db = API.GetDb()
     if not db or not db.enabled then return end
     if db.blizzDM == false then return end
@@ -661,17 +719,22 @@ local function RefreshAllFrames()
     if not DamageMeter.ForEachSessionWindow then return end
 
     local hasRetriableSecret = false
-    DamageMeter:ForEachSessionWindow(function(sessionWindow)
-        if not sessionWindow.ForEachEntryFrame then return end
-        sessionWindow:ForEachEntryFrame(function(frame)
-            InjectIlvl(frame)
-            -- Check if any frame still has secret data AND hasn't given up
-            if not hasRetriableSecret and frame.sourceName and isSecret(frame.sourceName) then
-                -- No per-player give-up for secret sourceName (can't read name to check)
-                hasRetriableSecret = true
-            end
+    -- Wrapped iteration: a thrown error in Blizzard's iteration API or our
+    -- InjectIlvl can't take down all remaining frames silently. SafeBlizzCall
+    -- counts errors; after BLIZZDM_ERROR_LIMIT it auto-disables BlizzDM only
+    -- (db.blizzDM = false), without touching db.enabled or other features.
+    SafeBlizzCall("ForEachSessionWindow", DamageMeter.ForEachSessionWindow,
+        DamageMeter, function(sessionWindow)
+            if not sessionWindow.ForEachEntryFrame then return end
+            SafeBlizzCall("ForEachEntryFrame", sessionWindow.ForEachEntryFrame,
+                sessionWindow, function(frame)
+                    SafeBlizzCall("InjectIlvl", InjectIlvl, frame)
+                    if not hasRetriableSecret and frame.sourceName
+                        and isSecret(frame.sourceName) then
+                        hasRetriableSecret = true
+                    end
+                end)
         end)
-    end)
 
     -- Only defer retry if there are frames that haven't given up yet
     if hasRetriableSecret and not IsGroupInCombat() then

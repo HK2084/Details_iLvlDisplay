@@ -1,12 +1,14 @@
 ## Interface: 120001, 120005
 ## Title: Details! Item Level Display
-## Notes: Shows item level (iLvl) and tier set bonus (2P/4P) next to player names on Details! bars, Blizzard Damage Meter, and ElvUI party frames
+## Notes: Shows item level (iLvl) and tier set bonus (2P/4P) next to player names on Details! bars, Blizzard Damage Meter, ElvUI, Grid2 and Danders Frames
 ## Author: HK2084
 ## Version: 1.4.0
 ## IconTexture: Interface\AddOns\Details_iLvlDisplay\icon
-## OptionalDeps: Details, QuickItemLevel, ElvUI, LibOpenRaid-1.0, Blizzard_DamageMeter
+## OptionalDeps: Details, QuickItemLevel, ElvUI, LibOpenRaid-1.0, Blizzard_DamageMeter, Grid2, DandersFrames
 ## SavedVariables: Details_iLvlDisplayDB
 
 core.lua
 elvui_tags.lua
+grid2_status.lua
+danders_integration.lua
 blizzdm.lua
