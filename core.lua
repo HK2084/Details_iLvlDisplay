@@ -9,10 +9,20 @@ local defaults = {
     elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
     grid2Status = false,   -- show iLvl in Grid2 raid frames via "dilvl" status (opt-in, requires Grid2)
     dandersText = false,   -- show iLvl on Danders Frames as overlay FontString (opt-in, requires Danders Frames)
+    dandersPos = "topright", -- one of POS_KEYS_SET below; live-set via /dilvl danders pos <opt>
+    dandersFontSize = 10,  -- reserved for future /dilvl danders fontsize cmd; danders_integration reads this
     layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
     ilvlPosition = "right", -- "right" (after name) or "left" (between rank and name)
     -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
     --          true/false = user override via /dilvl blizzdm
+}
+
+-- Valid Danders position keys (mirror of POS in danders_integration.lua —
+-- duplicated here so the slash-command can validate without load-order coupling).
+local POS_KEYS_SET = {
+    top = true, topright = true, topleft = true,
+    bottom = true, bottomright = true, bottomleft = true,
+    center = true,
 }
 
 local db
@@ -1866,6 +1876,19 @@ SlashCmdList["DILVL"] = function(msg)
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r Danders Frames overlay disabled.")
 
+    elseif msg:match("^danders pos") then
+        local arg = msg:match("^danders pos%s+(%S+)")
+        if arg and POS_KEYS_SET[arg] then
+            db.dandersPos = arg
+            if Details_iLvlDisplay_DandersApplyPos then
+                Details_iLvlDisplay_DandersApplyPos(arg)
+            end
+            print("|cFF00FF00Details! iLvl Display:|r Danders position: " .. arg)
+        else
+            print("|cFF00FF00Details! iLvl Display:|r Current Danders position: " .. (db.dandersPos or "topright"))
+            print("  Options: top, topright, topleft, bottom, bottomright, bottomleft, center")
+        end
+
     elseif msg == "blizzdm" then
         -- nil (auto) → force ON; true → OFF; false → ON
         if db.blizzDM == nil then
@@ -1931,6 +1954,7 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
         print("  /dilvl grid2 on|off    — Toggle iLvl status in Grid2 raid frames")
         print("  /dilvl danders on|off  — Toggle iLvl overlay on Danders Frames")
+        print("  /dilvl danders pos <opt> — Danders text position (top/topright/...)")
         print("  /dilvl blizzdm         — Toggle iLvl on Blizzard Damage Meter")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
