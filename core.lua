@@ -2045,8 +2045,41 @@ Details_iLvlDisplayAPI = {
 
 -- Internal helper — call once after any cache write that should update UI.
 -- Forward-declared at top of file so event handlers can reference it.
+--
+-- Per-callback fault isolation: each callback has its own error counter.
+-- First error per callback gets logged via geterrorhandler() (BugSack
+-- picks it up, user is informed). After CALLBACK_ERROR_LIMIT consecutive
+-- errors, that callback is auto-unregistered — others keep working.
+-- Counter resets on success (transient errors don't accumulate forever).
+local CALLBACK_ERROR_LIMIT = 5
+local _callbackErrors = {}      -- name -> consecutive error count
+local _callbackErrorLogged = {} -- name -> bool (logged-once flag)
 NotifyElvUI = function()
-    for _, cb in pairs(Details_iLvlDisplayAPI._callbacks) do
-        pcall(cb)
+    local registry = Details_iLvlDisplayAPI._callbacks
+    for name, cb in pairs(registry) do
+        local ok, err = pcall(cb)
+        if ok then
+            -- Reset on success — transient errors don't accumulate forever.
+            if _callbackErrors[name] then
+                _callbackErrors[name] = 0
+                _callbackErrorLogged[name] = nil
+            end
+        else
+            local n = (_callbackErrors[name] or 0) + 1
+            _callbackErrors[name] = n
+            -- Log first error per callback so user/dev sees it in BugSack;
+            -- skip subsequent ones to avoid spam.
+            if not _callbackErrorLogged[name] then
+                _callbackErrorLogged[name] = true
+                geterrorhandler()("Details! iLvl Display: callback ["
+                    .. name .. "] error: " .. tostring(err))
+            end
+            if n >= CALLBACK_ERROR_LIMIT then
+                registry[name] = nil
+                geterrorhandler()("Details! iLvl Display: callback ["
+                    .. name .. "] auto-unregistered after "
+                    .. CALLBACK_ERROR_LIMIT .. " errors. Other integrations still active.")
+            end
+        end
     end
 end
