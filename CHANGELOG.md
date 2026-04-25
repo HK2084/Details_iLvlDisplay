@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.4.1
+
+### New
+
+- **Grid2 raid frame integration** — `dilvl` status registers in Grid2's status system. Add it to any text indicator (corner-text, side-text, ...) via Grid2 GUI. Color, set bonus, and toggle inherit from existing settings. Toggle: `/dilvl grid2 on`
+- **Danders Frames integration** — addon-owned FontString attached per Danders Frame, anchored to `frame.contentOverlay` (the host's dedicated non-interactive overlay layer, stable across resizes and stacking direction). Default position `topright`; live-switchable to top / topleft / bottom / bottomright / bottomleft / center via `/dilvl danders pos <opt>`. Toggle: `/dilvl danders on`
+- **`/dilvl debug` rewrite** — clearer per-feature counters: Details!-HookErrors, Callback errors (per-callback, with auto-unregister threshold), Danders + BlizzDM auto-disable state with last error message, position + frame-render diagnostics
+
+### Improved (defensive hardening — fault isolation across all features)
+
+- **Details!-bar hook errors no longer take down other integrations** — previously, 5+ Details! `SetText` hook errors flipped `db.enabled = false` (master switch), silently disabling BlizzDM overlays + halting ElvUI/Grid2/Danders refresh callbacks. Now: only `db.showInDetails = false` is set; other integrations keep working. Recovery: `/dilvl details` toggle resets the counter
+- **Per-callback error isolation** — each integration's update callback (ElvUI, Grid2, Danders, BlizzDM) has its own consecutive-error counter. First error per callback fires `geterrorhandler()` (BugSack catches it); after 5 consecutive errors the faulty callback is auto-unregistered. Other callbacks keep firing
+- **BlizzDM local kill-switch** — `RefreshAllFrames` iteration is wrapped per call site. After 5 errors `db.blizzDM` is auto-disabled (NOT `db.enabled` — master switch stays user-owned), with a one-shot BugSack notification including recovery hint (`/dilvl blizzdm` to re-enable). Counter resets on `/reload`. Tristate (auto / manual-on / manual-off) is preserved across auto-disable + recovery
+- **Danders auto-disable** — same pattern: 5 errors in any host-API call (`DandersFrames_IsReady`, `IterateFrames`, `OnFramesSorted` callback, FontString creation) auto-disables only the Danders integration, others unaffected. Recovery: `/dilvl danders on`
+
+---
+
 ## v1.4.0
 
 ### Improved
