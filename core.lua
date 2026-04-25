@@ -7,6 +7,7 @@ local defaults = {
     showSetBonus = true,
     showInDetails = true,  -- show iLvl on Details! bars (requires Details!)
     elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
+    grid2Status = false,   -- show iLvl in Grid2 raid frames via "dilvl" status (opt-in, requires Grid2)
     layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
     ilvlPosition = "right", -- "right" (after name) or "left" (between rank and name)
     -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
@@ -1160,6 +1161,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     modes[#modes + 1] = "Blizzard DM"
                 end
                 if db.elvuiTag and ElvUI then modes[#modes + 1] = "ElvUI" end
+                if db.grid2Status and Grid2 then modes[#modes + 1] = "Grid2" end
                 local modeStr = #modes > 0 and table.concat(modes, " + ") or "cache-only"
                 print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (" .. modeStr .. "). /dilvl")
 
@@ -1826,6 +1828,19 @@ SlashCmdList["DILVL"] = function(msg)
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r disabled.")
 
+    elseif msg == "grid2" or msg == "grid2 on" then
+        if not Grid2 then
+            print("|cFF00FF00Details! iLvl Display:|r Grid2 not installed.")
+        else
+            db.grid2Status = true
+            NotifyElvUI()
+            print("|cFF00FF00Details! iLvl Display:|r Grid2 status |cFFFFD900dilvl|r enabled. Add it to a Grid2 text indicator.")
+        end
+    elseif msg == "grid2 off" then
+        db.grid2Status = false
+        NotifyElvUI()
+        print("|cFF00FF00Details! iLvl Display:|r Grid2 status |cFFFFD900dilvl|r disabled.")
+
     elseif msg == "blizzdm" then
         -- nil (auto) → force ON; true → OFF; false → ON
         if db.blizzDM == nil then
@@ -1889,6 +1904,7 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
+        print("  /dilvl grid2 on|off    — Toggle iLvl status in Grid2 raid frames")
         print("  /dilvl blizzdm         — Toggle iLvl on Blizzard Damage Meter")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
