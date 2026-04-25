@@ -17,6 +17,17 @@ if not DandersFrames_IsReady then return end -- host missing -> silent exit
 local API = Details_iLvlDisplayAPI
 if not API then return end
 
+-- Persistent token for DandersFrames.RegisterCallback. Must NOT be a
+-- local anonymous table or it gets GC'd and the callback silently
+-- detaches. Stored on a global namespace so /dilvl debug can inspect.
+Details_iLvlDisplay_DandersState = Details_iLvlDisplay_DandersState or {
+    callbackToken = {},
+    lastRefreshAt = 0,
+    refreshCount = 0,
+    lastFrameCount = 0,
+}
+local STATE = Details_iLvlDisplay_DandersState
+
 ---------------------------------------------------------------
 -- Per-frame FontString cache
 -- frames are recycled by Danders for different units — we don't
@@ -69,8 +80,52 @@ end
 local function refreshAll()
     if not DandersFrames_IsReady() then return end
     if DandersFrames_IterateFrames then
-        DandersFrames_IterateFrames(updateFrame)
+        local count = 0
+        DandersFrames_IterateFrames(function(frame)
+            count = count + 1
+            updateFrame(frame)
+        end)
+        STATE.lastRefreshAt = GetTime()
+        STATE.refreshCount = STATE.refreshCount + 1
+        STATE.lastFrameCount = count
     end
+end
+
+-- Public diagnostics for /dilvl debug
+Details_iLvlDisplay_DandersDebug = function()
+    local lines = { "  --- Danders Frames ---" }
+    if not DandersFrames_IsReady or not DandersFrames_IsReady() then
+        lines[#lines + 1] = "    host: not ready"
+        return lines
+    end
+    lines[#lines + 1] = string.format("    refreshes: %d  last %.1fs ago  lastCount: %d",
+        STATE.refreshCount,
+        STATE.lastRefreshAt > 0 and (GetTime() - STATE.lastRefreshAt) or 0,
+        STATE.lastFrameCount)
+    if not DandersFrames_IterateFrames then
+        lines[#lines + 1] = "    DandersFrames_IterateFrames: missing"
+        return lines
+    end
+    local idx = 0
+    DandersFrames_IterateFrames(function(frame)
+        idx = idx + 1
+        if idx > 8 then return end -- cap output
+        local unit = frame.unit
+        local guid = unit and UnitGUID(unit) or nil
+        local cached = guid and select(1, API.GetCacheData(guid)) or nil
+        local fs = fontStrings[frame]
+        local fsText = fs and fs:GetText() or "<no FS>"
+        lines[#lines + 1] = string.format("    [%d] unit:%s  guid:%s  cache:%s  fs:%s",
+            idx,
+            tostring(unit),
+            guid and "yes" or "no",
+            cached and tostring(cached.ilvl) or "no",
+            (fsText == "" or fsText == nil) and "<empty>" or fsText)
+    end)
+    if idx == 0 then
+        lines[#lines + 1] = "    no frames returned by IterateFrames"
+    end
+    return lines
 end
 
 ---------------------------------------------------------------
@@ -81,7 +136,7 @@ end
 ---------------------------------------------------------------
 local function tryInit(self)
     if DandersFrames_IsReady() and DandersFrames and DandersFrames.RegisterCallback then
-        DandersFrames.RegisterCallback({}, "OnFramesSorted", refreshAll)
+        DandersFrames.RegisterCallback(STATE.callbackToken, "OnFramesSorted", refreshAll)
         API:RegisterCallback("danders", refreshAll)
         refreshAll()
         self:UnregisterAllEvents()
