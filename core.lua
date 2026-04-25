@@ -52,8 +52,11 @@ local columnRefreshPending = false -- debounce flag for next-frame column refres
 local perfStats = {calls = 0, totalMs = 0, lastMs = 0, peak = 0} -- column refresh perf tracking
 local cachedColLayout = nil -- cached {leftA, leftW, secA, secW, gap, yOff} from last good measurement
 
--- Safety kill-switch: if our hooks error too many times, disable the addon
--- to avoid breaking Details! or Blizzard DM for the user.
+-- Safety kill-switch: if our Details!-bar hooks error too many times,
+-- disable JUST the Details!-bar feature (db.showInDetails = false). The
+-- master switch (db.enabled) and other integrations (BlizzDM, ElvUI,
+-- Grid2, Danders) are NOT affected — a Details! hook bug must not take
+-- down the user's working overlays elsewhere.
 local hookErrors = 0
 local HOOK_ERROR_LIMIT = 5
 local function SafeCall(fn, ...)
@@ -62,9 +65,9 @@ local function SafeCall(fn, ...)
     if not ok then
         hookErrors = hookErrors + 1
         if hookErrors >= HOOK_ERROR_LIMIT then
-            if db then db.enabled = false end
+            if db then db.showInDetails = false end
             -- Route through WoW's error handler → BugSack picks it up (#13)
-            geterrorhandler()("Details! iLvl Display: Too many errors — addon auto-disabled. /reload to re-enable. Error: " .. tostring(err))
+            geterrorhandler()("Details! iLvl Display: too many Details!-bar hook errors — Details!-bars auto-disabled. Other integrations still active. Last error: " .. tostring(err))
         end
     end
 end
