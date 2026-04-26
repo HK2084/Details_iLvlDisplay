@@ -1064,7 +1064,7 @@ local function UpdatePlayerCache()
         StoreNameBonus(pname, sb)
     end
     mapDirty = true
-    NotifyElvUI()
+    NotifyElvUI(pname)
 end
 
 local frame = CreateFrame("Frame")
@@ -1148,7 +1148,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                                             StoreNameIlvl(storedName, ilvl)
                                             StoreNameIlvl(name, ilvl)
                                             mapDirty = true
-                                            NotifyElvUI()
+                                            NotifyElvUI(storedName)
                                         end
                                     end
                                     break
@@ -1262,7 +1262,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- If the player manually inspects someone, set a 60s pause so our
         -- background queue doesn't override their inspection.
         mapDirty = true
-        NotifyElvUI()
+        NotifyElvUI(lastInspectInfo and lastInspectInfo.name or nil)
         if guid == pendingInspectGuid then
             pendingInspectGuid = nil
             ClearInspectPlayer()
@@ -1604,6 +1604,14 @@ SlashCmdList["DILVL"] = function(msg)
                     state.errors, limit, tostring(state.disabled)))
                 if state.lastError then
                     print("    lastError: " .. state.lastError)
+                end
+                -- v1.4.2: GAVE-UP-lock smart-reset diagnostics. resetCount
+                -- counts every nameResolveFails clearance since /reload;
+                -- lastResetReason shows what triggered the most recent reset
+                -- (cache-write / REGEN / roster-leave / session-switch).
+                if state.resetCount and state.resetCount > 0 then
+                    print(string.format("    resets: %d   lastReset: %s",
+                        state.resetCount, tostring(state.lastResetReason or "?")))
                 end
             end
             if type(ci) == "table" then
@@ -2111,10 +2119,14 @@ Details_iLvlDisplayAPI = {
 -- Counter tables (_callbackErrors, _callbackErrorLogged) and limit are
 -- forward-declared near the top of this file so /dilvl debug can read
 -- them.
-NotifyElvUI = function()
+-- playerName (optional): when a cache write targets one specific player, pass
+-- their full name (e.g. "Zoltara-Azshara"). Subscribers can use it for targeted
+-- logic such as resetting per-player resolve-fail counters (blizzdm.lua v1.4.2).
+-- Existing subscribers ignore the extra arg — Lua silently drops unused params.
+NotifyElvUI = function(playerName)
     local registry = Details_iLvlDisplayAPI._callbacks
     for name, cb in pairs(registry) do
-        local ok, err = pcall(cb)
+        local ok, err = pcall(cb, playerName)
         if ok then
             -- Reset on success — transient errors don't accumulate forever.
             if _callbackErrors[name] then

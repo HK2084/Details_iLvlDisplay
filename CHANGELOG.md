@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.4.2
+
+### Fixed
+
+- **Blizzard DM: permanent GAVE-UP-lock for some players** — once a player accumulated 3 consecutive resolve fails (e.g. transient secret-locks during combat trash, frame stack churn, brief out-of-range gaps), `nameResolveFails[name]` blocked their re-tagging for the rest of the session, even after fresh inspect data arrived. Symptoms: `/dilvl debug` showed players `cache:yes  tag:no [CLEAN]  fails:3/3 GAVE-UP` post-combat with valid iLvl in the cache. Only `/reload` recovered. Reproducible via LFR / 25-Mann content where 5-7+ players regularly stayed permanently untagged.
+
+### New (smart-reset infrastructure)
+
+- **Per-player cache-write reset** — `NotifyElvUI()` now optionally carries the player name; the BlizzDM callback clears that player's `nameResolveFails` entry before re-rendering, so fresh inspect / LibOpenRaid GearUpdate / self-update data immediately re-arms the 3-retry budget. Cross-realm Ambiguate forms cleared in lockstep
+- **PLAYER_REGEN_ENABLED wipe** — combat is a state-change event; per-player fails accumulated under combat secret-locks are invalidated wholesale at combat end. The 3-retry defense still applies to genuine post-combat resolve failures
+- **GROUP_ROSTER_UPDATE leave-purge** — players who leave the group get their counter cleared on next roster update so a re-join starts with a fresh budget
+- **`/dilvl debug` diagnostics** — BlizzDM section now shows `resets: N   lastReset: <trigger>` (e.g. `cache:Zoltara-Azshara`, `REGEN_ENABLED (7)`, `roster-leave (2)`, `session-switch (5)`). Visible only when at least one reset has fired since `/reload`
+
+### Preserved (no behavior change)
+
+- `MAX_RESOLVE_FAILS = 3` defensive cap unchanged — counters reset only on real trigger events, not on every refresh tick
+- Existing `wipe(nameResolveFails)` on session switch (Heal→DPS, Aktuell→Gesamt) is preserved and now also bumps the diagnostic counter
+- All other integrations (Details!-bars, ElvUI tag, Grid2 status, Danders FontString) ignore the new `NotifyElvUI(name)` argument — Lua silently drops unused params
+
+---
+
 ## v1.4.1
 
 ### New
