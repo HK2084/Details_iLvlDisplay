@@ -49,7 +49,12 @@ local BLIZZDM_ERROR_LIMIT = 5
 -- priorDb: stash db.blizzDM tristate (nil/true/false) BEFORE auto-disable
 -- so /dilvl blizzdm reset restores the user's prior auto/manual setting
 -- (instead of leaving them stuck on forced-OFF after a transient error).
-local blizzDMState = { errors = 0, lastError = nil, disabled = false, priorDb = nil }
+-- resetCount + lastResetReason track GAVE-UP-lock smart-resets (v1.4.2). The
+-- 3-retry budget is preserved; counters wipe only on real trigger events
+-- (cache-write per player, PLAYER_REGEN_ENABLED, roster-leave). Surfaced in
+-- /dilvl debug so behavior is observable without /reload.
+local blizzDMState = { errors = 0, lastError = nil, disabled = false, priorDb = nil,
+                       resetCount = 0, lastResetReason = nil }
 
 local function disableBlizzDMSelf(reason)
     if blizzDMState.disabled then return end
@@ -491,6 +496,81 @@ end
 ---------------------------------------------------------------
 local MAX_RESOLVE_FAILS = 3  -- stop retrying after this many consecutive failures per player
 local nameResolveFails = {}   -- sourceName → fail count (per-player, not per-frame)
+
+---------------------------------------------------------------
+-- v1.4.2: smart-reset for the 3-retry GAVE-UP lock.
+-- Pre-1.4.2 the counter only cleared on /reload; if combat-secret blocks or
+-- transient resolve gaps tripped MAX_RESOLVE_FAILS, the player stayed
+-- permanently untagged for the whole session even after fresh inspect data
+-- arrived. Resets fire on real trigger events:
+--   - cache-write per player (NotifyElvUI(name) callback path)
+--   - PLAYER_REGEN_ENABLED (combat state change invalidates prior fails)
+--   - GROUP_ROSTER_UPDATE (player left → fresh budget on rejoin)
+--   - sessionWindow:Refresh hook (existing wipe at session switch)
+-- The 3-retry defense itself is preserved.
+---------------------------------------------------------------
+local function ResetFailCounter(name, reason)
+    if not name then return false end
+    local cleared = false
+    if nameResolveFails[name] then
+        nameResolveFails[name] = nil
+        cleared = true
+    end
+    -- Cross-realm symmetry: BlizzDM may show a truncated form (FontString
+    -- width). Clear the Ambiguate("short") variant too so whichever form
+    -- the counter is keyed under gets reset.
+    if Ambiguate then
+        local short = Ambiguate(name, "short")
+        if short and short ~= name and nameResolveFails[short] then
+            nameResolveFails[short] = nil
+            cleared = true
+        end
+    end
+    if cleared then
+        blizzDMState.resetCount = blizzDMState.resetCount + 1
+        blizzDMState.lastResetReason = reason or ("cache:" .. tostring(name):sub(1, 20))
+    end
+    return cleared
+end
+
+local function WipeAllFailCounters(reason)
+    local n = 0
+    for k in pairs(nameResolveFails) do
+        nameResolveFails[k] = nil
+        n = n + 1
+    end
+    if n > 0 then
+        blizzDMState.resetCount = blizzDMState.resetCount + n
+        blizzDMState.lastResetReason = (reason or "wipe-all") .. " (" .. n .. ")"
+    end
+    return n
+end
+
+-- Build a set of current-roster names (full + short forms). Used by
+-- GROUP_ROSTER_UPDATE to purge counters for players who left the group.
+local function BuildRosterNameSet()
+    local set = {}
+    local count = GetNumGroupMembers()
+    if count > 0 then
+        local prefix = IsInRaid() and "raid" or "party"
+        for i = 1, count do
+            local unit = prefix .. i
+            if UnitExists(unit) then
+                local n, realm = UnitName(unit)
+                if n and not isSecret(n) then
+                    set[n] = true
+                    if realm and realm ~= "" then set[n .. "-" .. realm] = true end
+                end
+            end
+        end
+    end
+    local pn, prealm = UnitName("player")
+    if pn and not isSecret(pn) then
+        set[pn] = true
+        if prealm and prealm ~= "" then set[pn .. "-" .. prealm] = true end
+    end
+    return set
+end
 
 -- When a GUID resolves on one frame, propagate it to ALL other visible frames
 -- with the same sourceName. Fixes: left-position causes frame A to fail while
@@ -994,7 +1074,13 @@ RegisterHandler("UNIT_FLAGS", function() end)
 -- === Combat END signals — safe to inject again ===
 RegisterHandler("PLAYER_REGEN_ENABLED", function()
     inCombat = false
-    trace("REGEN_ENABLED")
+    -- v1.4.2: combat is a state change. Per-player fails accumulated under
+    -- combat secret-locks aren't valid OOC. Wipe wholesale; the 3-retry
+    -- budget rebuilds organically on the next refresh pass. Fixes permanent
+    -- GAVE-UP locks for players whose frames were transiently secret in
+    -- combat but become resolvable post-combat.
+    local n = WipeAllFailCounters("REGEN_ENABLED")
+    trace(format("REGEN_ENABLED  wipedFails=%d", n))
     traceFrameState("REGEN_ENABLED", true)
     StartPostCombatRefresh()
 end)
@@ -1041,7 +1127,25 @@ end)
 -- Fallback events — no special logic, just schedule a refresh
 RegisterHandler("DAMAGE_METER_CURRENT_SESSION_UPDATED", ScheduleRefresh)
 RegisterHandler("DAMAGE_METER_RESET", ScheduleRefresh)
-RegisterHandler("GROUP_ROSTER_UPDATE", ScheduleRefresh)
+-- v1.4.2: roster-leave purge. Clear nameResolveFails entries for players no
+-- longer in the group so their next (re)join gets a fresh 3-retry budget
+-- instead of inheriting permanent GAVE-UP from a prior session.
+RegisterHandler("GROUP_ROSTER_UPDATE", function()
+    local rosterNames = BuildRosterNameSet()
+    local purged = 0
+    for nm in pairs(nameResolveFails) do
+        local short = Ambiguate and Ambiguate(nm, "short") or nm
+        if not rosterNames[nm] and not rosterNames[short] then
+            nameResolveFails[nm] = nil
+            purged = purged + 1
+        end
+    end
+    if purged > 0 then
+        blizzDMState.resetCount = blizzDMState.resetCount + purged
+        blizzDMState.lastResetReason = format("roster-leave (%d)", purged)
+    end
+    ScheduleRefresh()
+end)
 RegisterHandler("ZONE_CHANGED_NEW_AREA", ScheduleRefresh)
 
 -- Dispatcher: O(1) table lookup, fallback for any future unhandled events
@@ -1051,7 +1155,17 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 end)
 
 -- Register with core.lua's callback system (inspect complete, gear swap, etc.)
-API:RegisterCallback("blizzdm", RefreshAllFrames)
+-- v1.4.2: wrapped to receive optional playerName from NotifyElvUI(name). When
+-- a cache-write targets one specific player, their nameResolveFails counter is
+-- cleared BEFORE RefreshAllFrames so the next InjectIlvl pass picks up the
+-- fresh data instead of bouncing off the GAVE-UP early-return.
+local function OnCacheChange(playerName)
+    if playerName and type(playerName) == "string" then
+        ResetFailCounter(playerName, "cache:" .. playerName:sub(1, 20))
+    end
+    RefreshAllFrames()
+end
+API:RegisterCallback("blizzdm", OnCacheChange)
 
 -- Hook DM window visibility + session changes.
 -- Close/reopen and session switching (Heal→DPS, Aktuell→Gesamt) don't always
@@ -1090,7 +1204,7 @@ if DamageMeter.ForEachSessionWindow then
                         frame._dilvlNameFS = nil
                     end)
                     -- Reset per-player resolve fails (session switch = new context)
-                    wipe(nameResolveFails)
+                    WipeAllFailCounters("session-switch")
                 end
                 ScheduleRefresh()
             end)
