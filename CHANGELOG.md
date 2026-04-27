@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.3
+
+### New
+
+- **`[dilvl:plain]` ElvUI tag** — second tag variant that renders the iLvl as a bare number without surrounding brackets (e.g. `284` instead of `[284]`). Use it in any ElvUI Custom Text or Name Format slot — both `[dilvl]` (bracketed) and `[dilvl:plain]` (plain) coexist and respond to the same `/dilvl elvui on/off` master toggle, color setting, and set-bonus setting. Tier-set badge (e.g. `[4P]`) keeps its own brackets in both variants. Both tags are registered in ElvUI's tag browser under category "Details! iLvl Display" with descriptions, so users can discover them without docs. Requested by CurseForge user NiGhTwAlKeR559 (issue #23).
+
 ## v1.4.2
 
 ### Fixed
