@@ -2,7 +2,7 @@
 ## Title: Details! Item Level Display
 ## Notes: Shows item level and tier set bonus on Details!, ElvUI, Grid2, Danders Frames, and Blizzard's built-in damage meter. Auto-detects what's installed, each surface independently toggleable.
 ## Author: HK2084
-## Version: 1.4.2
+## Version: 1.4.3
 ## IconTexture: Interface\AddOns\Details_iLvlDisplay\icon
 ## OptionalDeps: Details, QuickItemLevel, ElvUI, LibOpenRaid-1.0, Blizzard_DamageMeter, Grid2, DandersFrames
 ## SavedVariables: Details_iLvlDisplayDB
