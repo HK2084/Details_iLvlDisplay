@@ -1,8 +1,6 @@
 # Details! Item Level Display
 
-Shows **item level** and **tier set bonus** next to player names on your damage meter — works with **Details!**, **Blizzard's built-in Damage Meter** (12.0+), and **ElvUI** party frames.
-
-No configuration needed. The addon **auto-detects** which meters you use and activates accordingly.
+Shows **item level** and **tier set bonus** on **Details!**, **ElvUI**, **Grid2**, **Danders Frames**, and **Blizzard's built-in Damage Meter** (12.0+). Auto-detects what's installed, each surface independently toggleable.
 
 ---
 
