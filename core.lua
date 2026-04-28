@@ -25,7 +25,43 @@ local POS_KEYS_SET = {
     center = true,
 }
 
+-- Login hint registry. Every new user-facing feature must add an entry here
+-- so existing users notice it on next login. Each hint fires once per
+-- character (flag stored as `seenHint_<key>` in SavedVariables) and is
+-- staggered 4s apart starting 8s post-login, so a fresh install with
+-- multiple unseen hints doesn't spam the chat frame in one tick.
+--
+-- Order = newest-first. Add new entries on top.
+-- `gate` is optional: when present, the hint is silently skipped (without
+-- consuming the seen flag) on clients where the dependency is missing,
+-- so a user installing ElvUI later still gets the ElvUI-specific hint.
+local LOGIN_HINTS = {
+    {
+        key  = "elvuiplain",                                -- v1.4.3
+        gate = function() return ElvUI ~= nil end,
+        msg  = "[dilvl:plain] ElvUI tag — bare iLvl number without brackets, e.g. \"Raza 284\" instead of \"Raza [284]\". Use in any ElvUI Custom Text.",
+    },
+    {
+        key = "position",                                   -- v1.3.5
+        msg = "/dilvl position — place iLvl before or after player name.",
+    },
+}
+
 local db
+
+local function ShowLoginHints()
+    local delay = 8
+    for _, hint in ipairs(LOGIN_HINTS) do
+        if not db["seenHint_" .. hint.key] and (not hint.gate or hint.gate()) then
+            db["seenHint_" .. hint.key] = true
+            local msg = hint.msg
+            C_Timer.After(delay, function()
+                print("|cFF00FF00Details! iLvl Display|r |cFFFFD100New:|r " .. msg)
+            end)
+            delay = delay + 4
+        end
+    end
+end
 local ilvlCache -- points to db.ilvlCache after ADDON_LOADED (persistent SavedVariables)
 local setBonusCache = {} -- guid -> "2P" / "4P" / false (no bonus) / nil (never inspected); persisted after ADDON_LOADED
 local nameToIlvl = {}    -- "PlayerName" -> ilvl
@@ -1186,13 +1222,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 local modeStr = #modes > 0 and table.concat(modes, " + ") or "cache-only"
                 print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (" .. modeStr .. "). /dilvl")
 
-                -- One-time feature hint (shown once per new feature, stored in SavedVariables)
-                if not db.seenHint_position then
-                    db.seenHint_position = true
-                    C_Timer.After(8, function()
-                        print("|cFF00FF00Details! iLvl Display|r |cFFFFD100New:|r /dilvl position — place iLvl before or after player name.")
-                    end)
-                end
+                ShowLoginHints()
 
                 -- Inspect in both modes (Details + ElvUI-only)
                 C_Timer.After(5, QueueGroupInspect)
