@@ -4,12 +4,12 @@
 
 ### New
 
-- **`[dilvl:plain]` ElvUI tag** — bare iLvl number without brackets, e.g. `Raza 284` instead of `Raza [284]`. Both `[dilvl]` and `[dilvl:plain]` coexist, share the same `/dilvl elvui on/off` toggle, color, and set-bonus settings. Listed in ElvUI's tag browser under "Details! iLvl Display". Thanks to NiGhTwAlKeR559 for the request
-- **First-time login hints** — when the addon adds something new, you get a one-time chat message at login (8s after entering world, dismissed forever per character). Gated by dependency — the ElvUI-specific hint stays silent if ElvUI isn't loaded. v1.4.3 announces the new `[dilvl:plain]` tag
+- **`[dilvl:plain]` ElvUI tag** — renders the item level as a bare number without surrounding brackets, e.g. `Raza 284` instead of `Raza [284]`. Both `[dilvl]` and `[dilvl:plain]` coexist and share the same `/dilvl elvui on/off` toggle, color, and set-bonus settings. Listed in ElvUI's tag browser under "Details! iLvl Display" with descriptions. Thanks to NiGhTwAlKeR559 for the request
+- **First-time login hints for new features** — ElvUI users now receive a single one-shot chat message at login pointing to the new `[dilvl:plain]` tag. Hints are dependency-gated and only fire on the first login per character
 
 ### Fixed
 
-- **Cross-realm players keeping iLvl tags in Blizzard's Damage Meter after group disband** — some players got stuck at `3/3 GAVE-UP` because the cache stored their name without realm suffix (`Details!`-actor-scan path) while BlizzDM frames carry the full `Name-Realm` form, and the reverse-lookup couldn't bridge that. Three-layer fix: roster-based name enrichment on cache write, full `Name-Realm` for new entries, name-only fallback in the resolver for legacy bare entries. Live raid/dungeon gameplay was never affected — only post-disband historical view
+- **Cross-realm tags lost after group disband** — iLvl tags for some cross-realm players disappeared from Blizzard's Damage Meter once the group ended. Tags are now retained correctly
 
 ## v1.4.2
 
