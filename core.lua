@@ -205,6 +205,46 @@ local function GetGroupInfo()
 end
 
 ---------------------------------------------------------------
+-- Resolve a GUID to its "Name-Realm" form via the current group
+-- roster (or self). Returns nil when the GUID is not in the
+-- group — caller decides the fallback.
+--
+-- Why this exists: the [DETAILS]-source cache write path
+-- (GetIlvlForGuid → Details.ilevel.GetIlvl) and the
+-- RebuildNameIlvlMap actor-scan path historically stored
+-- cached.name as the bare Details! actor.displayName/nome,
+-- which for cross-realm players often arrives without realm.
+-- Inspect/LoR paths store full Name-Realm. Asymmetric cache.
+-- After group disband, BlizzDM frames carry the full
+-- "Name-Realm" sourceName, so the strict-equality reverse-
+-- lookup in ResolveGUIDByName couldn't match the bare cached
+-- entries → false GAVE-UP for historical cross-realm frames.
+--
+-- This helper enriches new writes with the full Name-Realm
+-- form when the player is in the current roster.
+-- O(n) over n ≤ 40 — only on event-driven cache writes,
+-- never on the per-frame Details!-bar hot path.
+---------------------------------------------------------------
+local function ResolveFullNameByGuid(guid)
+    if not guid then return nil end
+    if guid == UnitGUID("player") then
+        local n, r = SafeUnitName("player")
+        if not n then return nil end
+        return (r and r ~= "") and (n .. "-" .. r) or n
+    end
+    local prefix, count = GetGroupInfo()
+    for i = 1, count do
+        local unit = prefix .. i
+        if UnitGUID(unit) == guid then
+            local n, r = SafeUnitName(unit)
+            if not n then return nil end
+            return (r and r ~= "") and (n .. "-" .. r) or n
+        end
+    end
+    return nil
+end
+
+---------------------------------------------------------------
 -- iLvl color by gear tier
 ---------------------------------------------------------------
 local function GetIlvlColor(ilvl)
@@ -304,7 +344,17 @@ local function GetIlvlForGuid(guid)
         local ok, data = pcall(Details.ilevel.GetIlvl, Details.ilevel, guid)
         if ok and data and data.ilvl and data.ilvl > 0 then
             local ilvl = math.floor(data.ilvl)
-            ilvlCache[guid] = {ilvl = ilvl, time = time(), source = "details"}
+            -- Enrich with Name-Realm via roster lookup so the post-disband
+            -- reverse-lookup in ResolveGUIDByName can match cross-realm
+            -- BlizzDM frames. Falls back to nil when player is not in
+            -- the current roster — RebuildNameIlvlMap will retry the
+            -- enrichment on the next actor scan.
+            ilvlCache[guid] = {
+                ilvl = ilvl,
+                time = time(),
+                name = ResolveFullNameByGuid(guid),
+                source = "details",
+            }
             return ilvl
         end
     end
@@ -412,10 +462,16 @@ local function RebuildNameIlvlMap()
                 if actor:IsPlayer() and actor.serial then
                     local ilvl = GetIlvlForGuid(actor.serial)
                     if ilvl then
-                        -- Patch name into cache entry if Details! API wrote it without one
+                        -- Patch name into cache entry if Details! API wrote it without one.
+                        -- Prefer Name-Realm form via roster (cross-realm asymmetry fix);
+                        -- fall back to actor.displayName / nome which Details! often gives
+                        -- without realm suffix. The reverse-lookup nameOnly fallback in
+                        -- ResolveGUIDByName covers any leftover bare entries.
                         local entry = ilvlCache[actor.serial]
                         if entry and not entry.name then
-                            entry.name = actor.displayName or actor.nome
+                            entry.name = ResolveFullNameByGuid(actor.serial)
+                                      or actor.displayName
+                                      or actor.nome
                         end
                         StoreNameIlvl(actor.displayName, ilvl)
                         StoreNameIlvl(actor.nome, ilvl)
@@ -2110,6 +2166,25 @@ Details_iLvlDisplayAPI = {
             for guid, cached in pairs(ilvlCache) do
                 if cached.name and Ambiguate(cached.name, "none") == cleanName then
                     return guid
+                end
+            end
+            -- Cross-realm asymmetry: input is "Name-Realm" but cached.name
+            -- may be bare "Name" (legacy [DETAILS]-source entries written
+            -- before the realm-enrichment fix, or post-disband entries we
+            -- couldn't enrich because the player was not in the roster at
+            -- write time). Strip realm from input, retry as last resort.
+            -- Same-name on different realms collides — for historical
+            -- BlizzDM view we accept this fuzzy match (better a tag than
+            -- no tag for a frame that is no longer in the live roster).
+            local inputBare = cleanName:match("^([^%-]+)")
+            if inputBare and inputBare ~= cleanName then
+                for guid, cached in pairs(ilvlCache) do
+                    if cached.name then
+                        local cachedBare = Ambiguate(cached.name, "none"):match("^([^%-]+)")
+                        if cachedBare == inputBare then
+                            return guid
+                        end
+                    end
                 end
             end
         end
