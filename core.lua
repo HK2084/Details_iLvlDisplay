@@ -1,51 +1,12 @@
-local addonName = ...
-local addonVersion = C_AddOns.GetAddOnMetadata(addonName, "Version") or "?"
+local addonName, ns = ...
+local addonVersion = ns.version
 
-local defaults = {
-    enabled = true,
-    colorIlvl = true,
-    showSetBonus = true,
-    showInDetails = true,  -- show iLvl on Details! bars (requires Details!)
-    elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
-    grid2Status = false,   -- show iLvl in Grid2 raid frames via "dilvl" status (opt-in, requires Grid2)
-    dandersText = false,   -- show iLvl on Danders Frames as overlay FontString (opt-in, requires Danders Frames)
-    dandersPos = "topright", -- one of POS_KEYS_SET below; live-set via /dilvl danders pos <opt>
-    dandersFontSize = 10,  -- reserved for future /dilvl danders fontsize cmd; danders_integration reads this
-    layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
-    ilvlPosition = "right", -- "right" (after name) or "left" (between rank and name)
-    -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
-    --          true/false = user override via /dilvl blizzdm
-}
-
--- Valid Danders position keys (mirror of POS in danders_integration.lua —
--- duplicated here so the slash-command can validate without load-order coupling).
-local POS_KEYS_SET = {
-    top = true, topright = true, topleft = true,
-    bottom = true, bottomright = true, bottomleft = true,
-    center = true,
-}
-
--- Login hint registry. Every new user-facing feature must add an entry here
--- so existing users notice it on next login. Each hint fires once per
--- character (flag stored as `seenHint_<key>` in SavedVariables) and is
--- staggered 4s apart starting 8s post-login, so a fresh install with
--- multiple unseen hints doesn't spam the chat frame in one tick.
---
--- Order = newest-first. Add new entries on top.
--- `gate` is optional: when present, the hint is silently skipped (without
--- consuming the seen flag) on clients where the dependency is missing,
--- so a user installing ElvUI later still gets the ElvUI-specific hint.
-local LOGIN_HINTS = {
-    {
-        key  = "elvuiplain",                                -- v1.4.3
-        gate = function() return ElvUI ~= nil end,
-        msg  = "[dilvl:plain] ElvUI tag — bare iLvl number without brackets, e.g. \"Raza 284\" instead of \"Raza [284]\". Use in any ElvUI Custom Text.",
-    },
-    {
-        key = "position",                                   -- v1.3.5
-        msg = "/dilvl position — place iLvl before or after player name.",
-    },
-}
+-- Defaults, position-key allowlist, and login-hint registry live in init.lua
+-- (ns.* tables). Core reads them via locals so existing references stay
+-- unchanged. Add new defaults / hints / position keys in init.lua.
+local defaults      = ns.defaults
+local POS_KEYS_SET  = ns.POS_KEYS_SET
+local LOGIN_HINTS   = ns.LOGIN_HINTS
 
 local db
 

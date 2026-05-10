@@ -7,6 +7,7 @@
 ## OptionalDeps: Details, QuickItemLevel, ElvUI, LibOpenRaid-1.0, Blizzard_DamageMeter, Grid2, DandersFrames
 ## SavedVariables: Details_iLvlDisplayDB
 
+init.lua
 core.lua
 elvui_tags.lua
 grid2_status.lua
