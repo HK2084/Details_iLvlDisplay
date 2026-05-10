@@ -1438,6 +1438,13 @@ SlashCmdList["DILVL"] = function(msg)
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
         print("=== Details! iLvl Display v" .. addonVersion .. " — Bug Report ===")
+        -- Sub-module load state. If any of these say "MISSING", the TOC is
+        -- stale or a sub-file failed to load — pasted bug reports surface
+        -- the issue immediately instead of looking like a runtime bug.
+        print(string.format("  Modules: init=%s  secrets=%s  util=%s",
+            ns.addonName and "ok" or "MISSING",
+            (ns.secrets and ns.secrets.SafeUnitName) and "ok" or "MISSING",
+            (ns.util and ns.util.GetIlvlColor) and "ok" or "MISSING"))
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         local blizzDMState = db.blizzDM == nil and ("AUTO(" .. (Details and "off" or "on") .. ")") or (db.blizzDM and "ON" or "OFF")
         print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s  BlizzDM: %s  Layout: %s  Position: %s",
