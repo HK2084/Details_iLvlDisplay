@@ -9,6 +9,7 @@
 
 init.lua
 secrets.lua
+util.lua
 core.lua
 elvui_tags.lua
 grid2_status.lua

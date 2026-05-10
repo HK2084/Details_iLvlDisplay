@@ -150,77 +150,15 @@ local function ResolveFullNameByGuid(guid)
 end
 
 ---------------------------------------------------------------
--- iLvl color by gear tier
+-- Pure helpers (color/tier/extract) live in util.lua.
+-- Shadow-locals so call sites stay short. Add new helpers to ns.util
+-- in util.lua — not inline here.
 ---------------------------------------------------------------
-local function GetIlvlColor(ilvl)
-    if ilvl >= 280 then return "|cFFFF8000"
-    elseif ilvl >= 268 then return "|cFFA335EE"
-    elseif ilvl >= 255 then return "|cFF0070DD"
-    elseif ilvl >= 242 then return "|cFF1EFF00"
-    else return "|cFF9D9D9D"
-    end
-end
-
----------------------------------------------------------------
--- Set bonus detection for an inspected unit
--- Reads item links from all equipment slots, counts pieces per setID.
--- Returns "4P", "2P", or nil.
--- Must be called synchronously during INSPECT_READY while data is loaded.
----------------------------------------------------------------
--- Only the 5 slots that can physically hold tier pieces.
--- Checking all 16 slots causes false positives because rings, trinkets,
--- weapons, cloaks etc. can also have non-zero setIDs in Midnight (cosmetic
--- sets, crafted item families). Tier bonuses are exclusively Head/Shoulder/
--- Chest/Legs/Hands — restricting to these 5 slots eliminates false positives.
-local TIER_SLOTS = {1, 3, 5, 7, 10} -- Head, Shoulder, Chest, Legs, Hands
-
--- Midnight Season 1 tier setIDs per class (confirmed in-game via item tooltip).
--- GetSetBonusText() was removed in 12.0 — hardcoded whitelist replaces it.
--- Update this table when a new raid tier is added.
--- PvP gear (honor/conquest) has its own setIDs outside this range — whitelist
--- approach means they are automatically ignored regardless of their setID values.
-local MIDNIGHT_TIER_SETS = {
-    [1978] = true, -- Death Knight   (Relentless Rider's Lament)
-    [1979] = true, -- Demon Hunter   (Devouring Reaver's Sheathe)
-    [1980] = true, -- Druid          (Sprouts of the Luminous Bloom)
-    [1981] = true, -- Evoker         (Livery of the Black Talon)
-    [1982] = true, -- Hunter         (Primal Sentry's Camouflage)
-    [1983] = true, -- Mage           (Voidbreaker's Accordance)
-    [1984] = true, -- Monk           (Way of Ra-den's Chosen)
-    [1985] = true, -- Paladin        (Luminant Verdict's Vestments)
-    [1986] = true, -- Priest         (Blind Oath's Burden)
-    [1987] = true, -- Rogue          (Motley of the Grim Jest)
-    [1988] = true, -- Shaman         (Mantle of the Primal Core) ← confirmed
-    [1989] = true, -- Warlock        (Reign of the Abyssal Immolator)
-    [1990] = true, -- Warrior        (Rage of the Night Ender)
-}
-
-local function GetSetBonusForUnit(unit)
-    local setPieces = {} -- setID -> count
-
-    for _, slotID in ipairs(TIER_SLOTS) do
-        -- GetInventoryItemID returns itemID directly as a number — no link
-        -- parsing needed, immune to item link format changes.
-        local itemID = GetInventoryItemID(unit, slotID)
-        if itemID and itemID > 0 then
-            -- C_Item.GetItemInfo returns 18 values; setID is at position 16.
-            local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
-            if ok and setID and MIDNIGHT_TIER_SETS[setID] then
-                setPieces[setID] = (setPieces[setID] or 0) + 1
-            end
-        end
-    end
-
-    local best = 0
-    for _, count in pairs(setPieces) do
-        if count > best then best = count end
-    end
-
-    if best >= 4 then return "4P"
-    elseif best >= 2 then return "2P"
-    end
-    return nil
-end
+local util               = ns.util
+local GetIlvlColor       = util.GetIlvlColor
+local GetSetBonusForUnit = util.GetSetBonusForUnit
+local TIER_SLOTS         = util.TIER_SLOTS
+local MIDNIGHT_TIER_SETS = util.MIDNIGHT_TIER_SETS
 
 ---------------------------------------------------------------
 -- iLvl lookup by GUID
@@ -392,19 +330,7 @@ end
 ---------------------------------------------------------------
 -- Extract player name from text like "1. Quinroth"
 ---------------------------------------------------------------
-local function ExtractName(text)
-    if not text or type(text) ~= "string" then return nil end
-    -- Strip rank prefix "1. " etc
-    local name = text:match("^%d+%.%s*(.+)") or text
-    -- Strip any existing ilvl tag
-    name = name:gsub("%s*|c%x+%[%d+%]|r", "")
-    name = name:gsub("%s*%[%d+%]", "")
-    -- Strip inline textures (role icons etc)
-    name = name:gsub("|T.-|t%s*", "")
-    -- Trim
-    name = name:match("^%s*(.-)%s*$")
-    return name
-end
+local ExtractName = util.ExtractName  -- defined in util.lua (ns.util)
 
 ---------------------------------------------------------------
 -- Build the iLvl tag string for a given player name
