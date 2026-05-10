@@ -8,6 +8,7 @@
 ## SavedVariables: Details_iLvlDisplayDB
 
 init.lua
+secrets.lua
 core.lua
 elvui_tags.lua
 grid2_status.lua

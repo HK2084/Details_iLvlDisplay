@@ -81,74 +81,18 @@ local COL_TIER_WIDTH = 28   -- px max text width for tier column (truncation thr
 local MIN_NAME_WIDTH = 50   -- px minimum for player name before hiding columns
 
 ---------------------------------------------------------------
--- Secret value guard (WoW 12.0+)
--- issecretvalue() / issecrettable() are Blizzard globals that
--- return true for tainted values that crash on string ops.
--- Check BEFORE touching the value — avoids the pcall entirely.
+-- Secret-value defense layer (WoW 12.0+) lives in secrets.lua.
+-- Shadow-locals so the call sites below don't need to know about ns.
+-- Add new guards to ns.secrets in secrets.lua — not inline here.
 ---------------------------------------------------------------
-local function isSecretValue(val)
-    if issecretvalue and issecretvalue(val) then return true end
-    if issecrettable and issecrettable(val) then return true end
-    return false
-end
-
--- Batch guard: true if ANY arg in the varargs is secret (#15)
-local _hasanysecretvalues = hasanysecretvalues or function() return false end
-
--- Safe UnitIsUnit wrapper (12.0.5+: UnitIsUnit requires CanCompareUnitTokens guard).
--- Returns true/false, never a secret value. nil when comparison is blocked.
-local CanCompareUnitTokens = C_Secrets and C_Secrets.CanCompareUnitTokens
-local secretStats = {unitNameBlocked = 0, unitIsUnitBlocked = 0}
-local function SafeUnitIsUnit(unit1, unit2)
-    if CanCompareUnitTokens then
-        if not CanCompareUnitTokens(unit1, unit2) then
-            secretStats.unitIsUnitBlocked = secretStats.unitIsUnitBlocked + 1
-            return nil
-        end
-        return not not UnitIsUnit(unit1, unit2)
-    end
-    -- Pre-12.0.5 fallback: pcall to catch secret errors
-    local ok, result = pcall(UnitIsUnit, unit1, unit2)
-    if not ok then
-        secretStats.unitIsUnitBlocked = secretStats.unitIsUnitBlocked + 1
-        return nil
-    end
-    return not not result
-end
-
--- Safe UnitName wrapper (12.0.5+: UnitName may become AllowedWhenUntainted).
--- Returns name, realm or nil, nil when blocked by secrets.
-local function SafeUnitName(unit)
-    local name, realm = UnitName(unit)
-    if name and isSecretValue(name) then
-        secretStats.unitNameBlocked = secretStats.unitNameBlocked + 1
-        return nil, nil
-    end
-    if realm and isSecretValue(realm) then realm = nil end
-    return name, realm
-end
-
----------------------------------------------------------------
--- Safe InCombatLockdown wrapper (WoW 12.0+)
--- Inside instances, InCombatLockdown() can return a secret value.
--- A secret-wrapped false is truthy in Lua (userdata, not nil/false),
--- so raw `if InCombatLockdown() then` is ALWAYS true when secret.
--- This wrapper treats secret returns as "not in combat" — safe for
--- addon logic (inspect queue, refresh, measurement). For protected
--- frame operations (lineText1:SetSize), use MayBeInCombat() instead.
----------------------------------------------------------------
-local function IsInCombatSafe()
-    local v = InCombatLockdown()
-    if isSecretValue(v) then return false end
-    return v
-end
-
--- Strict version: treats secret as "in combat" — use for protected frames only
-local function MayBeInCombat()
-    local v = InCombatLockdown()
-    if isSecretValue(v) then return true end
-    return v
-end
+local secrets             = ns.secrets
+local isSecretValue       = secrets.isSecretValue
+local _hasanysecretvalues = secrets._hasanysecretvalues
+local SafeUnitIsUnit      = secrets.SafeUnitIsUnit
+local SafeUnitName        = secrets.SafeUnitName
+local IsInCombatSafe      = secrets.IsInCombatSafe
+local MayBeInCombat       = secrets.MayBeInCombat
+local secretStats         = secrets.stats
 
 ---------------------------------------------------------------
 -- Group info helper (handles normal party/raid + LFR/LFD)
