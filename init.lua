@@ -29,7 +29,7 @@ ns.defaults = {
     grid2Status = false,   -- show iLvl in Grid2 raid frames via "dilvl" status (opt-in, requires Grid2)
     dandersText = false,   -- show iLvl on Danders Frames as overlay FontString (opt-in, requires Danders Frames)
     dandersPos = "topright", -- one of ns.POS_KEYS_SET below; live-set via /dilvl danders pos <opt>
-    dandersFontSize = 10,  -- reserved for future /dilvl danders fontsize cmd; danders_integration reads this
+    dandersFontSize = 10,  -- live-set via /dilvl danders size <n>; clamped to [6, 30] at the slash boundary
     layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
     ilvlPosition = "right", -- "right" (after name) or "left" (between rank and name)
     -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
@@ -39,9 +39,14 @@ ns.defaults = {
 -- Valid Danders position keys. Mirror of POS in danders_integration.lua —
 -- duplicated so the slash-command can validate without load-order coupling.
 ns.POS_KEYS_SET = {
+    -- inside-frame
     top = true, topright = true, topleft = true,
     bottom = true, bottomright = true, bottomleft = true,
     center = true,
+    -- off-frame (text floats outside bounding box, useful when inside
+    -- overlaps the unit's name/HP at larger font sizes)
+    above = true, aboveleft = true, aboveright = true,
+    below = true, belowleft = true, belowright = true,
 }
 
 -- Login hint registry. Every new user-facing feature must add an entry here
@@ -55,6 +60,16 @@ ns.POS_KEYS_SET = {
 -- consuming the seen flag) on clients where the dependency is missing,
 -- so a user installing ElvUI later still gets the ElvUI-specific hint.
 ns.LOGIN_HINTS = {
+    {
+        key  = "dandersposoff",                             -- v1.4.4
+        gate = function() return DandersFrames_IsReady ~= nil end,
+        msg  = "/dilvl danders pos above|below (also aboveleft/aboveright/belowleft/belowright) — text floats OUTSIDE the frame so it doesn't overlap the unit's name. Inside positions (top/topright/...) still available.",
+    },
+    {
+        key  = "danderssize",                               -- v1.4.4
+        gate = function() return DandersFrames_IsReady ~= nil end,
+        msg  = "/dilvl danders size <n> — adjust iLvl text size on Danders Frames (default 10, range 6-30). Live update, no /reload.",
+    },
     {
         key  = "elvuiplain",                                -- v1.4.3
         gate = function() return ElvUI ~= nil end,

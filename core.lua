@@ -54,8 +54,16 @@ local cachedColLayout = nil -- cached {leftA, leftW, secA, secW, gap, yOff} from
 -- master switch (db.enabled) and other integrations (BlizzDM, ElvUI,
 -- Grid2, Danders) are NOT affected — a Details! hook bug must not take
 -- down the user's working overlays elsewhere.
-local hookErrors = 0
-local HOOK_ERROR_LIMIT = 5
+--
+-- Per-feature isolation: this counter is SCOPED to Details!-bar hooks
+-- only. Other integrations carry their own per-feature counters and
+-- never share state with this one:
+--   - blizzdm.lua          BlizzDM:* error counter         → db.blizzDM
+--   - danders_integration  STATE.dandersErrors             → db.dandersText
+--   - ElvUI / Grid2        _callbackErrors[name] below     → per-callback unregister
+-- A bug in one feature can never auto-disable another.
+local detailsBarErrors     = 0
+local DETAILS_BAR_ERROR_LIMIT = 5
 
 -- Per-callback fault isolation (forward-declared so /dilvl debug at
 -- line ~1561 can read them). Used by NotifyElvUI further down.
@@ -63,11 +71,11 @@ local CALLBACK_ERROR_LIMIT = 5
 local _callbackErrors = {}      -- name -> consecutive error count
 local _callbackErrorLogged = {} -- name -> bool (logged-once flag)
 local function SafeCall(fn, ...)
-    if hookErrors >= HOOK_ERROR_LIMIT then return end
+    if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
     local ok, err = pcall(fn, ...)
     if not ok then
-        hookErrors = hookErrors + 1
-        if hookErrors >= HOOK_ERROR_LIMIT then
+        detailsBarErrors = detailsBarErrors + 1
+        if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then
             if db then db.showInDetails = false end
             -- Route through WoW's error handler → BugSack picks it up (#13)
             geterrorhandler()("Details! iLvl Display: too many Details!-bar hook errors — Details!-bars auto-disabled. Recovery: /dilvl details. Other integrations still active. Last error: " .. tostring(err))
@@ -79,6 +87,11 @@ end
 local COL_ILVL_WIDTH = 36   -- px max text width for iLvl column (truncation threshold)
 local COL_TIER_WIDTH = 28   -- px max text width for tier column (truncation threshold)
 local MIN_NAME_WIDTH = 50   -- px minimum for player name before hiding columns
+
+-- Danders font-size bounds. Clamped at the slash boundary so the
+-- integration's applyFontSizeToAll always gets a sane value.
+local DANDERS_FONT_MIN = 6
+local DANDERS_FONT_MAX = 30
 
 ---------------------------------------------------------------
 -- Secret-value defense layer (WoW 12.0+) lives in secrets.lua.
@@ -680,7 +693,7 @@ local function HookBarTextIfNeeded(bar)
     hooksecurefunc(fontString, "SetText", function(self, text)
         if isOurSetText then return end
         if not db or not db.enabled then return end
-        if hookErrors >= HOOK_ERROR_LIMIT then return end
+        if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
         SafeCall(function()
             -- Details! Itemlevelfinder passes "secret string" values to SetText.
             -- Per-field guard: check the value, skip if tainted. No pcall needed.
@@ -1371,7 +1384,7 @@ SlashCmdList["DILVL"] = function(msg)
             -- 5-error budget after toggling back on. Otherwise a prior
             -- auto-disable would remain at 5/5 and re-trip on the very
             -- next error.
-            hookErrors = 0
+            detailsBarErrors = 0
             RefreshAllBarTexts()
         end
         print("|cFF00FF00Details! iLvl Display:|r Details bars " .. (db.showInDetails and "ON" or "OFF"))
@@ -1496,10 +1509,12 @@ SlashCmdList["DILVL"] = function(msg)
         print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  Details!-HookErrors: %d/%d",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
             openRaidLib and "active" or "n/a",
-            hookErrors, HOOK_ERROR_LIMIT))
-        print(string.format("  SecretAPI: CanCompareUnitTokens=%s  UnitNameBlocked: %d  UnitIsUnitBlocked: %d",
-            CanCompareUnitTokens and "yes" or "no",
-            secretStats.unitNameBlocked, secretStats.unitIsUnitBlocked))
+            detailsBarErrors, DETAILS_BAR_ERROR_LIMIT))
+        print(string.format("  SecretAPI: CanCompareUnitTokens=%s  UnitNameBlocked: %d  UnitNameRejected: %d  UnitIsUnitBlocked: %d",
+            (C_Secrets and C_Secrets.CanCompareUnitTokens) and "yes" or "no",
+            secretStats.unitNameBlocked,
+            secretStats.unitNameRejected or 0,
+            secretStats.unitIsUnitBlocked))
         -- Per-callback error counters (one row per registered callback).
         -- Empty if all callbacks healthy; lists names + counts when not.
         local cbErrSummary = {}
@@ -1861,7 +1876,29 @@ SlashCmdList["DILVL"] = function(msg)
             print("|cFF00FF00Details! iLvl Display:|r Danders position: " .. arg)
         else
             print("|cFF00FF00Details! iLvl Display:|r Current Danders position: " .. (db.dandersPos or "topright"))
-            print("  Options: top, topright, topleft, bottom, bottomright, bottomleft, center")
+            print("  Inside:    top, topright, topleft, bottom, bottomright, bottomleft, center")
+            print("  Off-frame: above, aboveleft, aboveright, below, belowleft, belowright")
+        end
+
+    elseif msg:match("^danders size") then
+        local arg = msg:match("^danders size%s+(%S+)")
+        local n = arg and tonumber(arg)
+        if n and n >= DANDERS_FONT_MIN and n <= DANDERS_FONT_MAX then
+            n = math.floor(n)
+            db.dandersFontSize = n
+            local applied = 0
+            if Details_iLvlDisplay_DandersApplyFontSize then
+                applied = Details_iLvlDisplay_DandersApplyFontSize(n) or 0
+            end
+            print(string.format("|cFF00FF00Details! iLvl Display:|r Danders text size: %d", n))
+            if applied == 0 then
+                print("  No visible Danders frames yet — setting saved, will apply on next refresh.")
+            end
+        else
+            local cur = db.dandersFontSize or 10
+            print(string.format("|cFF00FF00Details! iLvl Display:|r Current Danders text size: %d (range %d-%d)",
+                cur, DANDERS_FONT_MIN, DANDERS_FONT_MAX))
+            print(string.format("  Usage: /dilvl danders size <%d-%d>", DANDERS_FONT_MIN, DANDERS_FONT_MAX))
         end
 
     elseif msg == "blizzdm" then
@@ -1943,7 +1980,10 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
         print("  /dilvl grid2 on|off    — Toggle iLvl status in Grid2 raid frames")
         print("  /dilvl danders on|off  — Toggle iLvl overlay on Danders Frames")
-        print("  /dilvl danders pos <opt> — Danders text position (top/topright/...)")
+        print("  /dilvl danders pos <opt> — Danders text position (live, no /reload)")
+        print("      inside:    top, topright, topleft, bottom, bottomright, bottomleft, center")
+        print("      off-frame: above, aboveleft, aboveright, below, belowleft, belowright")
+        print("  /dilvl danders size <n>  — Danders text size (6-30, live)")
         print("  /dilvl blizzdm         — Toggle iLvl on Blizzard Damage Meter")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
@@ -2049,6 +2089,13 @@ Details_iLvlDisplayAPI = {
         _callbackErrors[name] = nil
         _callbackErrorLogged[name] = nil
     end,
+    -- Secret-value defense surface (#26). Sub-files used to duplicate
+    -- these guards locally — blizzdm.lua now reads them from here so
+    -- the pcall hardening from secrets.lua applies consistently.
+    SafeUnitName    = SafeUnitName,
+    SafeUnitIsUnit  = SafeUnitIsUnit,
+    isSecretValue   = isSecretValue,
+    hasanysecretvalues = _hasanysecretvalues,
 }
 
 -- Internal helper — call once after any cache write that should update UI.
