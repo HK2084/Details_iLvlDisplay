@@ -10,20 +10,32 @@
 -- (core's locals shadow ns.secrets.X to keep the inline call sites short).
 --
 -- WHAT'S INTENTIONALLY NOT HERE:
--- - SafeCall + hookErrors counter — those wrap Details!-bar hooks, the
+-- - SafeCall + detailsBarErrors counter — wraps Details!-bar hooks, the
 --   counter mutates `db.showInDetails`, so the function lives next to its
---   callers in core.lua. A future per-feature SafeCall refactor will
---   generalize that pattern; this file stays free of feature-specific
---   kill-switch state.
--- - blizzdm.lua's local `isSecret` / `_hasanysecretvalues` duplicates —
---   Issue #26 will migrate those callers to use ns.secrets.* directly.
+--   callers in core.lua. Other features (BlizzDM, Danders, ElvUI/Grid2
+--   callbacks) carry their own per-feature counters in their own files,
+--   so this file stays free of feature-specific kill-switch state.
+--
+-- 12.0.7 NOTE (Build 67227, scheduled 2026-06-16):
+--   Four Preconditions changed FailureMode from ReturnNothing to
+--   ReturnWithError:
+--     - RequiresDeclassifiedUnitIdentity     (UnitName, UnitGUID, etc.)
+--     - RequiresScriptObjectAlphaAccess
+--     - RequiresScriptObjectDesaturationAccess
+--     - RequiresStatusBarDesaturationAccess
+--   Our SafeUnitName + SafeUnitIsUnit pcall-wrap both paths so the
+--   addon stays alive whether the API returns secrets, returns nothing,
+--   or hard-errors. No callsite change required.
 
 local _, ns = ...
 local S = ns.secrets
 
--- Per-call counters surfaced in /dilvl debug. core.lua reads
--- secretStats.unitNameBlocked + secretStats.unitIsUnitBlocked.
-S.stats = { unitNameBlocked = 0, unitIsUnitBlocked = 0 }
+-- Per-call counters surfaced in /dilvl debug. core.lua reads these.
+--   unitNameBlocked    -> SafeUnitName saw a secret-wrapped return
+--   unitNameRejected   -> SafeUnitName's pcall caught a hard error (#26)
+--   unitIsUnitBlocked  -> SafeUnitIsUnit refused via CanCompareUnitTokens
+--                         OR caught a hard error from pcall fallback
+S.stats = { unitNameBlocked = 0, unitNameRejected = 0, unitIsUnitBlocked = 0 }
 
 ----------------------------------------------------------------
 -- Secret value guard (WoW 12.0+)
@@ -71,15 +83,18 @@ end
 ----------------------------------------------------------------
 -- Safe UnitName wrapper (12.0.5+: UnitName.SecretArguments has
 -- flip-flopped between AllowedWhenTainted and AllowedWhenUntainted across
--- builds — most recent flip was 67235 rolling back 67186's hard-reject).
--- Returns name, realm or nil, nil when blocked by secrets.
---
--- NOTE: this guards against secret RETURNS only. Callers that may run
--- from tainted execution context should additionally pcall the function
--- — Issue #26 tracks the blizzdm.lua hardening.
+-- builds — 67186 introduced hard-reject, 67235 rolled it back, 12.0.7
+-- 67227 keeps AllowedWhenTainted but flips the precondition FailureMode
+-- to ReturnWithError. pcall handles all three paths.
+-- Returns name, realm or nil, nil when blocked by secrets OR when the
+-- call is hard-rejected from a tainted execution context (#26).
 ----------------------------------------------------------------
 function S.SafeUnitName(unit)
-    local name, realm = UnitName(unit)
+    local ok, name, realm = pcall(UnitName, unit)
+    if not ok then
+        S.stats.unitNameRejected = S.stats.unitNameRejected + 1
+        return nil, nil
+    end
     if name and S.isSecretValue(name) then
         S.stats.unitNameBlocked = S.stats.unitNameBlocked + 1
         return nil, nil
