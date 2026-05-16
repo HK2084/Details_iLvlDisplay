@@ -1,51 +1,12 @@
-local addonName = ...
-local addonVersion = C_AddOns.GetAddOnMetadata(addonName, "Version") or "?"
+local addonName, ns = ...
+local addonVersion = ns.version
 
-local defaults = {
-    enabled = true,
-    colorIlvl = true,
-    showSetBonus = true,
-    showInDetails = true,  -- show iLvl on Details! bars (requires Details!)
-    elvuiTag = false,      -- show iLvl in ElvUI party frames (opt-in, requires ElvUI)
-    grid2Status = false,   -- show iLvl in Grid2 raid frames via "dilvl" status (opt-in, requires Grid2)
-    dandersText = false,   -- show iLvl on Danders Frames as overlay FontString (opt-in, requires Danders Frames)
-    dandersPos = "topright", -- one of POS_KEYS_SET below; live-set via /dilvl danders pos <opt>
-    dandersFontSize = 10,  -- reserved for future /dilvl danders fontsize cmd; danders_integration reads this
-    layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
-    ilvlPosition = "right", -- "right" (after name) or "left" (between rank and name)
-    -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
-    --          true/false = user override via /dilvl blizzdm
-}
-
--- Valid Danders position keys (mirror of POS in danders_integration.lua —
--- duplicated here so the slash-command can validate without load-order coupling).
-local POS_KEYS_SET = {
-    top = true, topright = true, topleft = true,
-    bottom = true, bottomright = true, bottomleft = true,
-    center = true,
-}
-
--- Login hint registry. Every new user-facing feature must add an entry here
--- so existing users notice it on next login. Each hint fires once per
--- character (flag stored as `seenHint_<key>` in SavedVariables) and is
--- staggered 4s apart starting 8s post-login, so a fresh install with
--- multiple unseen hints doesn't spam the chat frame in one tick.
---
--- Order = newest-first. Add new entries on top.
--- `gate` is optional: when present, the hint is silently skipped (without
--- consuming the seen flag) on clients where the dependency is missing,
--- so a user installing ElvUI later still gets the ElvUI-specific hint.
-local LOGIN_HINTS = {
-    {
-        key  = "elvuiplain",                                -- v1.4.3
-        gate = function() return ElvUI ~= nil end,
-        msg  = "[dilvl:plain] ElvUI tag — bare iLvl number without brackets, e.g. \"Raza 284\" instead of \"Raza [284]\". Use in any ElvUI Custom Text.",
-    },
-    {
-        key = "position",                                   -- v1.3.5
-        msg = "/dilvl position — place iLvl before or after player name.",
-    },
-}
+-- Defaults, position-key allowlist, and login-hint registry live in init.lua
+-- (ns.* tables). Core reads them via locals so existing references stay
+-- unchanged. Add new defaults / hints / position keys in init.lua.
+local defaults      = ns.defaults
+local POS_KEYS_SET  = ns.POS_KEYS_SET
+local LOGIN_HINTS   = ns.LOGIN_HINTS
 
 local db
 
@@ -93,8 +54,16 @@ local cachedColLayout = nil -- cached {leftA, leftW, secA, secW, gap, yOff} from
 -- master switch (db.enabled) and other integrations (BlizzDM, ElvUI,
 -- Grid2, Danders) are NOT affected — a Details! hook bug must not take
 -- down the user's working overlays elsewhere.
-local hookErrors = 0
-local HOOK_ERROR_LIMIT = 5
+--
+-- Per-feature isolation: this counter is SCOPED to Details!-bar hooks
+-- only. Other integrations carry their own per-feature counters and
+-- never share state with this one:
+--   - blizzdm.lua          BlizzDM:* error counter         → db.blizzDM
+--   - danders_integration  STATE.dandersErrors             → db.dandersText
+--   - ElvUI / Grid2        _callbackErrors[name] below     → per-callback unregister
+-- A bug in one feature can never auto-disable another.
+local detailsBarErrors     = 0
+local DETAILS_BAR_ERROR_LIMIT = 5
 
 -- Per-callback fault isolation (forward-declared so /dilvl debug at
 -- line ~1561 can read them). Used by NotifyElvUI further down.
@@ -102,11 +71,11 @@ local CALLBACK_ERROR_LIMIT = 5
 local _callbackErrors = {}      -- name -> consecutive error count
 local _callbackErrorLogged = {} -- name -> bool (logged-once flag)
 local function SafeCall(fn, ...)
-    if hookErrors >= HOOK_ERROR_LIMIT then return end
+    if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
     local ok, err = pcall(fn, ...)
     if not ok then
-        hookErrors = hookErrors + 1
-        if hookErrors >= HOOK_ERROR_LIMIT then
+        detailsBarErrors = detailsBarErrors + 1
+        if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then
             if db then db.showInDetails = false end
             -- Route through WoW's error handler → BugSack picks it up (#13)
             geterrorhandler()("Details! iLvl Display: too many Details!-bar hook errors — Details!-bars auto-disabled. Recovery: /dilvl details. Other integrations still active. Last error: " .. tostring(err))
@@ -119,75 +88,24 @@ local COL_ILVL_WIDTH = 36   -- px max text width for iLvl column (truncation thr
 local COL_TIER_WIDTH = 28   -- px max text width for tier column (truncation threshold)
 local MIN_NAME_WIDTH = 50   -- px minimum for player name before hiding columns
 
----------------------------------------------------------------
--- Secret value guard (WoW 12.0+)
--- issecretvalue() / issecrettable() are Blizzard globals that
--- return true for tainted values that crash on string ops.
--- Check BEFORE touching the value — avoids the pcall entirely.
----------------------------------------------------------------
-local function isSecretValue(val)
-    if issecretvalue and issecretvalue(val) then return true end
-    if issecrettable and issecrettable(val) then return true end
-    return false
-end
-
--- Batch guard: true if ANY arg in the varargs is secret (#15)
-local _hasanysecretvalues = hasanysecretvalues or function() return false end
-
--- Safe UnitIsUnit wrapper (12.0.5+: UnitIsUnit requires CanCompareUnitTokens guard).
--- Returns true/false, never a secret value. nil when comparison is blocked.
-local CanCompareUnitTokens = C_Secrets and C_Secrets.CanCompareUnitTokens
-local secretStats = {unitNameBlocked = 0, unitIsUnitBlocked = 0}
-local function SafeUnitIsUnit(unit1, unit2)
-    if CanCompareUnitTokens then
-        if not CanCompareUnitTokens(unit1, unit2) then
-            secretStats.unitIsUnitBlocked = secretStats.unitIsUnitBlocked + 1
-            return nil
-        end
-        return not not UnitIsUnit(unit1, unit2)
-    end
-    -- Pre-12.0.5 fallback: pcall to catch secret errors
-    local ok, result = pcall(UnitIsUnit, unit1, unit2)
-    if not ok then
-        secretStats.unitIsUnitBlocked = secretStats.unitIsUnitBlocked + 1
-        return nil
-    end
-    return not not result
-end
-
--- Safe UnitName wrapper (12.0.5+: UnitName may become AllowedWhenUntainted).
--- Returns name, realm or nil, nil when blocked by secrets.
-local function SafeUnitName(unit)
-    local name, realm = UnitName(unit)
-    if name and isSecretValue(name) then
-        secretStats.unitNameBlocked = secretStats.unitNameBlocked + 1
-        return nil, nil
-    end
-    if realm and isSecretValue(realm) then realm = nil end
-    return name, realm
-end
+-- Danders font-size bounds. Clamped at the slash boundary so the
+-- integration's applyFontSizeToAll always gets a sane value.
+local DANDERS_FONT_MIN = 6
+local DANDERS_FONT_MAX = 30
 
 ---------------------------------------------------------------
--- Safe InCombatLockdown wrapper (WoW 12.0+)
--- Inside instances, InCombatLockdown() can return a secret value.
--- A secret-wrapped false is truthy in Lua (userdata, not nil/false),
--- so raw `if InCombatLockdown() then` is ALWAYS true when secret.
--- This wrapper treats secret returns as "not in combat" — safe for
--- addon logic (inspect queue, refresh, measurement). For protected
--- frame operations (lineText1:SetSize), use MayBeInCombat() instead.
+-- Secret-value defense layer (WoW 12.0+) lives in secrets.lua.
+-- Shadow-locals so the call sites below don't need to know about ns.
+-- Add new guards to ns.secrets in secrets.lua — not inline here.
 ---------------------------------------------------------------
-local function IsInCombatSafe()
-    local v = InCombatLockdown()
-    if isSecretValue(v) then return false end
-    return v
-end
-
--- Strict version: treats secret as "in combat" — use for protected frames only
-local function MayBeInCombat()
-    local v = InCombatLockdown()
-    if isSecretValue(v) then return true end
-    return v
-end
+local secrets             = ns.secrets
+local isSecretValue       = secrets.isSecretValue
+local _hasanysecretvalues = secrets._hasanysecretvalues
+local SafeUnitIsUnit      = secrets.SafeUnitIsUnit
+local SafeUnitName        = secrets.SafeUnitName
+local IsInCombatSafe      = secrets.IsInCombatSafe
+local MayBeInCombat       = secrets.MayBeInCombat
+local secretStats         = secrets.stats
 
 ---------------------------------------------------------------
 -- Group info helper (handles normal party/raid + LFR/LFD)
@@ -245,77 +163,15 @@ local function ResolveFullNameByGuid(guid)
 end
 
 ---------------------------------------------------------------
--- iLvl color by gear tier
+-- Pure helpers (color/tier/extract) live in util.lua.
+-- Shadow-locals so call sites stay short. Add new helpers to ns.util
+-- in util.lua — not inline here.
 ---------------------------------------------------------------
-local function GetIlvlColor(ilvl)
-    if ilvl >= 280 then return "|cFFFF8000"
-    elseif ilvl >= 268 then return "|cFFA335EE"
-    elseif ilvl >= 255 then return "|cFF0070DD"
-    elseif ilvl >= 242 then return "|cFF1EFF00"
-    else return "|cFF9D9D9D"
-    end
-end
-
----------------------------------------------------------------
--- Set bonus detection for an inspected unit
--- Reads item links from all equipment slots, counts pieces per setID.
--- Returns "4P", "2P", or nil.
--- Must be called synchronously during INSPECT_READY while data is loaded.
----------------------------------------------------------------
--- Only the 5 slots that can physically hold tier pieces.
--- Checking all 16 slots causes false positives because rings, trinkets,
--- weapons, cloaks etc. can also have non-zero setIDs in Midnight (cosmetic
--- sets, crafted item families). Tier bonuses are exclusively Head/Shoulder/
--- Chest/Legs/Hands — restricting to these 5 slots eliminates false positives.
-local TIER_SLOTS = {1, 3, 5, 7, 10} -- Head, Shoulder, Chest, Legs, Hands
-
--- Midnight Season 1 tier setIDs per class (confirmed in-game via item tooltip).
--- GetSetBonusText() was removed in 12.0 — hardcoded whitelist replaces it.
--- Update this table when a new raid tier is added.
--- PvP gear (honor/conquest) has its own setIDs outside this range — whitelist
--- approach means they are automatically ignored regardless of their setID values.
-local MIDNIGHT_TIER_SETS = {
-    [1978] = true, -- Death Knight   (Relentless Rider's Lament)
-    [1979] = true, -- Demon Hunter   (Devouring Reaver's Sheathe)
-    [1980] = true, -- Druid          (Sprouts of the Luminous Bloom)
-    [1981] = true, -- Evoker         (Livery of the Black Talon)
-    [1982] = true, -- Hunter         (Primal Sentry's Camouflage)
-    [1983] = true, -- Mage           (Voidbreaker's Accordance)
-    [1984] = true, -- Monk           (Way of Ra-den's Chosen)
-    [1985] = true, -- Paladin        (Luminant Verdict's Vestments)
-    [1986] = true, -- Priest         (Blind Oath's Burden)
-    [1987] = true, -- Rogue          (Motley of the Grim Jest)
-    [1988] = true, -- Shaman         (Mantle of the Primal Core) ← confirmed
-    [1989] = true, -- Warlock        (Reign of the Abyssal Immolator)
-    [1990] = true, -- Warrior        (Rage of the Night Ender)
-}
-
-local function GetSetBonusForUnit(unit)
-    local setPieces = {} -- setID -> count
-
-    for _, slotID in ipairs(TIER_SLOTS) do
-        -- GetInventoryItemID returns itemID directly as a number — no link
-        -- parsing needed, immune to item link format changes.
-        local itemID = GetInventoryItemID(unit, slotID)
-        if itemID and itemID > 0 then
-            -- C_Item.GetItemInfo returns 18 values; setID is at position 16.
-            local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
-            if ok and setID and MIDNIGHT_TIER_SETS[setID] then
-                setPieces[setID] = (setPieces[setID] or 0) + 1
-            end
-        end
-    end
-
-    local best = 0
-    for _, count in pairs(setPieces) do
-        if count > best then best = count end
-    end
-
-    if best >= 4 then return "4P"
-    elseif best >= 2 then return "2P"
-    end
-    return nil
-end
+local util               = ns.util
+local GetIlvlColor       = util.GetIlvlColor
+local GetSetBonusForUnit = util.GetSetBonusForUnit
+local TIER_SLOTS         = util.TIER_SLOTS
+local MIDNIGHT_TIER_SETS = util.MIDNIGHT_TIER_SETS
 
 ---------------------------------------------------------------
 -- iLvl lookup by GUID
@@ -487,19 +343,7 @@ end
 ---------------------------------------------------------------
 -- Extract player name from text like "1. Quinroth"
 ---------------------------------------------------------------
-local function ExtractName(text)
-    if not text or type(text) ~= "string" then return nil end
-    -- Strip rank prefix "1. " etc
-    local name = text:match("^%d+%.%s*(.+)") or text
-    -- Strip any existing ilvl tag
-    name = name:gsub("%s*|c%x+%[%d+%]|r", "")
-    name = name:gsub("%s*%[%d+%]", "")
-    -- Strip inline textures (role icons etc)
-    name = name:gsub("|T.-|t%s*", "")
-    -- Trim
-    name = name:match("^%s*(.-)%s*$")
-    return name
-end
+local ExtractName = util.ExtractName  -- defined in util.lua (ns.util)
 
 ---------------------------------------------------------------
 -- Build the iLvl tag string for a given player name
@@ -849,7 +693,7 @@ local function HookBarTextIfNeeded(bar)
     hooksecurefunc(fontString, "SetText", function(self, text)
         if isOurSetText then return end
         if not db or not db.enabled then return end
-        if hookErrors >= HOOK_ERROR_LIMIT then return end
+        if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
         SafeCall(function()
             -- Details! Itemlevelfinder passes "secret string" values to SetText.
             -- Per-field guard: check the value, skip if tainted. No pcall needed.
@@ -1540,7 +1384,7 @@ SlashCmdList["DILVL"] = function(msg)
             -- 5-error budget after toggling back on. Otherwise a prior
             -- auto-disable would remain at 5/5 and re-trip on the very
             -- next error.
-            hookErrors = 0
+            detailsBarErrors = 0
             RefreshAllBarTexts()
         end
         print("|cFF00FF00Details! iLvl Display:|r Details bars " .. (db.showInDetails and "ON" or "OFF"))
@@ -1607,6 +1451,13 @@ SlashCmdList["DILVL"] = function(msg)
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
         print("=== Details! iLvl Display v" .. addonVersion .. " — Bug Report ===")
+        -- Sub-module load state. If any of these say "MISSING", the TOC is
+        -- stale or a sub-file failed to load — pasted bug reports surface
+        -- the issue immediately instead of looking like a runtime bug.
+        print(string.format("  Modules: init=%s  secrets=%s  util=%s",
+            ns.addonName and "ok" or "MISSING",
+            (ns.secrets and ns.secrets.SafeUnitName) and "ok" or "MISSING",
+            (ns.util and ns.util.GetIlvlColor) and "ok" or "MISSING"))
         print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
         local blizzDMState = db.blizzDM == nil and ("AUTO(" .. (Details and "off" or "on") .. ")") or (db.blizzDM and "ON" or "OFF")
         print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s  BlizzDM: %s  Layout: %s  Position: %s",
@@ -1658,10 +1509,12 @@ SlashCmdList["DILVL"] = function(msg)
         print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  Details!-HookErrors: %d/%d",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
             openRaidLib and "active" or "n/a",
-            hookErrors, HOOK_ERROR_LIMIT))
-        print(string.format("  SecretAPI: CanCompareUnitTokens=%s  UnitNameBlocked: %d  UnitIsUnitBlocked: %d",
-            CanCompareUnitTokens and "yes" or "no",
-            secretStats.unitNameBlocked, secretStats.unitIsUnitBlocked))
+            detailsBarErrors, DETAILS_BAR_ERROR_LIMIT))
+        print(string.format("  SecretAPI: CanCompareUnitTokens=%s  UnitNameBlocked: %d  UnitNameRejected: %d  UnitIsUnitBlocked: %d",
+            (C_Secrets and C_Secrets.CanCompareUnitTokens) and "yes" or "no",
+            secretStats.unitNameBlocked,
+            secretStats.unitNameRejected or 0,
+            secretStats.unitIsUnitBlocked))
         -- Per-callback error counters (one row per registered callback).
         -- Empty if all callbacks healthy; lists names + counts when not.
         local cbErrSummary = {}
@@ -2023,7 +1876,29 @@ SlashCmdList["DILVL"] = function(msg)
             print("|cFF00FF00Details! iLvl Display:|r Danders position: " .. arg)
         else
             print("|cFF00FF00Details! iLvl Display:|r Current Danders position: " .. (db.dandersPos or "topright"))
-            print("  Options: top, topright, topleft, bottom, bottomright, bottomleft, center")
+            print("  Inside:    top, topright, topleft, bottom, bottomright, bottomleft, center")
+            print("  Off-frame: above, aboveleft, aboveright, below, belowleft, belowright")
+        end
+
+    elseif msg:match("^danders size") then
+        local arg = msg:match("^danders size%s+(%S+)")
+        local n = arg and tonumber(arg)
+        if n and n >= DANDERS_FONT_MIN and n <= DANDERS_FONT_MAX then
+            n = math.floor(n)
+            db.dandersFontSize = n
+            local applied = 0
+            if Details_iLvlDisplay_DandersApplyFontSize then
+                applied = Details_iLvlDisplay_DandersApplyFontSize(n) or 0
+            end
+            print(string.format("|cFF00FF00Details! iLvl Display:|r Danders text size: %d", n))
+            if applied == 0 then
+                print("  No visible Danders frames yet — setting saved, will apply on next refresh.")
+            end
+        else
+            local cur = db.dandersFontSize or 10
+            print(string.format("|cFF00FF00Details! iLvl Display:|r Current Danders text size: %d (range %d-%d)",
+                cur, DANDERS_FONT_MIN, DANDERS_FONT_MAX))
+            print(string.format("  Usage: /dilvl danders size <%d-%d>", DANDERS_FONT_MIN, DANDERS_FONT_MAX))
         end
 
     elseif msg == "blizzdm" then
@@ -2105,7 +1980,10 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
         print("  /dilvl grid2 on|off    — Toggle iLvl status in Grid2 raid frames")
         print("  /dilvl danders on|off  — Toggle iLvl overlay on Danders Frames")
-        print("  /dilvl danders pos <opt> — Danders text position (top/topright/...)")
+        print("  /dilvl danders pos <opt> — Danders text position (live, no /reload)")
+        print("      inside:    top, topright, topleft, bottom, bottomright, bottomleft, center")
+        print("      off-frame: above, aboveleft, aboveright, below, belowleft, belowright")
+        print("  /dilvl danders size <n>  — Danders text size (6-30, live)")
         print("  /dilvl blizzdm         — Toggle iLvl on Blizzard Damage Meter")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
@@ -2211,6 +2089,13 @@ Details_iLvlDisplayAPI = {
         _callbackErrors[name] = nil
         _callbackErrorLogged[name] = nil
     end,
+    -- Secret-value defense surface (#26). Sub-files used to duplicate
+    -- these guards locally — blizzdm.lua now reads them from here so
+    -- the pcall hardening from secrets.lua applies consistently.
+    SafeUnitName    = SafeUnitName,
+    SafeUnitIsUnit  = SafeUnitIsUnit,
+    isSecretValue   = isSecretValue,
+    hasanysecretvalues = _hasanysecretvalues,
 }
 
 -- Internal helper — call once after any cache write that should update UI.

@@ -11,9 +11,22 @@
 -- quality drops slightly but no errors.
 --
 -- POSITIONS (slash: /dilvl danders pos <opt>):
---   top, topright (default), topleft,
---   bottom, bottomright, bottomleft,
---   center
+--   INSIDE-frame (parented to contentOverlay):
+--     top, topright (default), topleft,
+--     bottom, bottomright, bottomleft,
+--     center
+--   OFF-frame (parented to contentOverlay, anchored at frame edge so text
+--   floats outside the bounding box — useful when inside-frame text overlaps
+--   the unit's name/HP. WARNING: in dense raid stacks (25er with no gap
+--   between frames) above/below will overlap the neighbouring frame):
+--     above, aboveleft, aboveright,
+--     below, belowleft, belowright
+--
+-- FONT SIZE (slash: /dilvl danders size <number>):
+--   db.dandersFontSize, default 10, clamped to [6, 30] in core.lua before
+--   Details_iLvlDisplay_DandersApplyFontSize is called. Reuses the
+--   FontString's current font path + flags so the look stays consistent
+--   with whatever template ensureFS picked up.
 --
 -- AUTO-DISABLE: a local SafeCall counter wraps every host-API call. After
 -- 5 errors the integration silently auto-disables (db.dandersText=false),
@@ -53,9 +66,10 @@ local STATE = Details_iLvlDisplay_DandersState
 local fontStrings = {} -- frame -> our FontString
 
 ---------------------------------------------------------------
--- Local kill-switch. NOT shared with core.lua's hookErrors — if Danders
--- breaks, we want the rest of the addon to keep working. Mirrors the
--- pattern at core.lua:45-60 but writes to db.dandersText (not db.enabled).
+-- Local kill-switch. NOT shared with core.lua's detailsBarErrors — if
+-- Danders breaks, we want the rest of the addon to keep working. Mirrors
+-- the per-feature isolation pattern in core.lua but writes to
+-- db.dandersText (not db.showInDetails / db.enabled).
 ---------------------------------------------------------------
 local MAX_DANDERS_ERRORS = 5
 local disableSelf -- forward-declared
@@ -77,7 +91,12 @@ end
 -- Position system. Each entry: { fsPoint, framePoint, x, y }
 -- Anchor parent is frame.contentOverlay (or frame itself as fallback).
 ---------------------------------------------------------------
+-- Inside-frame entries: {fsPoint, framePoint, x, y} — fs anchors to its OWN
+-- corner attached to the SAME corner of the frame (or contentOverlay).
+-- Off-frame entries: opposite-corner anchoring lets the text float outside.
+-- E.g. above = {BOTTOM, TOP, 0, 2} means "FS-Bottom sits on Frame-Top + 2px".
 local POS = {
+    -- inside
     top         = {"TOP",         "TOP",          0, -1},
     topright    = {"TOPRIGHT",    "TOPRIGHT",    -2, -1},
     topleft     = {"TOPLEFT",     "TOPLEFT",      2, -1},
@@ -85,8 +104,27 @@ local POS = {
     bottomright = {"BOTTOMRIGHT", "BOTTOMRIGHT", -2,  1},
     bottomleft  = {"BOTTOMLEFT",  "BOTTOMLEFT",   2,  1},
     center      = {"CENTER",      "CENTER",       0,  0},
+    -- off-frame (above row)
+    above       = {"BOTTOM",      "TOP",          0,  2},
+    aboveleft   = {"BOTTOMLEFT",  "TOPLEFT",      2,  2},
+    aboveright  = {"BOTTOMRIGHT", "TOPRIGHT",    -2,  2},
+    -- off-frame (below row)
+    below       = {"TOP",         "BOTTOM",       0, -2},
+    belowleft   = {"TOPLEFT",     "BOTTOMLEFT",   2, -2},
+    belowright  = {"TOPRIGHT",    "BOTTOMRIGHT", -2, -2},
 }
 local DEFAULT_POS = "topright"
+local DEFAULT_FONT_SIZE = 10
+
+-- Apply current size to a single FontString. Reuses font path + flags so the
+-- look stays consistent with the template ensureFS picked. Silent no-op if
+-- GetFont() returns nil (very early load, secret-shielded path) — the next
+-- refresh will catch it.
+local function applyFontSize(fs, size)
+    if not fs or not size then return end
+    local path, _, flags = fs:GetFont()
+    if path then fs:SetFont(path, size, flags or "") end
+end
 
 local function applyAnchor(fs, frame, posKey)
     local entry = POS[posKey] or POS[DEFAULT_POS]
@@ -113,6 +151,7 @@ local function ensureFS(frame)
     fontStrings[frame] = fs
     local db = API.GetDb()
     applyAnchor(fs, frame, db and db.dandersPos or DEFAULT_POS)
+    applyFontSize(fs, (db and db.dandersFontSize) or DEFAULT_FONT_SIZE)
     return fs
 end
 
@@ -178,6 +217,29 @@ local function applyPositionToAll(posKey)
 end
 
 Details_iLvlDisplay_DandersApplyPos = applyPositionToAll
+
+---------------------------------------------------------------
+-- Live font-size change without /reload. Walks existing FontStrings
+-- and re-applies size via applyFontSize. Range validation happens at
+-- the slash boundary in core.lua before we get here. Returns the
+-- number of FontStrings touched so the slash handler can warn the user
+-- when no Danders frames are currently visible (setting still saved
+-- to db.dandersFontSize — picked up by ensureFS on next refresh).
+---------------------------------------------------------------
+local function applyFontSizeToAll(size)
+    if STATE.disabled then return 0 end
+    if type(size) ~= "number" then return 0 end
+    local applied = 0
+    for _, fs in pairs(fontStrings) do
+        if fs then
+            SafeCall("applyFontSize", applyFontSize, fs, size)
+            applied = applied + 1
+        end
+    end
+    return applied
+end
+
+Details_iLvlDisplay_DandersApplyFontSize = applyFontSizeToAll
 
 ---------------------------------------------------------------
 -- Auto-disable path. Triggered when SafeCall hits MAX_DANDERS_ERRORS.

@@ -26,17 +26,17 @@ local API = Details_iLvlDisplayAPI
 if not API then return end
 
 ---------------------------------------------------------------
--- Secret value guards (mirrors core.lua pattern from Issue #2)
+-- Secret value guards — read from the shared defense layer in
+-- secrets.lua (#26). The pcall hardening in SafeUnitName covers
+-- tainted-execution hard-rejects (UnitName.RequiresDeclassifiedUnitIdentity
+-- FailureMode flipped to ReturnWithError in 12.0.7).
 ---------------------------------------------------------------
-local _issecretvalue = issecretvalue or function() return false end
-local _issecrettable = issecrettable or function() return false end
-local _hasanysecretvalues = hasanysecretvalues or function() return false end
-
-local function isSecret(val)
-    if _issecretvalue(val) then return true end
-    if _issecrettable(val) then return true end
-    return false
-end
+local isSecret             = API.isSecretValue
+                            or function(val) return issecretvalue and issecretvalue(val) end
+local _hasanysecretvalues  = API.hasanysecretvalues
+                            or (hasanysecretvalues or function() return false end)
+local SafeUnitName         = API.SafeUnitName
+                            or function(unit) return UnitName(unit) end
 
 ---------------------------------------------------------------
 -- Local fault isolation (mirrors danders_integration.lua pattern).
@@ -556,7 +556,7 @@ local function BuildRosterNameSet()
         for i = 1, count do
             local unit = prefix .. i
             if UnitExists(unit) then
-                local n, realm = UnitName(unit)
+                local n, realm = SafeUnitName(unit)
                 if n and not isSecret(n) then
                     set[n] = true
                     if realm and realm ~= "" then set[n .. "-" .. realm] = true end
@@ -564,7 +564,7 @@ local function BuildRosterNameSet()
             end
         end
     end
-    local pn, prealm = UnitName("player")
+    local pn, prealm = SafeUnitName("player")
     if pn and not isSecret(pn) then
         set[pn] = true
         if prealm and prealm ~= "" then set[pn .. "-" .. prealm] = true end
@@ -659,9 +659,9 @@ local function InjectIlvl(frame)
             local name = frame.sourceName
             if not name or isSecret(name) then
                 if frame.isLocalPlayer == true then
-                    local pn = UnitName("player")
+                    local pn = SafeUnitName("player")
                     if pn and not isSecret(pn) then name = pn end
-                    nameSource = name and "UnitName(player)" or nil
+                    nameSource = name and "SafeUnitName(player)" or nil
                 end
             else
                 nameSource = "sourceName"
