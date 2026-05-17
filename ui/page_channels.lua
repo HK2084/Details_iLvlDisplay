@@ -98,7 +98,10 @@ end
 -- the next channel below it.
 ---------------------------------------------------------------
 local function BuildDetailsPanel(parent)
-    local p = W.CreatePanel(parent, 1, 60, L["Details! bars"])
+    -- 80h fits checkbox + hint UNDER it (was: hint RIGHT of checkbox, but
+    -- DE label "Details! iLvl-Anzeige aktivieren" is longer than EN and
+    -- overlapped the hint at 80px offset — Hasan 2026-05-16).
+    local p = W.CreatePanel(parent, 1, 80, L["Details! bars"])
     p:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     p:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -20, 0)
 
@@ -112,7 +115,8 @@ local function BuildDetailsPanel(parent)
         "→ " .. L["Layout (Details!)"] .. " / " .. L["Position"]
             .. ": " .. L["General"],
         theme.FONT_HELPER, "secondary")
-    hint:SetPoint("LEFT", cb, "RIGHT", 80, 0)
+    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 24, -4)
+    hint:SetJustifyH("LEFT")
     return p
 end
 
@@ -122,7 +126,9 @@ local function BuildElvUIPanel(parent, prev)
     -- tag to drop into their ElvUI Custom Text — there's no setting to
     -- toggle. Per Agent #1 coverage review 2026-05-16: elvuiTagPlain was
     -- a dead toggle (UI wrote it, elvui_tags.lua never read it).
-    local p = W.CreatePanel(parent, 1, 70, L["ElvUI tags"])
+    -- 105h fits checkbox + 2-line wrapped hint. Hint width anchored to
+    -- panel.RIGHT - margin so it wraps based on panel width (resizable).
+    local p = W.CreatePanel(parent, 1, 105, L["ElvUI tags"])
     p:SetPoint("TOPLEFT",  prev, "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
     p:SetPoint("TOPRIGHT", prev, "BOTTOMRIGHT", 0, -theme.WIDGET_GAP)
 
@@ -134,14 +140,14 @@ local function BuildElvUIPanel(parent, prev)
     local hint = W.CreateLabel(p,
         "→ " .. L["ELVUI_TAGS_HINT"],
         theme.FONT_HELPER, "secondary")
-    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 24, -4)
-    hint:SetWidth(540)
+    hint:SetPoint("TOPLEFT",  cb, "BOTTOMLEFT", 24, -4)
+    hint:SetPoint("TOPRIGHT", p,  "TOPRIGHT", -16, -52)
     hint:SetJustifyH("LEFT")
     return p
 end
 
 local function BuildGrid2Panel(parent, prev)
-    local p = W.CreatePanel(parent, 1, 60, L["Grid2 status"])
+    local p = W.CreatePanel(parent, 1, 80, L["Grid2 status"])
     p:SetPoint("TOPLEFT",  prev, "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
     p:SetPoint("TOPRIGHT", prev, "BOTTOMRIGHT", 0, -theme.WIDGET_GAP)
 
@@ -151,9 +157,10 @@ local function BuildGrid2Panel(parent, prev)
     cb:SetPoint("TOPLEFT", p, "TOPLEFT", 12, -28)
 
     local hint = W.CreateLabel(p,
-        "→ " .. "Configure indicator placement in Grid2 GUI",
+        "→ " .. L["GRID2_HINT"],
         theme.FONT_HELPER, "secondary")
-    hint:SetPoint("LEFT", cb, "RIGHT", 80, 0)
+    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 24, -4)
+    hint:SetJustifyH("LEFT")
     return p
 end
 
@@ -223,8 +230,9 @@ function page.Init(parent)
     local p4 = BuildDandersPanel(content, p3)
     local p5 = BuildBlizzDMPanel(content, p4)
 
-    -- Total stacked panel height (60+70+60+110+80 = 380 + 4 gaps × WIDGET_GAP)
-    content:SetHeight(60 + 70 + 60 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
+    -- Total stacked panel height: 80(Details!) + 105(ElvUI) + 80(Grid2) +
+    -- 110(Danders) + 80(BlizzDM) = 455 + 4 gaps × WIDGET_GAP + headroom
+    content:SetHeight(80 + 105 + 80 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
 end
 
 if ns.ui and ns.ui.main and ns.ui.main.RegisterPage then
