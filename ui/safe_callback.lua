@@ -116,6 +116,7 @@ function SC.BuildPlaceholder(parent, pageId)
         child:SetParent(nil)
     end
     local theme = ns.ui and ns.ui.theme
+    local L     = ns.L or setmetatable({}, {__index = function(_, k) return k end})
     local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     frame:SetAllPoints(parent)
     if theme then theme.ApplyBackdrop(frame, "error") end
@@ -123,7 +124,7 @@ function SC.BuildPlaceholder(parent, pageId)
     local title = frame:CreateFontString(nil, "OVERLAY",
         theme and theme.FONT_HEADING or "GameFontNormalLarge")
     title:SetPoint("TOP", frame, "TOP", 0, -20)
-    title:SetText("Settings page broken")
+    title:SetText(L["PAGE_BROKEN_TITLE"])
     if theme then theme.SetTextColor(title, "error") end
 
     local body = frame:CreateFontString(nil, "OVERLAY",
@@ -131,10 +132,7 @@ function SC.BuildPlaceholder(parent, pageId)
     body:SetPoint("TOP", title, "BOTTOM", 0, -10)
     body:SetWidth(parent:GetWidth() - 40)
     body:SetJustifyH("CENTER")
-    body:SetText(("Page '%s' has been disabled after %d errors.\n"
-        .. "Other pages still work. Use /dilvl slash commands\n"
-        .. "or /reload to recover."):format(
-        pageId, SC.MAX_PAGE_ERRORS))
+    body:SetText(L["PAGE_BROKEN_BODY"]:format(pageId, SC.MAX_PAGE_ERRORS))
     if theme then theme.SetTextColor(body, "secondary") end
 
     local errLabel = frame:CreateFontString(nil, "OVERLAY",
@@ -142,7 +140,7 @@ function SC.BuildPlaceholder(parent, pageId)
     errLabel:SetPoint("BOTTOM", frame, "BOTTOM", 0, 20)
     errLabel:SetWidth(parent:GetWidth() - 40)
     errLabel:SetJustifyH("CENTER")
-    errLabel:SetText("Last error: " .. (SC.pageLastError[pageId] or "<unknown>"))
+    errLabel:SetText(L["PAGE_BROKEN_LAST"]:format(SC.pageLastError[pageId] or "<unknown>"))
     if theme then theme.SetTextColor(errLabel, "disabled") end
 
     return frame

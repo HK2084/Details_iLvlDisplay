@@ -264,12 +264,25 @@ end
 -- choices = { {value="left", label="Left"}, {value="right", label="Right"} }
 -- Returns container; arrange as horizontal row by default.
 ---------------------------------------------------------------
-function W.CreateRadioGroup(parent, label, choices, getter, setter, orientation)
+function W.CreateRadioGroup(parent, label, choices, getter, setter, orientation, tooltip)
     orientation = orientation or "horizontal"
     local container = CreateFrame("Frame", nil, parent)
     if label then
         container.label = W.CreateLabel(container, label, theme.FONT_LABEL, "primary")
         container.label:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
+        if tooltip then
+            -- Need a mouse-receiving frame for tooltip; FontString itself doesn't get mouse.
+            local hover = CreateFrame("Frame", nil, container)
+            hover:SetAllPoints(container.label)
+            hover:EnableMouse(true)
+            hover:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText(label, 1, 1, 1)
+                GameTooltip:AddLine(tooltip, nil, nil, nil, true)
+                GameTooltip:Show()
+            end)
+            hover:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
     end
 
     container.radios = {}

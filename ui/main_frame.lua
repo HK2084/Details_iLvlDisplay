@@ -204,12 +204,13 @@ local function BuildFrame()
     title:SetText(L["Details! iLvl Display"] .. "  v" .. (ns.version or "?"))
     theme.SetTextColor(title, "accent")
 
-    -- UIPanelCloseButton has a default OnClick that hides its parent.
-    -- HookScript adds our handler without clobbering Blizzard's default.
-    local closeBtn = CreateFrame("Button", nil, titleBar, "UIPanelCloseButton")
-    closeBtn:SetPoint("RIGHT", titleBar, "RIGHT", -2, 0)
+    -- UIPanelCloseButton's default OnClick is `self:GetParent():Hide()`.
+    -- We parent it to `f` (NOT titleBar) so the default actually hides the
+    -- window. Anchor still aligns to titleBar visually. HookScript adds our
+    -- position-persist alongside the default.
+    local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", titleBar, "TOPRIGHT", -2, -2)
     closeBtn:HookScript("OnClick", safe.WrapScript("CloseButton:Hook", function()
-        -- Persist on close in addition to the default Hide-parent action.
         SaveWindowPos(f)
     end))
 
@@ -238,32 +239,58 @@ local function BuildFrame()
         - theme.PADDING * 3 - 2)
     f.content = content
 
-    -- ── Preview pane (PERSISTENT — visible across all tabs) ──
-    local previewPane = CreateFrame("Frame", nil, f, "BackdropTemplate")
-    previewPane:SetPoint("TOPLEFT",  content, "BOTTOMLEFT",  0, -theme.PADDING)
-    previewPane:SetPoint("TOPRIGHT", content, "BOTTOMRIGHT", 0, -theme.PADDING)
-    previewPane:SetHeight(theme.PREVIEW_H)
-    theme.ApplyBackdrop(previewPane, "panel")
-    f.previewPane = previewPane
+    -- ── Preview pane container (PERSISTENT — visible across all tabs) ──
+    -- Split into TWO side-by-side sections: Damage Meter mocks (left) +
+    -- Unit Frame mocks (right). Each section is its own bordered panel so
+    -- the two preview classes feel visually distinct.
+    local previewContainer = CreateFrame("Frame", nil, f)
+    previewContainer:SetPoint("TOPLEFT",  content, "BOTTOMLEFT",  0, -theme.PADDING)
+    previewContainer:SetPoint("TOPRIGHT", content, "BOTTOMRIGHT", 0, -theme.PADDING)
+    previewContainer:SetHeight(theme.PREVIEW_H)
+    f.previewPane = previewContainer
 
-    local previewTitle = previewPane:CreateFontString(nil, "OVERLAY", theme.FONT_HEADING)
-    previewTitle:SetPoint("TOPLEFT", previewPane, "TOPLEFT", 10, -8)
-    previewTitle:SetText(L["Live Preview"])
-    theme.SetTextColor(previewTitle, "title")
+    -- Left: Damage Meter Preview (Details! / BlizzDM mocks)
+    local dmPane = CreateFrame("Frame", nil, previewContainer, "BackdropTemplate")
+    dmPane:SetPoint("TOPLEFT", previewContainer, "TOPLEFT", 0, 0)
+    dmPane:SetPoint("BOTTOMLEFT", previewContainer, "BOTTOMLEFT", 0, 0)
+    dmPane:SetWidth((theme.WINDOW_W - theme.PADDING * 3) / 2)
+    theme.ApplyBackdrop(dmPane, "panel")
+    f.previewDM = dmPane
 
-    -- Placeholder body — Phase 4 will populate with mock Details!-bars + mock
-    -- unit-frame + mock Danders-overlay that update live on db change.
-    local previewBody = previewPane:CreateFontString(nil, "OVERLAY", theme.FONT_LABEL)
-    previewBody:SetPoint("TOPLEFT",  previewPane, "TOPLEFT",  20, -36)
-    previewBody:SetPoint("BOTTOMRIGHT", previewPane, "BOTTOMRIGHT", -20, 12)
-    previewBody:SetJustifyH("LEFT")
-    previewBody:SetJustifyV("TOP")
-    previewBody:SetText(
-        "Live Preview Pane\n\n"
-        .. "Coming in Phase 4: mock Details!-bars + mock unit-frame +\n"
-        .. "mock Danders-overlay that update live as you change settings\n"
-        .. "on the tabs above. No tab-switching needed.")
-    theme.SetTextColor(previewBody, "secondary")
+    local dmTitle = dmPane:CreateFontString(nil, "OVERLAY", theme.FONT_HEADING)
+    dmTitle:SetPoint("TOPLEFT", dmPane, "TOPLEFT", 10, -8)
+    dmTitle:SetText(L["Damage Meter Preview"])
+    theme.SetTextColor(dmTitle, "title")
+
+    local dmBody = dmPane:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
+    dmBody:SetPoint("TOPLEFT",  dmPane, "TOPLEFT",  20, -36)
+    dmBody:SetPoint("BOTTOMRIGHT", dmPane, "BOTTOMRIGHT", -20, 12)
+    dmBody:SetJustifyH("LEFT")
+    dmBody:SetJustifyV("TOP")
+    dmBody:SetText("Phase 4: mock Details!-bars + mock BlizzardDM-bars\nwith your iLvl-tags applied. Updates live\nas you toggle settings.")
+    theme.SetTextColor(dmBody, "secondary")
+    f.previewDMBody = dmBody  -- exposed for Phase 4 mock-bar injection
+
+    -- Right: Unit Frame Preview (ElvUI / Grid2 / Danders mocks)
+    local ufPane = CreateFrame("Frame", nil, previewContainer, "BackdropTemplate")
+    ufPane:SetPoint("TOPLEFT",  dmPane, "TOPRIGHT", theme.PADDING, 0)
+    ufPane:SetPoint("BOTTOMRIGHT", previewContainer, "BOTTOMRIGHT", 0, 0)
+    theme.ApplyBackdrop(ufPane, "panel")
+    f.previewUF = ufPane
+
+    local ufTitle = ufPane:CreateFontString(nil, "OVERLAY", theme.FONT_HEADING)
+    ufTitle:SetPoint("TOPLEFT", ufPane, "TOPLEFT", 10, -8)
+    ufTitle:SetText(L["Unit Frame Preview"])
+    theme.SetTextColor(ufTitle, "title")
+
+    local ufBody = ufPane:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
+    ufBody:SetPoint("TOPLEFT",  ufPane, "TOPLEFT",  20, -36)
+    ufBody:SetPoint("BOTTOMRIGHT", ufPane, "BOTTOMRIGHT", -20, 12)
+    ufBody:SetJustifyH("LEFT")
+    ufBody:SetJustifyV("TOP")
+    ufBody:SetText("Phase 4: mock Danders-Frame + mock Grid2-cell\n+ mock ElvUI unit-frame. Live-react to\nposition, font-size, color, set-bonus toggles.")
+    theme.SetTextColor(ufBody, "secondary")
+    f.previewUFBody = ufBody  -- exposed for Phase 4 mock-frame injection
 
     -- ── Footer ──
     local footer = CreateFrame("Frame", nil, f, "BackdropTemplate")
@@ -336,3 +363,22 @@ deferFrame:SetScript("OnEvent", safe.WrapScript("DeferredOpen", function()
         main.Open(pid)
     end
 end))
+
+---------------------------------------------------------------
+-- PLAYER_LOGIN sanity check. Catches TOC-load-order regressions early:
+-- if no pages have registered by login, route a one-shot message via
+-- geterrorhandler() (BugSack picks up) so the maintainer notices the
+-- regression instead of users hitting a blank-tab-bar window.
+---------------------------------------------------------------
+local sanityFrame = CreateFrame("Frame")
+sanityFrame:RegisterEvent("PLAYER_LOGIN")
+sanityFrame:SetScript("OnEvent", function(self)
+    if #main.pages == 0 then
+        local handler = geterrorhandler()
+        if handler then
+            pcall(handler, "Details_iLvlDisplay UI: no pages registered at PLAYER_LOGIN "
+                .. "(check TOC load order — page files must load AFTER ui/main_frame.lua).")
+        end
+    end
+    self:UnregisterAllEvents()
+end)

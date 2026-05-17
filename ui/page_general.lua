@@ -102,7 +102,9 @@ function page.Init(parent)
         L["Layout (Details!)"],
         { {value="inline", label=L["Inline"]}, {value="columns", label=L["Columns"]} },
         function() return getKey("layout", "inline") end,
-        function(v) setKey("layout", v) end)
+        function(v) setKey("layout", v) end,
+        "horizontal",
+        L["TOOLTIP_LAYOUT"])
     layoutRadio:SetPoint("TOPLEFT", displayPanel, "TOPLEFT", 12, -32)
     layoutRadio:SetWidth(300)
 
@@ -110,9 +112,12 @@ function page.Init(parent)
         L["Position"],
         { {value="right", label=L["Right of name"]}, {value="left", label=L["Left of name"]} },
         function() return getKey("ilvlPosition", "right") end,
-        function(v) setKey("ilvlPosition", v) end)
+        function(v) setKey("ilvlPosition", v) end,
+        "vertical",                     -- DE strings too wide for horizontal
+        L["TOOLTIP_POSITION"])
     posRadio:SetPoint("TOPLEFT", layoutRadio, "BOTTOMLEFT", 0, -theme.SECTION_GAP)
     posRadio:SetWidth(300)
+    posRadio:SetHeight(60)
 
     -- ── Auto-detect panel (bottom row, full width) ──
     local detectPanel = W.CreatePanel(parent,
