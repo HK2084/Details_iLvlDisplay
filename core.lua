@@ -1022,6 +1022,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 Details_iLvlDisplayDB = {}
             end
             db = Details_iLvlDisplayDB
+            ns.db = db  -- expose to UI / other sub-modules (single source of truth)
             for k, v in pairs(defaults) do
                 if db[k] == nil then db[k] = v end
             end
@@ -1973,8 +1974,17 @@ SlashCmdList["DILVL"] = function(msg)
         end
         print("|cFF00FF00Details! iLvl Display:|r Layout: " .. db.layout)
 
+    elseif msg == "ui" or msg:match("^ui%s") or msg:match("^ui$") then
+        local rest = msg:match("^ui%s+(.*)$") or ""
+        if ns.ui and ns.ui.slash then
+            ns.ui.slash.HandleSlash(rest)
+        else
+            print("|cFF00FF00Details! iLvl Display:|r Settings UI not loaded yet.")
+        end
+
     else
         print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion)
+        print("  /dilvl ui              — Open Settings UI")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")

@@ -15,3 +15,19 @@ elvui_tags.lua
 grid2_status.lua
 danders_integration.lua
 blizzdm.lua
+
+# Locales (load first — pages reference L["..."] strings)
+locales\enUS.lua
+locales\deDE.lua
+
+# Settings UI (load after L is populated)
+ui\theme.lua
+ui\safe_callback.lua
+ui\widgets.lua
+ui\main_frame.lua
+ui\page_general.lua
+ui\page_channels.lua
+ui\page_preview.lua
+ui\page_diagnostics.lua
+ui\blizzard_settings.lua
+ui\slash_ui.lua
