@@ -98,9 +98,8 @@ end
 -- the next channel below it.
 ---------------------------------------------------------------
 local function BuildDetailsPanel(parent)
-    -- 80h fits checkbox + hint UNDER it (was: hint RIGHT of checkbox, but
-    -- DE label "Details! iLvl-Anzeige aktivieren" is longer than EN and
-    -- overlapped the hint at 80px offset — Hasan 2026-05-16).
+    -- 80h fits checkbox + hint UNDER it (DE labels are longer than EN; a
+    -- RIGHT-of-checkbox hint would overlap the longer label).
     local p = W.CreatePanel(parent, 1, 80, L["Details! bars"])
     p:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     p:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -20, 0)
@@ -124,8 +123,7 @@ local function BuildElvUIPanel(parent, prev)
     -- ElvUI exposes TWO independent tags ([dilvl] always-brackets and
     -- [dilvl:plain] always-plain). User picks behavior by choosing which
     -- tag to drop into their ElvUI Custom Text — there's no setting to
-    -- toggle. Per Agent #1 coverage review 2026-05-16: elvuiTagPlain was
-    -- a dead toggle (UI wrote it, elvui_tags.lua never read it).
+    -- toggle.
     -- 105h fits checkbox + 2-line wrapped hint. Hint width anchored to
     -- panel.RIGHT - margin so it wraps based on panel width (resizable).
     local p = W.CreatePanel(parent, 1, 105, L["ElvUI tags"])
@@ -210,10 +208,9 @@ function page.Init(parent)
     info:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     info:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, 0)
 
-    -- ScrollFrame brought back as a safety net — at default window size the
-    -- 5 channel panels exceed the tab content area and overlap the preview
-    -- pane. Power users can resize the window via the bottom-right grip to
-    -- eliminate scroll; default-size users get scroll instead of overlap.
+    -- ScrollFrame as safety net — at default window size the 5 channel
+    -- panels exceed the tab content area. Resizing the window via the
+    -- bottom-right grip eliminates the scroll.
     local sf, content = W.CreateScrollFrame(parent,
         parent:GetWidth() > 0 and (parent:GetWidth() - 20) or 660,
         parent:GetHeight() > 0 and (parent:GetHeight() - 40) or 350)

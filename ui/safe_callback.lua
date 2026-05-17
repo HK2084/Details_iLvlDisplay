@@ -1,9 +1,6 @@
--- ui/safe_callback.lua — 3-layer fault isolation for the Settings UI
---
--- Mirrors the per-feature kill-switch pattern from core.lua / blizzdm.lua /
--- danders_integration.lua onto the UI layer. Hasan-rule: a Lua error in
--- one settings page must NEVER take down the entire settings window or
--- the addon proper.
+-- ui/safe_callback.lua — 3-layer fault isolation for the Settings UI.
+-- A Lua error in one settings page must never take down the entire
+-- settings window or the addon proper.
 --
 -- THREE LAYERS:
 --   1. SafeCallback(label, fn, ...) — wraps a single widget callback. Errors
@@ -15,11 +12,6 @@
 --      errors, it's permanently swapped to a "Settings page broken — use
 --      slash commands or /reload" placeholder for the rest of the session.
 --      Counter resets on /reload.
---
--- WHY THIS IS NOVEL: deep-dive 2026-05-16 found that DandersFrames (8243 LOC
--- UI, 2 pcalls), Plater (11.932 LOC UI, 0 pcalls), BigWigs, Cell, ElvUI all
--- trust their UI code absolutely. No addon does per-page error counters.
--- This file is direct improvement on the ecosystem.
 
 local addonName, ns = ...
 ns.ui = ns.ui or {}

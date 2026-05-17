@@ -116,8 +116,7 @@ local function collectDebugLines()
     return lines
 end
 
--- Export so the slash handler can reuse it (Phase 4: wire /dilvl debug to also
--- use this function for a single source of truth).
+-- Export so the slash handler can reuse it as a single source of truth.
 ns.GetDebugLines = collectDebugLines
 
 ---------------------------------------------------------------
@@ -167,10 +166,9 @@ function page.Init(parent)
         local lines = collectDebugLines()
         local text = table.concat(lines, "\n")
         edit:SetText(text)
-        -- Resize content to fit text height. EditBox:GetStringHeight is not
-        -- reliably present on multi-line EditBox across all 12.0+ builds
-        -- (Hasan hit "attempt to call a nil value" on it) — calculate from
-        -- line count + font height instead. Cheap + portable.
+        -- Resize content to fit text height. EditBox:GetStringHeight is
+        -- not reliably present on multi-line EditBox across 12.0+ builds,
+        -- so calculate from line count + font height instead.
         local _, fontHeight = edit:GetFont()
         local lineH = (fontHeight or 12) * 1.25
         local lineCount = #lines + 1  -- +1 for any trailing newline

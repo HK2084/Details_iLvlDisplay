@@ -1,12 +1,10 @@
 -- locales/deDE.lua — German overrides, only loaded on deDE clients.
 --
--- Hasan ist DE-native, daher von Tag 1 dabei. Andere Locales (frFR, esES,
--- ruRU, ...) können Community per PR im Locales/-Folder beisteuern, ohne
--- dass wir Core anfassen müssen. Missing keys fallen via Metatable in
--- enUS.lua zurück — kein Crash, einfach English-Anzeige.
+-- Community translations (frFR, esES, ruRU, ...) can be added as additional
+-- Locales/ files without touching the core. Missing keys fall back via the
+-- enUS metatable, so a partial translation never crashes.
 --
--- UTF-8 ENCODING: dieses File muss UTF-8 sein. WoW rendert ä/ö/ü/ß mit
--- Standard-Fonts (GameFontNormal etc.) korrekt. NIE ae/oe/ue/ss schreiben.
+-- File must be UTF-8.
 
 if GetLocale() ~= "deDE" then return end
 

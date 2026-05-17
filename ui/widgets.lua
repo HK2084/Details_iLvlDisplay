@@ -31,8 +31,7 @@ end
 
 ---------------------------------------------------------------
 -- CreatePanel — boxed group with optional title FontString.
--- Use for visual grouping of related settings, mirrors DandersFrames
--- "Frame Modes" / "Settings Panel Appearance" boxes from Hasan's screenshot.
+-- Use for visual grouping of related settings.
 ---------------------------------------------------------------
 function W.CreatePanel(parent, w, h, title)
     local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")

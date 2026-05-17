@@ -39,7 +39,7 @@ local SafeUnitName         = API.SafeUnitName
                             or function(unit) return UnitName(unit) end
 
 ---------------------------------------------------------------
--- Local fault isolation (mirrors danders_integration.lua pattern).
+-- Local fault isolation.
 -- Counter resets on /reload (non-persistent). disableSelf flips
 -- db.blizzDM = false (NOT db.enabled — master switch stays user-owned)
 -- and routes a one-shot message via geterrorhandler() (BugSack picks

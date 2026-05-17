@@ -7,9 +7,9 @@
 --   - Each mock is created ONCE on first populate. Subsequent updates flow
 --     through the Refresh() function — only text/anchor/color change, frames
 --     are NOT rebuilt. Prevents frame churn on every slider drag.
---   - Dirty-flag pattern (mirrors blizzdm.lua:909-997 throttled refresh):
---     setter calls MarkDirty(); a 10Hz NewTicker coalesces multiple changes
---     into a single Refresh() per 100ms window. Self-cancels when no dirty.
+--   - Dirty-flag pattern: setter calls MarkDirty(); a 10Hz NewTicker
+--     coalesces multiple changes into a single Refresh() per 100ms window.
+--     Self-cancels when no dirty.
 --   - Mock data is constant ("Razul", iLvl 263, etc.) — the iLvl rendering
 --     reflects the user's current db settings (color, set-bonus, layout,
 --     position, danders pos+size, ElvUI tag format).
@@ -252,10 +252,9 @@ local function UpdateMockDandersFrame(frame, db)
     frame.ilvlFS:SetText(text)
 end
 
--- (Grid2 + ElvUI mock frames removed per Hasan 2026-05-16: one representative
--- mock unit-frame suffices to show how the addon will look. Grid2 and ElvUI
--- render the iLvl tag with the same color rules + set-bonus formatting that
--- are already visible in the Damage Meter Preview to the left.)
+-- One representative mock unit-frame is enough to show how the addon will
+-- look. Grid2 and ElvUI render the iLvl tag with the same color rules and
+-- set-bonus formatting already visible in the Damage Meter Preview.
 
 ---------------------------------------------------------------
 -- Public: PopulateDamageMeter — build (or re-use) the 3 mock rows in the
@@ -332,9 +331,8 @@ function preview.Refresh()
 end
 
 ---------------------------------------------------------------
--- Dirty-flag + 10Hz throttled refresh (mirrors blizzdm.lua:909-997 pattern).
--- Coalesces rapid slider drags into ~100ms refresh windows so a wild drag
--- doesn't fire Refresh() 60x per second.
+-- Dirty-flag + 10Hz throttled refresh. Coalesces rapid slider drags into
+-- ~100ms refresh windows so a wild drag doesn't fire Refresh() 60x per second.
 ---------------------------------------------------------------
 local dirty = false
 local ticker = nil

@@ -43,13 +43,10 @@ local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- guard against multiple tickers on repeated PLAYER_ENTERING_WORLD
 local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI is built
--- Round 6 production-hardening helpers — forward-declared here so the
--- ADDON_LOADED OnEvent closure (line ~1017) captures them as upvalues,
--- not as globals. Without this, Lua compiles the closure BEFORE these
--- functions are defined further down, binds them as globals (nil), and
--- the ADDON_LOADED defaults-merge call chain silently fails — leaving
--- ilvlCache nil and crashing later on first cache write. (Caught in
--- final v1.5 review, Hasan saw it as core.lua:188 indexed-assignment nil.)
+-- Defaults-merge / schema-migration / validators are defined further down
+-- but referenced inside the ADDON_LOADED OnEvent closure, so they need
+-- upvalue forward-declarations here (else Lua binds the names as globals
+-- at closure-compile time and the calls silently no-op).
 local CURRENT_SCHEMA_VERSION
 local VALIDATORS
 local RecursiveDefaultsMerge, MigrateSchema, ValidateDb
@@ -1033,9 +1030,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
             db = Details_iLvlDisplayDB
             ns.db = db  -- expose to UI / other sub-modules (single source of truth)
-            -- Production-hardening sequence (Round 6):
-            -- 1. Recursive merge fills missing keys (handles nested tables
-            --    like db.uiState, future-proof for adding nested settings).
+            -- Defaults setup sequence:
+            -- 1. Recursive merge fills missing keys (handles nested tables).
             -- 2. Schema migration upgrades old DB layouts to current.
             -- 3. Read-time validators clamp/coerce out-of-range or wrongly-
             --    typed values so manually-edited SavedVars don't crash.
@@ -1366,12 +1362,8 @@ end
 Details_iLvlDisplay_ShowDebugWindow = ShowDebugWindow
 
 ---------------------------------------------------------------
--- Production-hardening: recursive defaults-merge + schema version +
--- read-time validators + Reset-to-Defaults. Adopted from DBM-Core.lua:3584-3592
--- (recursive merge), ElvUI Core.lua:1971 (schemaVersion gate), Cell Revise.lua
--- (validators). Read-time clamping is novel in the surveyed ecosystem — we're
--- first to ship it. Goal: addon survives manually-edited or corrupted
--- SavedVariables without crashing.
+-- Defaults / schema / validators / reset — keeps SavedVariables sane
+-- across upgrades and manual edits.
 ---------------------------------------------------------------
 CURRENT_SCHEMA_VERSION = 1  -- assigns to forward-declared upvalue at file top
 
@@ -1491,17 +1483,9 @@ end
 
 ---------------------------------------------------------------
 -- ApplySettingChange — central refresh-router. Both the slash handler and
--- the Settings UI call this after writing a setting to db, so the visual
+-- the Settings UI call this after writing a setting to db so the visual
 -- side-effects (re-render Details! bars, switch layout mode, etc.) happen
 -- consistently regardless of which entry point changed the setting.
---
--- BACKGROUND: before this existed, the UI setters wrote to db but didn't
--- call the right Clear/Refresh functions, so toggling Layout in the UI
--- caused inline AND columns to render simultaneously (Hasan 2026-05-16).
---
--- This is the single source of truth for "what refresh does a setting need".
--- Slash command bodies could be refactored to call this too — kept duplicate
--- for now since they already print user feedback and the bodies are small.
 ---------------------------------------------------------------
 ns.ApplySettingChange = function(key)
     if not db then return end
@@ -2251,8 +2235,8 @@ Details_iLvlDisplayAPI = {
     -- so Blizz DM can still show iLvl for past sessions.
     ResolveGUIDByName = function(name)
         if not name then return nil end
-        -- "none" always strips realm (BigWigs pattern). "short" only strips
-        -- connected realms, which missed non-connected cross-realm players.
+        -- "none" always strips realm. "short" only strips connected realms,
+        -- which missed non-connected cross-realm players.
         local cleanName = Ambiguate(name, "none")
         local pName = SafeUnitName("player")
         if pName == cleanName then return UnitGUID("player") end

@@ -1,16 +1,16 @@
 -- ui/main_frame.lua — Settings window skeleton.
 --
--- ARCHITECTURE (after Hasan's restructure 2026-05-16):
+-- ARCHITECTURE:
 --   - One singleton frame, lazy-created on first /dilvl ui call.
 --   - 3 horizontal top-tabs (General / Output Channels / Diagnostics).
---   - Tab content fills upper area; PERSISTENT PREVIEW PANE sits below tabs.
---     User sees preview update live as they change settings — no tab-switching.
+--   - Tab content fills upper area; persistent preview pane sits below tabs.
+--     User sees preview update live as they change settings.
 --   - Tab switching = SafePageInit -> page Init(contentFrame), with
 --     fault-isolation via ns.ui.safe.
 --   - Position + last-active-tab persisted in db.uiState (SavedVar subtable).
 --   - UISpecialFrames registration -> Escape key closes the window.
 --   - This file deliberately stays minimal (no business logic) because it's
---     the one file whose failure WOULD kill the entire UI.
+--     the one file whose failure would kill the entire UI.
 
 local addonName, ns = ...
 ns.ui = ns.ui or {}
