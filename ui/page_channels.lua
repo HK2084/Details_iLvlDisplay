@@ -203,17 +203,28 @@ function page.Init(parent)
     info:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     info:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, 0)
 
-    -- Container frame (no ScrollFrame — content fits in the tab content
-    -- area, scroll was overhead per Hasan 2026-05-16).
-    local content = CreateFrame("Frame", nil, parent)
-    content:SetPoint("TOPLEFT",  info, "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
-    content:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
+    -- ScrollFrame brought back as a safety net — at default window size the
+    -- 5 channel panels exceed the tab content area and overlap the preview
+    -- pane. Power users can resize the window via the bottom-right grip to
+    -- eliminate scroll; default-size users get scroll instead of overlap.
+    local sf, content = W.CreateScrollFrame(parent,
+        parent:GetWidth() > 0 and (parent:GetWidth() - 20) or 660,
+        parent:GetHeight() > 0 and (parent:GetHeight() - 40) or 350)
+    sf:SetPoint("TOPLEFT",     info,   "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
+    sf:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
+
+    -- Anchor scroll content full width minus scrollbar gutter
+    content:SetPoint("TOPLEFT", sf, "TOPLEFT", 0, 0)
+    content:SetWidth(sf:GetWidth() - 20)
 
     local p1 = BuildDetailsPanel(content)
     local p2 = BuildElvUIPanel(content, p1)
     local p3 = BuildGrid2Panel(content, p2)
     local p4 = BuildDandersPanel(content, p3)
     local p5 = BuildBlizzDMPanel(content, p4)
+
+    -- Total stacked panel height (60+70+60+110+80 = 380 + 4 gaps × WIDGET_GAP)
+    content:SetHeight(60 + 70 + 60 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
 end
 
 if ns.ui and ns.ui.main and ns.ui.main.RegisterPage then

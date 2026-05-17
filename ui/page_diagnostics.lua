@@ -164,11 +164,19 @@ function page.Init(parent)
     end)
 
     local function refresh()
-        local text = table.concat(collectDebugLines(), "\n")
+        local lines = collectDebugLines()
+        local text = table.concat(lines, "\n")
         edit:SetText(text)
-        -- Resize content to fit text height
-        edit:SetHeight(edit:GetStringHeight() + 16)
-        scrollContent:SetHeight(edit:GetHeight())
+        -- Resize content to fit text height. EditBox:GetStringHeight is not
+        -- reliably present on multi-line EditBox across all 12.0+ builds
+        -- (Hasan hit "attempt to call a nil value" on it) — calculate from
+        -- line count + font height instead. Cheap + portable.
+        local _, fontHeight = edit:GetFont()
+        local lineH = (fontHeight or 12) * 1.25
+        local lineCount = #lines + 1  -- +1 for any trailing newline
+        local totalH = lineCount * lineH + 16
+        edit:SetHeight(totalH)
+        scrollContent:SetHeight(totalH)
     end
 
     refreshBtn = W.CreateButton(actionBar, L["Refresh"], 110, 24, refresh)

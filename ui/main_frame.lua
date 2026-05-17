@@ -157,6 +157,13 @@ local function SaveWindowPos(f)
     state.y        = y
 end
 
+local function SaveWindowSize(f)
+    local state = GetDbState()
+    if not state then return end
+    state.w = f:GetWidth()
+    state.h = f:GetHeight()
+end
+
 local function RestoreWindowPos(f)
     local state = GetDbState()
     f:ClearAllPoints()
@@ -181,10 +188,21 @@ local function BuildFrame()
     f:SetMovable(true)
     f:EnableMouse(true)
     f:SetClampedToScreen(true)
+    f:SetResizable(true)
+    if f.SetResizeBounds then
+        -- 11.0+ API: combined min + max bounds in one call
+        f:SetResizeBounds(theme.WINDOW_W_MIN, theme.WINDOW_H_MIN,
+                          theme.WINDOW_W_MAX, theme.WINDOW_H_MAX)
+    end
     theme.ApplyBackdrop(f, "window")
     f:Hide()
 
     RestoreWindowPos(f)
+    -- Restore custom size if user resized before
+    local state = GetDbState()
+    if state and state.w and state.h then
+        f:SetSize(state.w, state.h)
+    end
     tinsert(UISpecialFrames, "Details_iLvlDisplay_SettingsFrame")
 
     -- ── Title bar (drag, title, close button) ──
@@ -228,34 +246,42 @@ local function BuildFrame()
         f.tabs[i] = CreateTabButton(tabBar, f.tabs, entry, i)
     end
 
-    -- ── Content area (above preview pane) ──
-    local content = CreateFrame("Frame", nil, f)
-    content:SetPoint("TOPLEFT",     tabBar,  "BOTTOMLEFT",  theme.PADDING, -theme.PADDING)
-    content:SetPoint("TOPRIGHT",    tabBar,  "BOTTOMRIGHT", -theme.PADDING, -theme.PADDING)
-    -- Bottom edge sits above the preview pane (with footer below preview).
-    content:SetHeight(theme.WINDOW_H
-        - theme.TITLE_BAR_H - theme.TAB_BAR_H
-        - theme.PREVIEW_H - theme.FOOTER_H
-        - theme.PADDING * 3 - 2)
-    f.content = content
+    -- ── Footer (anchored to window bottom, fixed height) ──
+    -- Built BEFORE preview/content so the chain anchors upward cleanly.
 
-    -- ── Preview pane container (PERSISTENT — visible across all tabs) ──
-    -- Split into TWO side-by-side sections: Damage Meter mocks (left) +
-    -- Unit Frame mocks (right). Each section is its own bordered panel so
-    -- the two preview classes feel visually distinct.
+    -- ── Preview pane (PERSISTENT, fixed height above footer) ──
+    -- BOTTOMLEFT/BOTTOMRIGHT anchoring so it stays glued above the footer
+    -- when the window is resized vertically. Height stays fixed.
     local previewContainer = CreateFrame("Frame", nil, f)
-    previewContainer:SetPoint("TOPLEFT",  content, "BOTTOMLEFT",  0, -theme.PADDING)
-    previewContainer:SetPoint("TOPRIGHT", content, "BOTTOMRIGHT", 0, -theme.PADDING)
+    previewContainer:SetPoint("BOTTOMLEFT",  f, "BOTTOMLEFT",  theme.PADDING, theme.FOOTER_H + theme.PADDING)
+    previewContainer:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -theme.PADDING, theme.FOOTER_H + theme.PADDING)
     previewContainer:SetHeight(theme.PREVIEW_H)
     f.previewPane = previewContainer
 
-    -- Left: Damage Meter Preview (Details! / BlizzDM mocks)
+    -- ── Content area (fills between tabBar and previewContainer) ──
+    -- TOPLEFT to tabBar bottom + BOTTOMRIGHT to previewContainer top so
+    -- content auto-resizes with the window.
+    local content = CreateFrame("Frame", nil, f)
+    content:SetPoint("TOPLEFT",     tabBar,             "BOTTOMLEFT",   theme.PADDING, -theme.PADDING)
+    content:SetPoint("TOPRIGHT",    tabBar,             "BOTTOMRIGHT", -theme.PADDING, -theme.PADDING)
+    content:SetPoint("BOTTOMLEFT",  previewContainer,   "TOPLEFT",      0, theme.PADDING)
+    content:SetPoint("BOTTOMRIGHT", previewContainer,   "TOPRIGHT",     0, theme.PADDING)
+    f.content = content
+
+    -- Left: Damage Meter Preview (Details! / BlizzDM mocks).
+    -- Width auto-updates via previewContainer:OnSizeChanged below so the
+    -- 50/50 split holds when the user resizes the window.
     local dmPane = CreateFrame("Frame", nil, previewContainer, "BackdropTemplate")
     dmPane:SetPoint("TOPLEFT", previewContainer, "TOPLEFT", 0, 0)
     dmPane:SetPoint("BOTTOMLEFT", previewContainer, "BOTTOMLEFT", 0, 0)
     dmPane:SetWidth((theme.WINDOW_W - theme.PADDING * 3) / 2)
     theme.ApplyBackdrop(dmPane, "panel")
     f.previewDM = dmPane
+
+    -- Re-split 50/50 whenever the preview container changes width
+    previewContainer:SetScript("OnSizeChanged", function(self, w, _)
+        dmPane:SetWidth((w - theme.PADDING) / 2)
+    end)
 
     local dmTitle = dmPane:CreateFontString(nil, "OVERLAY", theme.FONT_HEADING)
     dmTitle:SetPoint("TOPLEFT", dmPane, "TOPLEFT", 10, -8)
@@ -300,6 +326,26 @@ local function BuildFrame()
     versionFS:SetPoint("RIGHT", footer, "RIGHT", -theme.PADDING, 0)
     versionFS:SetText("v" .. (ns.version or "?"))
     theme.SetTextColor(versionFS, "secondary")
+
+    -- ── Resize handle (DandersFrames-style grip in bottom-right corner) ──
+    -- Standard Blizzard ChatFrame size-grabber textures so it looks native.
+    -- Anchored AFTER footer so it sits on top of the footer's right edge,
+    -- not behind it.
+    local grip = CreateFrame("Button", nil, f)
+    grip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -2, 2)
+    grip:SetSize(16, 16)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetFrameLevel(f:GetFrameLevel() + 5)
+    grip:SetScript("OnMouseDown", safe.WrapScript("ResizeGrip:Down", function(self, button)
+        if button == "LeftButton" then f:StartSizing("BOTTOMRIGHT") end
+    end))
+    grip:SetScript("OnMouseUp", safe.WrapScript("ResizeGrip:Up", function()
+        f:StopMovingOrSizing()
+        SaveWindowSize(f)
+        SaveWindowPos(f)
+    end))
 
     main.frame = f
     return f

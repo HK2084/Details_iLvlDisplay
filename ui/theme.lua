@@ -43,7 +43,11 @@ theme.TITLE_COLOR     = theme.TEXT_ACCENT
 -- DIMENSIONS
 ---------------------------------------------------------------
 theme.WINDOW_W        = 720
-theme.WINDOW_H        = 720    -- bigger to fit persistent preview pane below tab content
+theme.WINDOW_H        = 720    -- default; user can resize via bottom-right grip
+theme.WINDOW_W_MIN    = 720
+theme.WINDOW_H_MIN    = 600
+theme.WINDOW_W_MAX    = 1200
+theme.WINDOW_H_MAX    = 1100
 theme.TITLE_BAR_H     = 28
 theme.TAB_BAR_H       = 32
 theme.FOOTER_H        = 24
