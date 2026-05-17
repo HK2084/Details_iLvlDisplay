@@ -24,6 +24,7 @@ locales\deDE.lua
 ui\theme.lua
 ui\safe_callback.lua
 ui\widgets.lua
+ui\preview_widgets.lua
 ui\main_frame.lua
 ui\page_general.lua
 ui\page_channels.lua

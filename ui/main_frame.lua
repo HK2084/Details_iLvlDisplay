@@ -261,15 +261,7 @@ local function BuildFrame()
     dmTitle:SetPoint("TOPLEFT", dmPane, "TOPLEFT", 10, -8)
     dmTitle:SetText(L["Damage Meter Preview"])
     theme.SetTextColor(dmTitle, "title")
-
-    local dmBody = dmPane:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
-    dmBody:SetPoint("TOPLEFT",  dmPane, "TOPLEFT",  20, -36)
-    dmBody:SetPoint("BOTTOMRIGHT", dmPane, "BOTTOMRIGHT", -20, 12)
-    dmBody:SetJustifyH("LEFT")
-    dmBody:SetJustifyV("TOP")
-    dmBody:SetText("Phase 4: mock Details!-bars + mock BlizzardDM-bars\nwith your iLvl-tags applied. Updates live\nas you toggle settings.")
-    theme.SetTextColor(dmBody, "secondary")
-    f.previewDMBody = dmBody  -- exposed for Phase 4 mock-bar injection
+    dmTitle._titleKeep = true  -- preview.PopulateDamageMeter won't wipe this
 
     -- Right: Unit Frame Preview (ElvUI / Grid2 / Danders mocks)
     local ufPane = CreateFrame("Frame", nil, previewContainer, "BackdropTemplate")
@@ -282,15 +274,15 @@ local function BuildFrame()
     ufTitle:SetPoint("TOPLEFT", ufPane, "TOPLEFT", 10, -8)
     ufTitle:SetText(L["Unit Frame Preview"])
     theme.SetTextColor(ufTitle, "title")
+    ufTitle._titleKeep = true
 
-    local ufBody = ufPane:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
-    ufBody:SetPoint("TOPLEFT",  ufPane, "TOPLEFT",  20, -36)
-    ufBody:SetPoint("BOTTOMRIGHT", ufPane, "BOTTOMRIGHT", -20, 12)
-    ufBody:SetJustifyH("LEFT")
-    ufBody:SetJustifyV("TOP")
-    ufBody:SetText("Phase 4: mock Danders-Frame + mock Grid2-cell\n+ mock ElvUI unit-frame. Live-react to\nposition, font-size, color, set-bonus toggles.")
-    theme.SetTextColor(ufBody, "secondary")
-    f.previewUFBody = ufBody  -- exposed for Phase 4 mock-frame injection
+    -- Populate the live mocks (defer to next frame to ensure layout is resolved)
+    C_Timer.After(0, function()
+        if ns.ui.preview then
+            ns.ui.preview.PopulateDamageMeter(dmPane)
+            ns.ui.preview.PopulateUnitFrames(ufPane)
+        end
+    end)
 
     -- ── Footer ──
     local footer = CreateFrame("Frame", nil, f, "BackdropTemplate")

@@ -43,6 +43,11 @@ local function setKey(k, v)
     local d = db()
     if not d then return end
     d[k] = v
+    -- Notify the live-preview pane that something changed. Throttled to 10Hz
+    -- inside MarkDirty, so a rapid click-spam doesn't refresh per click.
+    if ns.ui and ns.ui.preview and ns.ui.preview.MarkDirty then
+        ns.ui.preview.MarkDirty()
+    end
 end
 
 ---------------------------------------------------------------
