@@ -8,4 +8,10 @@ ignore:
   - .github
   - .gitignore
   - .pkgmeta
+  - .release
   - logo.png
+  - icon_source.png
+  - claude_prompt.txt
+  - test_befehle.md
+  - HISTORY.md
+  - CURSEFORGE_DESCRIPTION.md

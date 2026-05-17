@@ -7,7 +7,14 @@ Shows **item level** and **tier set bonus** on **Details!**, **ElvUI**, **Grid2*
 ## Features
 
 - Item level displayed next to each player name: `Quinroth [254]`
-- **Auto-detection**: works on Details!, Blizzard Damage Meter, or both at the same time
+- **In-game Settings UI** (new in v1.5) — three tabs with persistent live preview, resizable window, full English + German. Open with `/dilvl ui` or via Esc → Options → AddOns
+- **Five output channels**, all independently toggleable:
+  - **Details! Damage Meter** — inline or column layout
+  - **Blizzard's built-in Damage Meter** (12.0+) — fallback when Details! isn't installed
+  - **ElvUI** — `[dilvl]` (with brackets) and `[dilvl:plain]` (bare) tags for any Custom Text
+  - **Grid2** — `dilvl` status for any text indicator
+  - **DandersFrames** — overlay FontString with 13 anchor positions and live font-size slider
+- **Auto-detection** — the addon detects what you have installed and only enables what makes sense by default
 - **Two layout modes** (Details! only): `inline` (appended to name) or `columns` (separate right-aligned columns)
 - **Column mode works during combat** — uses addon-created overlays, no taint
 - Color-coded by gear tier (see table below)
@@ -19,8 +26,8 @@ Shows **item level** and **tier set bonus** on **Details!**, **ElvUI**, **Grid2*
 - Your own iLvl and set bonus update instantly on gear swap — no inspect needed
 - Cross-realm, LFR and LFD support (up to 40 players)
 - Manual inspect protection — background queue pauses when you inspect someone
-- **Independent toggles** — enable Details! bars, Blizzard DM, and/or ElvUI frames separately
-- Optional **ElvUI integration**: adds a `[dilvl]` tag for party/raid unit frames
+- **Per-feature fault isolation** — a bug in one channel can't take down the others (each has its own auto-disable + recovery)
+- **Read-time validators** on SavedVariables — out-of-range or corrupted values are clamped or reset on every login, so a hand-edited config file can never crash the addon
 
 ---
 
@@ -56,17 +63,35 @@ Column mode shows iLvl and tier set during combat. Columns auto-hide on narrow w
 
 ---
 
-## Supported Meters
+## Supported Output Channels
 
-| Meter | Default | Toggle |
-| --- | --- | --- |
-| **Details! Damage Meter** | ON when Details! is installed (primary) | `/dilvl details` |
-| **Blizzard Damage Meter** (12.0+) | AUTO — ON when Details! is **not** installed, OFF otherwise | `/dilvl blizzdm` |
-| **ElvUI party frames** | OFF (opt-in), requires [ElvUI](https://tukui.org/elvui) | `/dilvl elvui on` |
+| Channel | Default | Toggle | Notes |
+| --- | --- | --- | --- |
+| **Details! Damage Meter** | ON when Details! is installed | `/dilvl details` | Full inline + column support, position toggle |
+| **Blizzard Damage Meter** (12.0+) | AUTO — ON when Details! is not installed | `/dilvl blizzdm` | Inline + position toggle; experimental in instanced content |
+| **ElvUI** | OFF (opt-in), requires [ElvUI](https://tukui.org/elvui) | `/dilvl elvui on` | `[dilvl]` and `[dilvl:plain]` tags for Custom Text |
+| **Grid2** | OFF (opt-in), requires [Grid2](https://www.curseforge.com/wow/addons/grid2) | `/dilvl grid2 on` | Custom `dilvl` status, place in any text indicator via Grid2 GUI |
+| **DandersFrames** | OFF (opt-in), requires [DandersFrames](https://www.curseforge.com/wow/addons/dandersframes) | `/dilvl danders on` | Overlay FontString, 13 anchor positions, live font-size slider |
 
-**Smart auto-detection:** The addon is primarily a Details! plugin. If Details! is installed, iLvl shows on Details! bars and the Blizzard Damage Meter is left untouched. If you don't have Details!, the addon automatically falls back to Blizzard's built-in meter. You can always force both on with `/dilvl blizzdm`.
+**Smart auto-detection:** the addon detects what you have installed and only enables what makes sense by default. The Settings UI (Allgemein tab) shows ✓ / ✗ per surface in real time.
 
 **No dependencies required.** Install the addon, and it works with whatever you have.
+
+---
+
+## Settings UI
+
+Open with `/dilvl ui` (or via Esc → Options → AddOns → Details! iLvl Display).
+
+- **Allgemein / General** — master switch, color-by-tier, set-bonus toggle, layout (inline/columns), position (left/right of name), auto-detected channels with ✓ / ✗ status
+- **Ausgabe-Kanäle / Output Channels** — five channel panels with toggles plus per-channel sub-settings (ElvUI tag hint, Grid2 hint, Danders anchor dropdown with all 13 positions, Danders font-size slider 6-30 live, Blizzard DM tristate Auto/Forced On/Forced Off)
+- **Diagnose / Diagnostics** — scrollable, selectable debug dump for bug reports, UI-layer error counters, Reset UI Error Counters and Reset to Defaults buttons
+
+**Persistent live-preview pane** below the tabs — mock Details!-bars and a representative unit-frame react in real time as you change settings, so you see exactly how your changes will look.
+
+**Resizable window** via the grip in the bottom-right corner. Position and size persisted per character.
+
+**German translation** included. Community translations welcome — add a file to `locales/` and submit a PR.
 
 ---
 
@@ -103,13 +128,19 @@ iLvl data is cached for 2 hours per player.
 | Command | What it does |
 | --- | --- |
 | `/dilvl` | Show all commands |
-| `/dilvl on` / `off` | Enable / disable the addon |
+| `/dilvl ui` | Open the in-game Settings UI (v1.5) |
+| `/dilvl on` / `off` | Enable / disable the addon (master switch) |
 | `/dilvl details` | Toggle iLvl display on Details! bars |
 | `/dilvl blizzdm` | Toggle iLvl display on Blizzard Damage Meter |
+| `/dilvl elvui on` / `off` | Toggle ElvUI `[dilvl]` / `[dilvl:plain]` tags |
+| `/dilvl grid2 on` / `off` | Toggle Grid2 `dilvl` status |
+| `/dilvl danders on` / `off` | Toggle Danders Frames overlay |
+| `/dilvl danders pos <opt>` | Danders anchor position. Inside: `top`, `topright`, `topleft`, `bottom`, `bottomright`, `bottomleft`, `center`. Off-frame: `above`, `aboveleft`, `aboveright`, `below`, `belowleft`, `belowright` |
+| `/dilvl danders size <n>` | Danders text size (6-30, live, no `/reload`) |
 | `/dilvl layout` | Toggle between `inline` and `columns` mode (Details! only) |
 | `/dilvl layout inline` | Switch to inline mode (appended to name) |
 | `/dilvl layout columns` | Switch to column mode (separate columns, works in combat) |
-| `/dilvl elvui on` / `off` | Toggle ElvUI `[dilvl]` party frame tag |
+| `/dilvl position` | Toggle iLvl left / right of player name |
 | `/dilvl color` | Toggle color-coded iLvl display |
 | `/dilvl setbonus` | Toggle 2P/4P tier set bonus display |
 | `/dilvl inspect` | Manually trigger a full group re-inspect |
@@ -125,11 +156,16 @@ iLvl data is cached for 2 hours per player.
 
 If you use ElvUI, you can display iLvl directly on party/raid frames:
 
-1. Run `/dilvl elvui` to enable the tag
-2. In ElvUI → Unit Frames → Party (or Raid/Player) → Name text, add `[dilvl]`
-3. Example name text: `[name] [dilvl]`
+1. Run `/dilvl elvui on` to enable the tags
+2. In ElvUI → Unit Frames → Party (or Raid/Player) → Name text, add `[dilvl]` (brackets) or `[dilvl:plain]` (bare)
+3. Example name text:
+   - `[name] [dilvl]` → renders `Quinroth [263]`
+   - `[name] [dilvl:plain]` → renders `Quinroth 263`
 
-The tag updates instantly when inspect data arrives, on gear swaps, or when the group changes — no polling timer. Zero performance cost during idle time.
+Both tags coexist and share the same color, set-bonus, and toggle settings. Pick whichever fits your unit-frame layout.
+
+The tags update instantly when inspect data arrives, on gear swaps, or when the group changes — no polling timer. Zero performance cost during idle time.
+
 **No ElvUI installed? This does nothing — no errors, no performance cost.**
 
 ---

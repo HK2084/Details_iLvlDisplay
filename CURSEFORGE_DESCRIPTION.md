@@ -2,6 +2,8 @@
 
 Built for **WoW: Midnight (12.0+)**. Five independent output channels — auto-detects what you have installed, no configuration needed.
 
+**New in v1.5:** in-game Settings UI (`/dilvl ui` or Esc → Options → AddOns) with three tabs, live preview, and full German translation. Resizable window. Per-page fault isolation so a broken tab can never take down the rest of the UI.
+
 **Don't use Details!?** No problem — the addon falls back to **Blizzard's Damage Meter** (12.0+) and works on top of your unit-frame addon of choice (ElvUI / Grid2 / Danders). Force BlizzDM on with `/dilvl blizzdm`.
 
 ***
@@ -24,6 +26,7 @@ Position toggle (`/dilvl position`) applies to Details! and Blizzard DM. Column 
 **Features**
 
 *   Item level in brackets next to each player name: `Razul [259]`
+*   **In-game Settings UI** (new in v1.5) — three tabs (General / Output Channels / Diagnostics) with a persistent live-preview pane that updates as you change settings. Resizable window. Open via `/dilvl ui` or Esc → Options → AddOns. Full EN + DE
 *   **Five output channels** — Details! bars, ElvUI tag, Grid2 status, Danders FontString, Blizzard DM — independently toggleable
 *   **Two layout modes** (Details!): `inline` or `columns` — switch via `/dilvl layout`
 *   **Position toggle** — iLvl before or after player name via `/dilvl position`
@@ -74,6 +77,7 @@ These are Blizzard restrictions, not addon bugs. **Details! bars, ElvUI, Grid2, 
 **Slash Commands**
 
 *   `/dilvl` — show all commands
+*   `/dilvl ui` — open the in-game Settings UI (v1.5)
 *   `/dilvl on` / `off` — enable / disable
 *   `/dilvl details` — toggle Details! bars
 *   `/dilvl blizzdm` — toggle Blizzard Damage Meter overlay

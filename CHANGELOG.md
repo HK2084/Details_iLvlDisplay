@@ -1,22 +1,22 @@
 # Changelog
 
-## v1.4.4
+## v1.5.0
 
 ### New
 
-- **Adjustable text size on Danders Frames** — new slash `/dilvl danders size <n>`, range 6-30. Live update without `/reload`. Default 10, persists per character. Existing users see a one-shot login hint when Danders Frames is installed. Thanks to harrissx for the request
-- **Off-frame anchor positions on Danders Frames** — six new positions for `/dilvl danders pos`: `above`, `aboveleft`, `aboveright`, `below`, `belowleft`, `belowright`. The iLvl text now floats *outside* the frame bounding box so it doesn't overlap the unit's name or HP at larger font sizes. Inside positions (top/topright/...) remain available — pick whichever fits your raid layout. Note: in dense raid stacks (25er with no gap between frames), above/below will overlap the neighbouring frame, so prefer inside positions in that case
+- **Settings UI** — opens via `/dilvl ui` or via Esc → Options → AddOns → Details! iLvl Display. Three tabs (General / Output Channels / Diagnostics) plus a persistent live-preview pane below the tabs that updates as you change settings. Resizable window (grip in bottom-right corner). Position and size persisted per character
+- **Full configuration from the UI** — Master Toggles (Enable / Color / Set bonus), Layout (inline/columns), Position (left/right of name) on the General tab. Per-channel toggles, Danders anchor position dropdown with all 13 positions, Danders font-size slider (6–30 live), Blizzard DM tristate (Auto / Forced On / Forced Off) on the Output Channels tab
+- **Live preview** — mock Details!-bars and a representative mock unit-frame react in real time to every setting change, so users see exactly how their changes look before committing
+- **Diagnostics tab** — scrollable, selectable debug dump (one-click select-all-and-copy for bug reports), UI error counters, Reset UI Error Counters and Reset to Defaults buttons
+- **German translation** — full deDE locale for every UI string with real Umlauts. Community translations can be added as additional `locales/` files without touching the core
 
 ### Defense
 
-- **SafeUnitName: pcall-protected** — `UnitName()` is now wrapped against tainted-execution rejection so a hard-error from Blizzard's secret-arguments layer can't take the addon down. Three direct call sites in the Blizzard Damage Meter integration migrated to the shared wrapper. New `UnitNameRejected` counter in `/dilvl debug` makes regressions visible
-- **12.0.7 compatibility** — TOC declares `120007` alongside `120001` and `120005`. Audited against PTR build 67227: no breaking changes for our APIs. Four preconditions (`RequiresDeclassifiedUnitIdentity`, `RequiresScriptObjectAlphaAccess`, `RequiresScriptObjectDesaturationAccess`, `RequiresStatusBarDesaturationAccess`) flip their failure mode from `ReturnNothing` to `ReturnWithError`; our `pcall` defense layer covers both paths
-
-### Refactor
-
-- **Foundation modular-base** — addon namespace bootstrap split into `init.lua` (defaults, position keys, login-hint registry), `secrets.lua` (12.0+ secret-value defense layer), `util.lua` (tier-set whitelist, color, name extraction). `core.lua` reduced from 2264 → ~2100 lines. Zero behavior change for existing users
-- **Per-feature kill-switch isolation** — the previously-named `hookErrors` counter was Details!-bars-scoped already, now renamed `detailsBarErrors` to make that explicit. BlizzDM, Danders, ElvUI, and Grid2 have always carried their own independent counters — a bug in one feature can never auto-disable another
-- **CanCompareUnitTokens probe fixed in /dilvl debug** — the foundation refactor accidentally dropped the local probe in `core.lua`, making the report always read `no`. Now reads `C_Secrets.CanCompareUnitTokens` directly
+- **UI-layer fault isolation** — every widget callback is pcall-wrapped, every page init is pcall-wrapped, and a per-page error counter (cap 5) swaps a broken page to an inline error placeholder while the rest of the UI keeps working
+- **Read-time validators on SavedVariables** — out-of-range slider values, invalid enum strings, wrong types are clamped or reset to defaults on every login. A manually-edited SavedVariables file with garbage values can't crash the addon
+- **Recursive defaults merge + schema-version migration scaffold** — future setting additions and renames apply cleanly to existing installs without losing user data
+- **Single-source refresh router** — both the slash handler and the Settings UI go through one apply function per setting so flipping Layout or any other option always triggers the same Clear/Re-render sequence (no more double-rendered tags)
+- **Reset to Defaults** — confirmation popup before wiping; soft-wipe preserves the iLvl cache, set-bonus cache, and window position so users don't lose minutes of inspection work after a setting mistake
 
 ---
 
