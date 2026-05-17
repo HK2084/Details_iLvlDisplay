@@ -43,6 +43,16 @@ local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- guard against multiple tickers on repeated PLAYER_ENTERING_WORLD
 local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI is built
+-- Round 6 production-hardening helpers — forward-declared here so the
+-- ADDON_LOADED OnEvent closure (line ~1017) captures them as upvalues,
+-- not as globals. Without this, Lua compiles the closure BEFORE these
+-- functions are defined further down, binds them as globals (nil), and
+-- the ADDON_LOADED defaults-merge call chain silently fails — leaving
+-- ilvlCache nil and crashing later on first cache write. (Caught in
+-- final v1.5 review, Hasan saw it as core.lua:188 indexed-assignment nil.)
+local CURRENT_SCHEMA_VERSION
+local VALIDATORS
+local RecursiveDefaultsMerge, MigrateSchema, ValidateDb
 local openRaidLib = nil -- LibOpenRaid-1.0 handle; assigned after ADDON_LOADED if available
 local barColumns = {}       -- bar -> {ilvlFS, tierFS} (custom column FontStrings for layout="columns")
 local columnRefreshPending = false -- debounce flag for next-frame column refresh
@@ -1363,13 +1373,13 @@ Details_iLvlDisplay_ShowDebugWindow = ShowDebugWindow
 -- first to ship it. Goal: addon survives manually-edited or corrupted
 -- SavedVariables without crashing.
 ---------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 1  -- assigns to forward-declared upvalue at file top
 
 -- Validators: clamp/coerce setting values to sane ranges. Run after
 -- defaults-merge so missing keys are filled first. Generic fallback below
 -- (boolean/number/string type-check + reset to default) covers settings
 -- not in this table.
-local VALIDATORS = {
+VALIDATORS = {
     dandersFontSize = function(v)
         if type(v) ~= "number" then return 10 end
         if v < 6 then return 6 end
@@ -1399,7 +1409,7 @@ local VALIDATORS = {
     end,
 }
 
-local function RecursiveDefaultsMerge(target, source)
+RecursiveDefaultsMerge = function(target, source)
     for k, v in pairs(source) do
         if type(v) == "table" then
             if type(target[k]) ~= "table" then target[k] = {} end
@@ -1410,7 +1420,7 @@ local function RecursiveDefaultsMerge(target, source)
     end
 end
 
-local function MigrateSchema(db_in)
+MigrateSchema = function(db_in)
     local from = db_in.schemaVersion or 1
     -- Placeholder for future migrations. Pattern:
     --   if from < 2 then
@@ -1421,7 +1431,7 @@ local function MigrateSchema(db_in)
     db_in.schemaVersion = CURRENT_SCHEMA_VERSION
 end
 
-local function ValidateDb(db_in)
+ValidateDb = function(db_in)
     for k, defaultVal in pairs(defaults) do
         local actualVal = db_in[k]
         local validator = VALIDATORS[k]
@@ -1461,13 +1471,20 @@ ns.ResetToDefaults = function()
     for k, v in pairs(preserve) do
         if v ~= nil then db[k] = v end
     end
-    -- Re-render
+    -- Re-render: broadcast every settings key so all surfaces refresh
+    -- (was: only enabled+layout, which left 10 other settings stale-visible
+    -- until next sort event or tab switch — final review finding).
     if ns.ApplySettingChange then
-        ns.ApplySettingChange("enabled")
-        ns.ApplySettingChange("layout")
+        for k in pairs(defaults) do
+            pcall(ns.ApplySettingChange, k)
+        end
     end
     if ns.ui and ns.ui.preview and ns.ui.preview.MarkDirty then
         ns.ui.preview.MarkDirty()
+    end
+    -- Re-render the currently-open UI tab so widgets reflect fresh values
+    if ns.ui and ns.ui.main and ns.ui.main.activeTabId then
+        ns.ui.main.SwitchTab(ns.ui.main.activeTabId)
     end
     print("|cFF00FF00Details! iLvl Display:|r All settings reset to defaults.")
 end
