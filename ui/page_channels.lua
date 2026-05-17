@@ -20,7 +20,9 @@ function page.Init(parent)
     info:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     info:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, 0)
 
-    local stub = W.CreatePanel(parent, parent:GetWidth(), 200, "Output Channels (WIP)")
+    -- Width comes from SetPoint anchors; CreatePanel's w arg is ignored
+    -- when we anchor both LEFT and RIGHT. Height stays fixed at 200.
+    local stub = W.CreatePanel(parent, 1, 200, "Output Channels (WIP)")
     stub:SetPoint("TOPLEFT",  info, "BOTTOMLEFT", 0, -theme.SECTION_GAP)
     stub:SetPoint("TOPRIGHT", info, "BOTTOMRIGHT", 0, -theme.SECTION_GAP)
 
@@ -29,8 +31,10 @@ function page.Init(parent)
         .. "(Details! / ElvUI / Grid2 / Danders / Blizzard DM)\n\n"
         .. "For now use slash commands:\n"
         .. "/dilvl details, /dilvl elvui on, /dilvl grid2 on, /dilvl danders on, /dilvl blizzdm",
-        theme.FONT_LABEL, "secondary", stub:GetWidth() - 40)
-    body:SetPoint("TOPLEFT", stub, "TOPLEFT", 20, -36)
+        theme.FONT_LABEL, "secondary", nil)
+    body:SetPoint("TOPLEFT",  stub, "TOPLEFT",  20, -36)
+    body:SetPoint("TOPRIGHT", stub, "TOPRIGHT", -20, -36)
+    body:SetJustifyH("LEFT")
 end
 
 if ns.ui and ns.ui.main and ns.ui.main.RegisterPage then

@@ -43,10 +43,11 @@ theme.TITLE_COLOR     = theme.TEXT_ACCENT
 -- DIMENSIONS
 ---------------------------------------------------------------
 theme.WINDOW_W        = 720
-theme.WINDOW_H        = 520
+theme.WINDOW_H        = 720    -- bigger to fit persistent preview pane below tab content
 theme.TITLE_BAR_H     = 28
 theme.TAB_BAR_H       = 32
 theme.FOOTER_H        = 24
+theme.PREVIEW_H       = 240    -- height of the persistent preview section at the bottom
 theme.PADDING         = 12
 theme.PANEL_INSET     = 8
 theme.WIDGET_GAP      = 6

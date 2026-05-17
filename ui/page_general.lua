@@ -55,7 +55,7 @@ local function detected()
         ["Grid2"]       = (Grid2 ~= nil),
         ["Danders"]     = (DandersFrames_IsReady ~= nil),
         ["Blizzard DM"] = (C_AddOns and C_AddOns.IsAddOnLoaded
-            and C_AddOns.IsAddOnLoaded("Blizzard_DamageMeter")) or true,
+            and C_AddOns.IsAddOnLoaded("Blizzard_DamageMeter")) and true or false,
     }
 end
 

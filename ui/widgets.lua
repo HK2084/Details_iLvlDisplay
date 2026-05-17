@@ -20,6 +20,15 @@ ns.ui.widgets = W
 local theme = ns.ui.theme
 local safe  = ns.ui.safe
 
+-- Monotonic counter for globally-named widgets (Blizzard's UIDropDownMenuTemplate
+-- needs a global frame name for OnEnter/OnLeave hooking). Avoids birthday-paradox
+-- collisions of math.random — guaranteed unique within session.
+local _widgetSeq = 0
+local function uniqueName(prefix)
+    _widgetSeq = _widgetSeq + 1
+    return prefix .. _widgetSeq
+end
+
 ---------------------------------------------------------------
 -- CreatePanel — boxed group with optional title FontString.
 -- Use for visual grouping of related settings, mirrors DandersFrames
@@ -75,10 +84,16 @@ function W.CreateCheckbox(parent, label, getter, setter, tooltip)
         cb.Text:SetPoint("LEFT", cb, "RIGHT", 4, 0)
     end
 
-    -- Initial state from getter (deferred to OnShow so db may not exist at create-time).
+    -- Initial state from getter. OnShow handles future re-syncs; explicit
+    -- call here covers the common case (widget created when parent already
+    -- visible — OnShow doesn't fire without a state change).
     cb:SetScript("OnShow", safe.WrapScript("Checkbox:OnShow:" .. (label or "?"), function(self)
         if getter then self:SetChecked(getter() and true or false) end
     end))
+    if getter then
+        local ok, v = pcall(getter)
+        if ok then cb:SetChecked(v and true or false) end
+    end
 
     cb:SetScript("OnClick", safe.WrapScript("Checkbox:OnClick:" .. (label or "?"), function(self)
         if setter then setter(self:GetChecked() and true or false) end
@@ -135,6 +150,14 @@ function W.CreateSlider(parent, label, minVal, maxVal, step, getter, setter, too
             self.valueFS:SetText(tostring(v))
         end
     end))
+    -- Explicit initial sync (OnShow doesn't fire without state change)
+    if getter then
+        local ok, v = pcall(getter)
+        if ok and v then
+            slider:SetValue(v)
+            valueFS:SetText(tostring(v))
+        end
+    end
 
     slider:SetScript("OnValueChanged", safe.WrapScript("Slider:OnValueChanged:" .. (label or "?"), function(self, v)
         -- Snap to step for visual consistency
@@ -170,7 +193,7 @@ function W.CreateDropdown(parent, label, choices, getter, setter, tooltip)
         container.label:SetPoint("TOPLEFT", container, "TOPLEFT", 6, 0)
     end
 
-    local dd = CreateFrame("Frame", "DilvlDropdown_" .. tostring(math.random(100000)),
+    local dd = CreateFrame("Frame", uniqueName("DilvlDropdown_"),
         container, "UIDropDownMenuTemplate")
     dd:SetPoint("TOPLEFT", container, "TOPLEFT", -10, -16)
     container.dropdown = dd
@@ -193,7 +216,7 @@ function W.CreateDropdown(parent, label, choices, getter, setter, tooltip)
         end
     end)
 
-    container:SetScript("OnShow", safe.WrapScript("Dropdown:OnShow:" .. (label or "?"), function()
+    local function syncDropdown()
         local v = getter and getter() or nil
         if v then
             UIDropDownMenu_SetSelectedValue(dd, v)
@@ -204,7 +227,10 @@ function W.CreateDropdown(parent, label, choices, getter, setter, tooltip)
                 end
             end
         end
-    end))
+    end
+    container:SetScript("OnShow", safe.WrapScript("Dropdown:OnShow:" .. (label or "?"), syncDropdown))
+    -- Explicit initial sync (OnShow doesn't fire without state change)
+    pcall(syncDropdown)
 
     if tooltip then
         dd:SetScript("OnEnter", function(self)
@@ -279,12 +305,15 @@ function W.CreateRadioGroup(parent, label, choices, getter, setter, orientation)
         prev = rb
     end
 
-    container:SetScript("OnShow", safe.WrapScript("RadioGroup:OnShow:" .. (label or "?"), function()
+    local function syncRadios()
         local v = getter and getter() or nil
         for _, rb in ipairs(container.radios) do
             rb:SetChecked(rb.value == v)
         end
-    end))
+    end
+    container:SetScript("OnShow", safe.WrapScript("RadioGroup:OnShow:" .. (label or "?"), syncRadios))
+    -- Explicit initial sync
+    pcall(syncRadios)
 
     container:SetHeight(label and 44 or 24)
     return container

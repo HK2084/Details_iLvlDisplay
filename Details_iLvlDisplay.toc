@@ -27,7 +27,6 @@ ui\widgets.lua
 ui\main_frame.lua
 ui\page_general.lua
 ui\page_channels.lua
-ui\page_preview.lua
 ui\page_diagnostics.lua
 ui\blizzard_settings.lua
 ui\slash_ui.lua

@@ -1,8 +1,10 @@
 -- ui/main_frame.lua — Settings window skeleton.
 --
--- ARCHITECTURE:
+-- ARCHITECTURE (after Hasan's restructure 2026-05-16):
 --   - One singleton frame, lazy-created on first /dilvl ui call.
---   - 4 horizontal top-tabs (General / Channels / Live Preview / Diagnostics).
+--   - 3 horizontal top-tabs (General / Output Channels / Diagnostics).
+--   - Tab content fills upper area; PERSISTENT PREVIEW PANE sits below tabs.
+--     User sees preview update live as they change settings — no tab-switching.
 --   - Tab switching = SafePageInit -> page Init(contentFrame), with
 --     fault-isolation via ns.ui.safe.
 --   - Position + last-active-tab persisted in db.uiState (SavedVar subtable).
@@ -21,45 +23,55 @@ local W     = ns.ui.widgets
 local L     = ns.L
 
 ---------------------------------------------------------------
--- Tab registry. Pages are added by their own file calling
--- ns.ui.main.RegisterPage(id, labelKey, initFn). This way main_frame.lua
--- doesn't import every page file — pages are responsible for self-registering
--- on file load. Decoupled, page failures don't propagate here.
+-- Tab registry. Pages add themselves via main.RegisterPage(id, labelKey, initFn)
+-- so main_frame.lua doesn't import every page file. Decoupled.
 ---------------------------------------------------------------
-main.pages = {}      -- ordered list: { {id="general", labelKey="General", initFn=...}, ... }
+main.pages = {}      -- ordered list
 main.pagesByID = {}  -- pageId -> entry
 
 function main.RegisterPage(id, labelKey, initFn)
-    if main.pagesByID[id] then return end -- guard against double-registration
-    local entry = {id = id, labelKey = labelKey, initFn = initFn, initialized = false}
+    if main.pagesByID[id] then return end
+    local entry = {id = id, labelKey = labelKey, initFn = initFn}
     table.insert(main.pages, entry)
     main.pagesByID[id] = entry
 end
 
 ---------------------------------------------------------------
--- Singleton frame access.
+-- Singleton + state
 ---------------------------------------------------------------
-main.frame = nil  -- the actual CreateFrame instance, lazy
+main.frame = nil
 main.activeTabId = nil
 
 local function GetDbState()
-    -- ns.db is set by core.lua at ADDON_LOADED. uiState lives under it.
     local db = ns.db or _G.Details_iLvlDisplayDB
     if not db then return nil end
-    db.uiState = db.uiState or { x = nil, y = nil, lastTab = "general" }
+    db.uiState = db.uiState or { point = nil, relPoint = nil, x = nil, y = nil, lastTab = "general" }
     return db.uiState
+end
+
+---------------------------------------------------------------
+-- Children-cleanup helper. Hide AND SetParent(nil) AND ClearAllPoints so
+-- orphaned frames don't leak event scripts / OnUpdate ticks.
+---------------------------------------------------------------
+local function ClearChildren(parent)
+    if not parent then return end
+    for _, child in ipairs({parent:GetChildren()}) do
+        child:Hide()
+        child:ClearAllPoints()
+        child:SetParent(nil)
+    end
 end
 
 ---------------------------------------------------------------
 -- Tab strip — one button per registered page.
 ---------------------------------------------------------------
-local function CreateTabButton(parent, entry, index)
+local function CreateTabButton(parent, tabsArr, entry, index)
     local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
-    btn:SetSize(140, theme.TAB_BAR_H - 4)
+    btn:SetSize(160, theme.TAB_BAR_H - 4)
     if index == 1 then
         btn:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", theme.PADDING, 0)
     else
-        btn:SetPoint("LEFT", parent.tabs[index - 1], "RIGHT", 4, 0)
+        btn:SetPoint("LEFT", tabsArr[index - 1], "RIGHT", 4, 0)
     end
     theme.ApplyBackdrop(btn, "tab_inactive")
 
@@ -73,44 +85,47 @@ local function CreateTabButton(parent, entry, index)
         main.SwitchTab(entry.id)
     end))
 
-    btn:SetScript("OnEnter", function(self)
+    btn:SetScript("OnEnter", safe.WrapScript("Tab:OnEnter:" .. entry.id, function(self)
         if main.activeTabId ~= entry.id then
             theme.ApplyBackdrop(self, "tab_active")
         end
-    end)
-    btn:SetScript("OnLeave", function(self)
+    end))
+    btn:SetScript("OnLeave", safe.WrapScript("Tab:OnLeave:" .. entry.id, function(self)
         if main.activeTabId ~= entry.id then
             theme.ApplyBackdrop(self, "tab_inactive")
         end
-    end)
+    end))
 
     btn.entry = entry
     return btn
 end
 
 ---------------------------------------------------------------
--- Tab switching — clears the content area, calls page initFn via
--- SafePageInit, swaps to error placeholder if needed. Persists active tab.
+-- Tab switching — set currentPage UPFRONT so any error during cleanup or
+-- init gets attributed correctly. Then clean previous tab content, call
+-- page init via SafePageInit (or show placeholder if broken).
 ---------------------------------------------------------------
 function main.SwitchTab(pageId)
     if not main.frame or not main.frame.content then return end
     local entry = main.pagesByID[pageId]
     if not entry then return end
 
-    -- Update tab visuals (active/inactive)
+    -- Set currentPage BEFORE cleanup so cleanup errors are attributed here.
+    safe.currentPage = pageId
+
+    -- Tab visuals
     for _, b in ipairs(main.frame.tabs) do
         theme.ApplyBackdrop(b, b.entry.id == pageId and "tab_active" or "tab_inactive")
         theme.SetTextColor(b.label, b.entry.id == pageId and "accent" or "primary")
     end
     main.activeTabId = pageId
 
-    -- Clear previous content children (hide; full GC waits for /reload).
-    for _, child in ipairs({main.frame.content:GetChildren()}) do
-        child:Hide()
-        child:SetParent(nil)
-    end
+    -- Cleanup previous content children (Hide + Unparent + ClearAllPoints)
+    ClearChildren(main.frame.content)
+    -- Dismiss any stuck GameTooltip from previous tab
+    if GameTooltip and GameTooltip:IsShown() then GameTooltip:Hide() end
 
-    -- Render page (or placeholder if broken).
+    -- Render page (or placeholder if broken)
     if safe.pageBroken[pageId] then
         safe.BuildPlaceholder(main.frame.content, pageId)
     else
@@ -125,6 +140,31 @@ function main.SwitchTab(pageId)
     -- Persist
     local state = GetDbState()
     if state then state.lastTab = pageId end
+end
+
+---------------------------------------------------------------
+-- Position helpers — save point+relPoint+x+y so symmetric restore avoids
+-- the "window jumps on every reopen" drift bug.
+---------------------------------------------------------------
+local function SaveWindowPos(f)
+    local point, _, relPoint, x, y = f:GetPoint(1)
+    if not point then return end
+    local state = GetDbState()
+    if not state then return end
+    state.point    = point
+    state.relPoint = relPoint
+    state.x        = x
+    state.y        = y
+end
+
+local function RestoreWindowPos(f)
+    local state = GetDbState()
+    f:ClearAllPoints()
+    if state and state.point and state.relPoint and state.x and state.y then
+        f:SetPoint(state.point, UIParent, state.relPoint, state.x, state.y)
+    else
+        f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    end
 end
 
 ---------------------------------------------------------------
@@ -144,40 +184,34 @@ local function BuildFrame()
     theme.ApplyBackdrop(f, "window")
     f:Hide()
 
-    -- Restore position
-    local state = GetDbState()
-    if state and state.x and state.y then
-        f:SetPoint("CENTER", UIParent, "CENTER", state.x, state.y)
-    else
-        f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-    end
-
-    -- Escape-to-close
+    RestoreWindowPos(f)
     tinsert(UISpecialFrames, "Details_iLvlDisplay_SettingsFrame")
 
-    -- ── Title bar ──
+    -- ── Title bar (drag, title, close button) ──
     local titleBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
     titleBar:SetHeight(theme.TITLE_BAR_H)
     titleBar:SetPoint("TOPLEFT",  f, "TOPLEFT",  0, 0)
     titleBar:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
     titleBar:EnableMouse(true)
     titleBar:RegisterForDrag("LeftButton")
-    titleBar:SetScript("OnDragStart", function() f:StartMoving() end)
-    titleBar:SetScript("OnDragStop", function()
-        f:StopMovingOrSizing()
-        local _, _, _, x, y = f:GetPoint(1)
-        local s = GetDbState()
-        if s then s.x = x; s.y = y end
-    end)
+    titleBar:SetScript("OnDragStart", safe.WrapScript("TitleBar:OnDragStart",
+        function() f:StartMoving() end))
+    titleBar:SetScript("OnDragStop", safe.WrapScript("TitleBar:OnDragStop",
+        function() f:StopMovingOrSizing(); SaveWindowPos(f) end))
 
     local title = titleBar:CreateFontString(nil, "OVERLAY", theme.FONT_TITLE)
     title:SetPoint("LEFT", titleBar, "LEFT", theme.PADDING, 0)
     title:SetText(L["Details! iLvl Display"] .. "  v" .. (ns.version or "?"))
     theme.SetTextColor(title, "accent")
 
+    -- UIPanelCloseButton has a default OnClick that hides its parent.
+    -- HookScript adds our handler without clobbering Blizzard's default.
     local closeBtn = CreateFrame("Button", nil, titleBar, "UIPanelCloseButton")
     closeBtn:SetPoint("RIGHT", titleBar, "RIGHT", -2, 0)
-    closeBtn:SetScript("OnClick", safe.WrapScript("CloseButton", function() f:Hide() end))
+    closeBtn:HookScript("OnClick", safe.WrapScript("CloseButton:Hook", function()
+        -- Persist on close in addition to the default Hide-parent action.
+        SaveWindowPos(f)
+    end))
 
     f.titleBar = titleBar
 
@@ -190,14 +224,46 @@ local function BuildFrame()
     f.tabs = {}
 
     for i, entry in ipairs(main.pages) do
-        f.tabs[i] = CreateTabButton(tabBar, entry, i)
+        f.tabs[i] = CreateTabButton(tabBar, f.tabs, entry, i)
     end
 
-    -- ── Content area ──
+    -- ── Content area (above preview pane) ──
     local content = CreateFrame("Frame", nil, f)
     content:SetPoint("TOPLEFT",     tabBar,  "BOTTOMLEFT",  theme.PADDING, -theme.PADDING)
-    content:SetPoint("BOTTOMRIGHT", f,       "BOTTOMRIGHT", -theme.PADDING, theme.FOOTER_H + theme.PADDING)
+    content:SetPoint("TOPRIGHT",    tabBar,  "BOTTOMRIGHT", -theme.PADDING, -theme.PADDING)
+    -- Bottom edge sits above the preview pane (with footer below preview).
+    content:SetHeight(theme.WINDOW_H
+        - theme.TITLE_BAR_H - theme.TAB_BAR_H
+        - theme.PREVIEW_H - theme.FOOTER_H
+        - theme.PADDING * 3 - 2)
     f.content = content
+
+    -- ── Preview pane (PERSISTENT — visible across all tabs) ──
+    local previewPane = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    previewPane:SetPoint("TOPLEFT",  content, "BOTTOMLEFT",  0, -theme.PADDING)
+    previewPane:SetPoint("TOPRIGHT", content, "BOTTOMRIGHT", 0, -theme.PADDING)
+    previewPane:SetHeight(theme.PREVIEW_H)
+    theme.ApplyBackdrop(previewPane, "panel")
+    f.previewPane = previewPane
+
+    local previewTitle = previewPane:CreateFontString(nil, "OVERLAY", theme.FONT_HEADING)
+    previewTitle:SetPoint("TOPLEFT", previewPane, "TOPLEFT", 10, -8)
+    previewTitle:SetText(L["Live Preview"])
+    theme.SetTextColor(previewTitle, "title")
+
+    -- Placeholder body — Phase 4 will populate with mock Details!-bars + mock
+    -- unit-frame + mock Danders-overlay that update live on db change.
+    local previewBody = previewPane:CreateFontString(nil, "OVERLAY", theme.FONT_LABEL)
+    previewBody:SetPoint("TOPLEFT",  previewPane, "TOPLEFT",  20, -36)
+    previewBody:SetPoint("BOTTOMRIGHT", previewPane, "BOTTOMRIGHT", -20, 12)
+    previewBody:SetJustifyH("LEFT")
+    previewBody:SetJustifyV("TOP")
+    previewBody:SetText(
+        "Live Preview Pane\n\n"
+        .. "Coming in Phase 4: mock Details!-bars + mock unit-frame +\n"
+        .. "mock Danders-overlay that update live as you change settings\n"
+        .. "on the tabs above. No tab-switching needed.")
+    theme.SetTextColor(previewBody, "secondary")
 
     -- ── Footer ──
     local footer = CreateFrame("Frame", nil, f, "BackdropTemplate")
@@ -221,11 +287,9 @@ local function BuildFrame()
 end
 
 ---------------------------------------------------------------
--- Public Open / Close / Toggle entry points (called by slash_ui.lua and
--- blizzard_settings.lua).
+-- Public Open / Close / Toggle
 ---------------------------------------------------------------
 function main.Open(pageId)
-    -- In-combat refusal (Plater pattern): defer to PLAYER_REGEN_ENABLED.
     if InCombatLockdown() then
         ns._uiOpenPending = pageId or true
         return false
@@ -235,12 +299,19 @@ function main.Open(pageId)
 
     local state = GetDbState()
     local target = pageId or (state and state.lastTab) or (main.pages[1] and main.pages[1].id)
-    if target then main.SwitchTab(target) end
+    if target and main.pagesByID[target] then
+        main.SwitchTab(target)
+    elseif main.pages[1] then
+        main.SwitchTab(main.pages[1].id)
+    end
     return true
 end
 
 function main.Close()
-    if main.frame then main.frame:Hide() end
+    if main.frame and main.frame:IsShown() then
+        SaveWindowPos(main.frame)
+        main.frame:Hide()
+    end
 end
 
 function main.Toggle(pageId)
@@ -253,13 +324,15 @@ end
 
 ---------------------------------------------------------------
 -- Deferred-open event handler — fires the pending open after combat ends.
+-- Wrapped in SafeCallback so a bad Open() doesn't leave the handler stuck
+-- firing on every combat-end forever.
 ---------------------------------------------------------------
 local deferFrame = CreateFrame("Frame")
 deferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-deferFrame:SetScript("OnEvent", function()
+deferFrame:SetScript("OnEvent", safe.WrapScript("DeferredOpen", function()
     if ns._uiOpenPending then
         local pid = (ns._uiOpenPending ~= true) and ns._uiOpenPending or nil
         ns._uiOpenPending = nil
         main.Open(pid)
     end
-end)
+end))

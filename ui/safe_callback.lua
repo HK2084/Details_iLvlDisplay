@@ -108,10 +108,12 @@ end
 ---------------------------------------------------------------
 function SC.BuildPlaceholder(parent, pageId)
     if not parent then return end
-    -- Clear children (any half-rendered widgets from the broken init).
-    -- Cheap version: hide them. Full cleanup happens on /reload.
+    -- Cleanup any half-rendered widgets from the broken init: Hide + Unparent
+    -- + ClearAllPoints, so orphan frames don't leak OnUpdate/OnEvent ticks.
     for _, child in ipairs({parent:GetChildren()}) do
         child:Hide()
+        child:ClearAllPoints()
+        child:SetParent(nil)
     end
     local theme = ns.ui and ns.ui.theme
     local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
