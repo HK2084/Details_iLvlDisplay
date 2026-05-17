@@ -1350,6 +1350,64 @@ end
 Details_iLvlDisplay_ShowDebugWindow = ShowDebugWindow
 
 ---------------------------------------------------------------
+-- ApplySettingChange — central refresh-router. Both the slash handler and
+-- the Settings UI call this after writing a setting to db, so the visual
+-- side-effects (re-render Details! bars, switch layout mode, etc.) happen
+-- consistently regardless of which entry point changed the setting.
+--
+-- BACKGROUND: before this existed, the UI setters wrote to db but didn't
+-- call the right Clear/Refresh functions, so toggling Layout in the UI
+-- caused inline AND columns to render simultaneously (Hasan 2026-05-16).
+--
+-- This is the single source of truth for "what refresh does a setting need".
+-- Slash command bodies could be refactored to call this too — kept duplicate
+-- for now since they already print user feedback and the bodies are small.
+---------------------------------------------------------------
+ns.ApplySettingChange = function(key)
+    if not db then return end
+    if key == "enabled" then
+        if db.enabled then
+            RefreshAllBarTexts()
+            NotifyElvUI()
+        else
+            ClearAllBarTags()
+            NotifyElvUI()
+        end
+    elseif key == "colorIlvl" or key == "showSetBonus" then
+        RefreshAllBarTexts()
+        if db.layout == "columns" then RefreshAllColumns() end
+        NotifyElvUI()
+    elseif key == "showInDetails" then
+        if db.showInDetails then
+            detailsBarErrors = 0
+            RefreshAllBarTexts()
+        else
+            ClearAllBarTags()
+        end
+    elseif key == "ilvlPosition" then
+        if db.layout == "inline" then
+            ClearAllBarTags()
+            RefreshAllBarTexts()
+        end
+    elseif key == "layout" then
+        if db.layout == "columns" then
+            ClearAllBarTags()
+            HookAllBars()
+            RebuildNameIlvlMap()
+            RefreshAllColumns()
+        else
+            ClearAllColumns()
+            RebuildNameIlvlMap()
+            RefreshAllBarTexts()
+        end
+    elseif key == "elvuiTag" or key == "elvuiTagPlain" then
+        NotifyElvUI()
+    elseif key == "grid2Status" then
+        NotifyElvUI()  -- Grid2 status updates piggyback on the same callback bus
+    end
+end
+
+---------------------------------------------------------------
 -- Slash command
 ---------------------------------------------------------------
 SLASH_DILVL1 = "/dilvl"

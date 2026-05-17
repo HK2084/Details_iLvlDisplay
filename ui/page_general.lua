@@ -43,8 +43,14 @@ local function setKey(k, v)
     local d = db()
     if not d then return end
     d[k] = v
-    -- Notify the live-preview pane that something changed. Throttled to 10Hz
-    -- inside MarkDirty, so a rapid click-spam doesn't refresh per click.
+    -- Apply the real in-world refresh (re-render Details! bars, switch
+    -- layout mode, re-notify ElvUI/Grid2 callbacks, etc.) via the single
+    -- source of truth in core.lua. Without this, the real Details! bars
+    -- would render BOTH old + new state simultaneously when layout flips.
+    if ns.ApplySettingChange then
+        pcall(ns.ApplySettingChange, k)
+    end
+    -- Update the embedded live-preview pane (throttled 10Hz).
     if ns.ui and ns.ui.preview and ns.ui.preview.MarkDirty then
         ns.ui.preview.MarkDirty()
     end

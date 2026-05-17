@@ -39,6 +39,10 @@ local function setKey(k, v)
     local d = db()
     if not d then return end
     d[k] = v
+    -- Apply in-world refresh via core.lua single source of truth
+    if ns.ApplySettingChange then
+        pcall(ns.ApplySettingChange, k)
+    end
     if ns.ui and ns.ui.preview and ns.ui.preview.MarkDirty then
         ns.ui.preview.MarkDirty()
     end
