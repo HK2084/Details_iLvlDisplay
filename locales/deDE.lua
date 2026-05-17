@@ -86,6 +86,8 @@ L["TOOLTIP_BLIZZDM_MODE"]       = "Automatisch: an wenn Details! fehlt. Erzwunge
 L["PREVIEW_INFO"]               = "Mock-Frames updaten live während du Einstellungen änderst. Sie zeigen keine echten Unit-Daten — nur Styling-Beispiele."
 L["Damage Meter Preview"]       = "Damage Meter Vorschau"
 L["Unit Frame Preview"]         = "Unit Frame Vorschau"
+L["PREVIEW_UF_CAPTION"]         = "Beispiel-Frame — Grid2 / ElvUI rendern analog"
+L["PREVIEW_DISABLED"]           = "(deaktiviert — Schalter 'Details! iLvl-Anzeige aktivieren' im Tab Allgemein)"
 
 ---------------------------------------------------------------
 -- Page: Diagnostics

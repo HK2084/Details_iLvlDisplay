@@ -103,21 +103,58 @@ local function CreateDMRow(parent, index, mock)
 end
 
 local function UpdateDMRow(row, index, mock, db)
-    local tag = formatIlvlTag(mock.ilvl, mock.setBonus, db)
-    local left
-    if db and db.ilvlPosition == "left" then
-        left = string.format("%d. %s %s", index, tag, mock.name)
-    else
-        left = string.format("%d. %s %s", index, mock.name, tag)
+    -- Master enable OR Details!-channel off -> show row WITHOUT iLvl tag (the
+    -- raw Details!-bar would still show name + dmg, just no addon decoration).
+    -- Also drop saturation slightly so user sees "disabled" cue.
+    local enabled       = db and db.enabled ~= false
+    local detailsOn     = db and db.showInDetails ~= false
+    local showTag       = enabled and detailsOn
+    local layout        = (db and db.layout) or "inline"
+    local positionLeft  = db and db.ilvlPosition == "left"
+
+    -- Hide/show tag entirely if disabled
+    if not showTag then
+        row.textFS:SetText(string.format("%d. %s", index, mock.name))
+        row.dmgFS:SetText(mock.dmg)
+        row.dmgFS:SetTextColor(0.6, 0.6, 0.6, 1)
+        row.textFS:SetTextColor(0.65, 0.65, 0.65, 1)
+        row.statusbar:SetAlpha(0.45)
+        return
     end
-    row.textFS:SetText(left)
+    row.textFS:SetTextColor(1, 1, 1, 1)
+    row.dmgFS:SetTextColor(1, 1, 1, 1)
+    row.statusbar:SetAlpha(1)
+
+    local tag = formatIlvlTag(mock.ilvl, mock.setBonus, db)
+
+    if layout == "columns" then
+        -- Columns mode: name on left, iLvl tag right-aligned in its own slot,
+        -- dmg on far right. We simulate the column with extra spaces and an
+        -- explicit right-alignment of the tag relative to dmg.
+        row.textFS:SetText(string.format("%d. %s", index, mock.name))
+        -- Build a "<tag>     <dmg>" pattern on dmgFS so the tag appears as a
+        -- separate column to the left of the dmg number.
+        row.dmgFS:SetText(tag .. "   " .. mock.dmg)
+    else
+        -- Inline mode (default)
+        local line
+        if positionLeft then
+            line = string.format("%d. %s %s", index, tag, mock.name)
+        else
+            line = string.format("%d. %s %s", index, mock.name, tag)
+        end
+        row.textFS:SetText(line)
+        row.dmgFS:SetText(mock.dmg)
+    end
 end
 
 ---------------------------------------------------------------
--- UNIT FRAME PREVIEW — mock Danders frame + mock Grid2 cell + mock ElvUI tag.
--- Anchored side-by-side inside the Unit Frame Preview pane.
+-- UNIT FRAME PREVIEW — single mock Danders-style frame as a representative
+-- preview. iLvl rendering on Grid2 / ElvUI / etc. is analogous (same color,
+-- same set-bonus formatting) — showing one frame avoids visual clutter and
+-- gives the user a clear sense of how the addon will look.
 ---------------------------------------------------------------
-local ufFrames = {}  -- {dandersFrame, grid2Frame, elvuiFrame, ...}
+local ufFrames = {}  -- {dandersFrame, hintFS, ...}
 
 -- POS table mirror from danders_integration.lua — keeps preview anchor
 -- behavior in lockstep with the real addon.
@@ -138,10 +175,13 @@ local DANDERS_POS = {
 }
 
 local function CreateMockDandersFrame(parent)
-    -- Outer mock unit-frame (rectangle with class-color background)
+    -- Outer mock unit-frame (rectangle with class-color background).
+    -- Centered in the pane, sized for clarity. Extra vertical padding leaves
+    -- room for off-frame anchor positions (above/below) without clipping
+    -- against the pane edge.
     local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    frame:SetSize(120, 60)
-    frame:SetPoint("TOPLEFT", parent, "TOPLEFT", 14, -32)
+    frame:SetSize(160, 70)
+    frame:SetPoint("CENTER", parent, "CENTER", 0, 6)
     theme.ApplyBackdrop(frame, "panel")
 
     -- HP bar (class-colored, fills frame)
@@ -172,16 +212,26 @@ local function CreateMockDandersFrame(parent)
     ilvlFS:SetText("263")
     frame.ilvlFS = ilvlFS
 
-    -- Frame label (above-left, secondary text)
-    local label = parent:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
-    label:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
-    label:SetText("Danders")
-    theme.SetTextColor(label, "secondary")
-
     return frame
 end
 
 local function UpdateMockDandersFrame(frame, db)
+    local enabled    = db and db.enabled ~= false
+    local dandersOn  = db and db.dandersText
+    local showIlvl   = enabled and dandersOn
+
+    if not showIlvl then
+        -- Master off OR Danders channel off -> no overlay
+        frame.ilvlFS:SetText("")
+        frame.hpBar:SetAlpha(enabled and 1 or 0.45)
+        frame.nameFS:SetTextColor(enabled and 1 or 0.65,
+                                  enabled and 1 or 0.65,
+                                  enabled and 1 or 0.65, 1)
+        return
+    end
+    frame.hpBar:SetAlpha(1)
+    frame.nameFS:SetTextColor(1, 1, 1, 1)
+
     local posKey = (db and db.dandersPos) or "topright"
     local fontSize = (db and db.dandersFontSize) or 10
     local entry = DANDERS_POS[posKey] or DANDERS_POS.topright
@@ -202,81 +252,10 @@ local function UpdateMockDandersFrame(frame, db)
     frame.ilvlFS:SetText(text)
 end
 
-local function CreateMockGrid2Cell(parent)
-    local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    frame:SetSize(60, 60)
-    frame:SetPoint("TOPLEFT", parent, "TOPLEFT", 145, -32)
-    theme.ApplyBackdrop(frame, "panel")
-
-    local hp = CreateFrame("StatusBar", nil, frame)
-    hp:SetAllPoints(frame)
-    hp:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    hp:SetMinMaxValues(0, 100); hp:SetValue(72)
-    hp:SetStatusBarColor(0.96, 0.55, 0.73, 0.75)  -- Paladin color
-
-    -- Grid2 typically: name in middle, indicator at a corner
-    local nameFS = frame:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
-    nameFS:SetPoint("CENTER", frame, "CENTER", 0, 0)
-    nameFS:SetText("Náirah")
-    nameFS:SetTextColor(1, 1, 1, 1)
-
-    -- iLvl indicator at TOP-RIGHT (typical Grid2 corner-text spot)
-    local ilvlFS = frame:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
-    ilvlFS:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -2)
-    ilvlFS:SetText("261")
-    frame.ilvlFS = ilvlFS
-
-    local label = parent:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
-    label:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
-    label:SetText("Grid2")
-    theme.SetTextColor(label, "secondary")
-
-    return frame
-end
-
-local function UpdateMockGrid2Cell(frame, db)
-    local ilvl = 261
-    frame.ilvlFS:SetText(ilvlColor(ilvl, db and db.colorIlvl) .. tostring(ilvl) .. "|r")
-end
-
-local function CreateMockElvUITag(parent)
-    -- ElvUI shows a tag inline with the unit-frame name. We render a simplified
-    -- mock unit-frame (HP bar + name+tag) similar in style to ElvUI's defaults.
-    local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    frame:SetSize(160, 30)
-    frame:SetPoint("TOPLEFT", parent, "TOPLEFT", 215, -32)
-    theme.ApplyBackdrop(frame, "panel")
-
-    local hp = CreateFrame("StatusBar", nil, frame)
-    hp:SetAllPoints(frame)
-    hp:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    hp:SetMinMaxValues(0, 100); hp:SetValue(72)
-    hp:SetStatusBarColor(0.41, 0.80, 0.94, 0.75)  -- Mage color
-
-    local textFS = frame:CreateFontString(nil, "OVERLAY", theme.FONT_LABEL)
-    textFS:SetPoint("LEFT",  frame, "LEFT",  6, 0)
-    textFS:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
-    textFS:SetJustifyH("LEFT")
-    textFS:SetTextColor(1, 1, 1, 1)
-    frame.textFS = textFS
-
-    local label = parent:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
-    label:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
-    label:SetText("ElvUI")
-    theme.SetTextColor(label, "secondary")
-
-    return frame
-end
-
-local function UpdateMockElvUITag(frame, db)
-    local ilvl = 259
-    local c = ilvlColor(ilvl, db and db.colorIlvl)
-    -- Tag format: [dilvl] = bracketed, [dilvl:plain] = bare
-    local plain = db and db.elvuiTagPlain
-    local tag = plain and (c .. tostring(ilvl) .. "|r")
-                       or  (c .. "[" .. ilvl .. "]|r")
-    frame.textFS:SetText("Quinroth " .. tag)
-end
+-- (Grid2 + ElvUI mock frames removed per Hasan 2026-05-16: one representative
+-- mock unit-frame suffices to show how the addon will look. Grid2 and ElvUI
+-- render the iLvl tag with the same color rules + set-bonus formatting that
+-- are already visible in the Damage Meter Preview to the left.)
 
 ---------------------------------------------------------------
 -- Public: PopulateDamageMeter — build (or re-use) the 3 mock rows in the
@@ -328,12 +307,16 @@ function preview.PopulateUnitFrames(parent)
     end
 
     local db = ns.db or _G.Details_iLvlDisplayDB
+
     ufFrames.danders = CreateMockDandersFrame(parent)
-    ufFrames.grid2   = CreateMockGrid2Cell(parent)
-    ufFrames.elvui   = CreateMockElvUITag(parent)
     UpdateMockDandersFrame(ufFrames.danders, db)
-    UpdateMockGrid2Cell(ufFrames.grid2, db)
-    UpdateMockElvUITag(ufFrames.elvui, db)
+
+    -- Small caption below the mock — clarifies it's a representative sample
+    local caption = parent:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
+    caption:SetPoint("BOTTOM", parent, "BOTTOM", 0, 8)
+    caption:SetText(L["PREVIEW_UF_CAPTION"])
+    theme.SetTextColor(caption, "secondary")
+    ufFrames.caption = caption
 end
 
 ---------------------------------------------------------------
@@ -346,8 +329,6 @@ function preview.Refresh()
         if entry.row then UpdateDMRow(entry.row, i, entry.mock, db) end
     end
     if ufFrames.danders then UpdateMockDandersFrame(ufFrames.danders, db) end
-    if ufFrames.grid2   then UpdateMockGrid2Cell(ufFrames.grid2, db) end
-    if ufFrames.elvui   then UpdateMockElvUITag(ufFrames.elvui, db) end
 end
 
 ---------------------------------------------------------------
