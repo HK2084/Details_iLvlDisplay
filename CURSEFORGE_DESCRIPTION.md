@@ -1,78 +1,93 @@
-**Details! Item Level Display** shows item level and tier set bonus next to every player name across five different surfaces: [Details! Damage Meter](https://www.curseforge.com/wow/addons/details), [ElvUI](https://tukui.org/elvui) party/raid frames, [Grid2](https://www.curseforge.com/wow/addons/grid2) raid frames, [Danders Frames](https://www.curseforge.com/wow/addons/dandersframes), and **Blizzard's built-in Damage Meter** (as fallback).
+**Details! Item Level Display** shows item level and tier set bonus next to every player name on [Details! Damage Meter](https://www.curseforge.com/wow/addons/details), [ElvUI](https://tukui.org/elvui), [Grid2](https://www.curseforge.com/wow/addons/grid2), [DandersFrames](https://www.curseforge.com/wow/addons/dandersframes), and **Blizzard's built-in Damage Meter** (experimental).
 
-Built for **WoW: Midnight (12.0+)**. Primarily a **Details! plugin** — also supports four other surfaces. No configuration needed, **auto-detects** what you have installed.
+Built for **WoW: Midnight (12.0+)**. Five independent output channels — auto-detects what you have installed, no configuration needed.
 
-**Don't use Details!?** No problem — the addon automatically falls back to **Blizzard's Damage Meter** (12.0+), showing iLvl and tier set bonus directly on WoW's built-in DPS, Healing, and Overall windows. Force on with `/dilvl blizzdm`.
+**Don't use Details!?** No problem — the addon falls back to **Blizzard's Damage Meter** (12.0+) and works on top of your unit-frame addon of choice (ElvUI / Grid2 / Danders). Force BlizzDM on with `/dilvl blizzdm`.
+
+***
+
+**How It Looks**
+
+| Mode                    |Example                   |Command               |
+| ----------------------- |------------------------- |--------------------- |
+| <strong>Inline right</strong> (default) |<code>1. Razul [263] [4P] 67K</code> |<code>/dilvl position right</code> |
+| <strong>Inline left</strong> |<code>1. [263] [4P] Razul 67K</code> |<code>/dilvl position left</code> |
+| <strong>Columns</strong> (Details! only) |<code>1. Razul 4P 263 67K</code> |<code>/dilvl layout columns</code> |
+| <strong>ElvUI frame tag</strong> |<code>Razul [263]</code> or <code>Razul 263</code> |<code>/dilvl elvui on</code> |
+| <strong>Grid2 indicator</strong> |<code>263</code> on any text indicator |<code>/dilvl grid2 on</code> |
+| <strong>Danders Frames overlay</strong> |<code>263</code> in 13 positions, live size 6-30 |<code>/dilvl danders on</code> |
+
+Position toggle (`/dilvl position`) applies to Details! and Blizzard DM. Column layout is Details! only.
 
 ***
 
 **Features**
 
 *   Item level in brackets next to each player name: `Razul [259]`
-*   **Five-surface support**: Details! bars, ElvUI party/raid frames, Grid2 raid frames, Danders Frames overlay, and Blizzard Damage Meter (12.0+ fallback) — independently toggleable, fault-isolated (a bug in one never disables another)
-*   **Two layout modes** (Details!): `inline` (default) or `columns` — switch via `/dilvl layout`
-*   **Column mode works during combat** — iLvl and tier stay visible while fighting. When bars swap positions, columns briefly refresh to keep data accurate
+*   **Five output channels** — Details! bars, ElvUI tag, Grid2 status, Danders FontString, Blizzard DM — independently toggleable
+*   **Two layout modes** (Details!): `inline` or `columns` — switch via `/dilvl layout`
+*   **Position toggle** — iLvl before or after player name via `/dilvl position`
+*   **Column mode works during combat** — iLvl and tier stay visible while fighting
 *   Color-coded by gear tier (orange = BiS, purple = high, blue = mid, green = low, grey = base)
-*   **2P / 4P tier (PvE) set bonus** detection for Midnight Season 1 tier pieces
-*   **Instant iLvl via LibOpenRaid** — players running Details! share iLvl instantly, no inspect delay
-*   **ElvUI tags** — `[dilvl]` (with brackets, `Raza [284]`) and `[dilvl:plain]` (bare number, `Raza 284`). Both listed in ElvUI's tag browser, usable in any Custom Text
-*   **Grid2 status** — `dilvl` registers as a Grid2 status, addable to any text indicator (corner, side, ...) via the Grid2 GUI
-*   **Danders Frames overlay** — addon-owned FontString per Danders Frame, 13 anchor positions (7 inside-frame + 6 off-frame above/below the unit), adjustable text size (6-30, live, no `/reload`)
-*   **iLvl position toggle** — `/dilvl position` places the iLvl tag before or after the player name
-*   Automatic background inspection outside of combat — no manual action needed
+*   **2P / 4P tier (PvE) set bonus** detection for Midnight Season 1
+*   **Instant iLvl via LibOpenRaid** — Details! users share iLvl instantly, no inspect delay
+*   **Two ElvUI tags** — `[dilvl]` (with brackets, `Raza [284]`) and `[dilvl:plain]` (bare number, `Raza 284`). Listed in ElvUI's tag browser, usable in any Custom Text
+*   **Danders Frames overlay** — 13 anchor positions (7 inside + 6 off-frame above/below the unit) and live text size (`/dilvl danders size <n>`, range 6-30, no `/reload` needed)
+*   **First-time login hints** — new features announce themselves once per character via a single chat message so you discover them without reading the changelog
+*   **Per-feature fault isolation** — a bug in one channel can't take down the others (each has its own auto-disable + recovery)
+*   Automatic background inspection outside of combat
 *   2-hour persistent cache — survives `/reload`, loads instantly on re-login
 *   Automatic re-inspection after boss kills (catches loot upgrades)
-*   Your own iLvl updates instantly on gear swap — no inspect needed
+*   Your own iLvl updates instantly on gear swap
 *   Cross-realm, M+, LFR and LFD support (up to 40 players)
-*   **Defensive combat guard** — during combat, the addon does nothing on Blizzard DM frames. Tags appear between pulls and after boss kills
-*   **First-time login hints** — new features announce themselves once per character via a single chat message so you discover them without reading the changelog
 
 ***
 
-**Supported Surfaces**
+**Supported Output Channels**
 
-| Surface | Default | Toggle |
-| --- | --- | --- |
-| **Details! Damage Meter** | ON when Details! is installed | `/dilvl details` |
-| **ElvUI** (party/raid frames via `[dilvl]` / `[dilvl:plain]`) | OFF (opt-in) | `/dilvl elvui on` |
-| **Grid2** (raid frames via `dilvl` status) | OFF (opt-in) | `/dilvl grid2 on` |
-| **Danders Frames** (FontString overlay) | OFF (opt-in) | `/dilvl danders on` |
-| **Blizzard Damage Meter** (12.0+) | AUTO — ON when Details! is not installed | `/dilvl blizzdm` |
+| Channel                       |Default           |Toggle            |Notes                                                                   |
+| ----------------------------- |----------------- |----------------- |----------------------------------------------------------------------- |
+| <strong>Details! Damage Meter</strong> |ON when installed |<code>/dilvl details</code> |Full support: inline, columns, position toggle                          |
+| <strong>ElvUI</strong>        |OFF (opt-in)      |<code>/dilvl elvui on</code> |<code>[dilvl]</code> and <code>[dilvl:plain]</code> tags for unit frames |
+| <strong>Grid2</strong>        |OFF (opt-in)      |<code>/dilvl grid2 on</code> |Custom <code>dilvl</code> status, assignable to any text indicator      |
+| <strong>DandersFrames</strong> |OFF (opt-in)      |<code>/dilvl danders on</code> |FontString overlay, 13 anchor positions, live text size (6-30)         |
+| <strong>Blizzard Damage Meter</strong> (12.0+) |AUTO              |<code>/dilvl blizzdm</code> |Experimental: inline + position toggle (<a href="#blizzard-damage-meter--known-limitations" rel="nofollow">limitations</a>) |
 
 No dependencies required. Install the addon, and it works with whatever you have.
+
+***
+
+**⚠️ Blizzard Damage Meter — Known Limitations**
+
+Due to Blizzard's Secret Value system in Midnight, the Blizz DM overlay has the following limitations in instanced content (Dungeons, Delves, M+, LFR/Raid):
+
+*   Tags disappear during combat and reappear between pulls
+*   Some class colors may briefly reset after combat ends
+*   In LFR/Raid, certain segments (e.g. "Damage by Class") may not show tags — switch segments (A–G) to refresh
+*   After a wipe in LFR/Raid, tags may not return until the next segment switch
+*   **Left position** (`/dilvl position left`): players who haven't been inspected yet (out of range, just joined) may show no tag until the next pull. Right position is more forgiving here
+
+These are Blizzard restrictions, not addon bugs. **Details! bars, ElvUI, Grid2, and DandersFrames are unaffected and always show full data.**
 
 ***
 
 **Slash Commands**
 
 *   `/dilvl` — show all commands
-*   `/dilvl on` / `off` — master enable / disable
+*   `/dilvl on` / `off` — enable / disable
 *   `/dilvl details` — toggle Details! bars
+*   `/dilvl blizzdm` — toggle Blizzard Damage Meter overlay
 *   `/dilvl elvui on` / `off` — toggle ElvUI tag
 *   `/dilvl grid2 on` / `off` — toggle Grid2 status
 *   `/dilvl danders on` / `off` — toggle Danders Frames overlay
-*   `/dilvl danders pos <opt>` — Danders text position (live, no `/reload`). Inside: top, topright, topleft, bottom, bottomright, bottomleft, center. Off-frame: above, aboveleft, aboveright, below, belowleft, belowright
-*   `/dilvl danders size <n>` — Danders text size (6-30, live)
-*   `/dilvl blizzdm` — toggle Blizzard Damage Meter overlay
-*   `/dilvl layout` — toggle between inline and column mode (Details!)
-*   `/dilvl position` — toggle iLvl left/right of name (inline mode)
+*   `/dilvl danders pos <opt>` — Danders anchor position. Inside: `top`, `topright`, `topleft`, `bottom`, `bottomright`, `bottomleft`, `center`. Off-frame: `above`, `aboveleft`, `aboveright`, `below`, `belowleft`, `belowright`
+*   `/dilvl danders size <n>` — Danders text size (6-30, live, no `/reload`)
+*   `/dilvl layout` — toggle inline / columns (Details! only)
+*   `/dilvl position` — toggle iLvl left / right of player name
 *   `/dilvl color` — toggle color-coded display
 *   `/dilvl setbonus` — toggle 2P/4P display
 *   `/dilvl inspect` — manual re-inspect
 *   `/dilvl debug` — full status report for bug reports
-
-***
-
-**FAQ**
-
-**Q: Why doesn't iLvl show during combat?**
-That's a Blizzard API limitation — they block the tooltip data we need for iLvl during combat. No addon can work around that without risking UI taint errors. Once combat ends, everything updates automatically.
-
-**Q: My Danders Frames iLvl text overlaps the unit's name. Can I move it?**
-Yes — use `/dilvl danders pos above` (or `below`, `aboveleft`, `belowright`, ...). The text then floats outside the frame. In very dense raid layouts (25er stacked frames with no gap), off-frame positions may overlap the neighbouring frame — in that case pick a smaller font size with `/dilvl danders size <n>` and stick to inside positions.
-
-**Q: Does this work without Details!?**
-Yes — Blizzard's built-in Damage Meter, ElvUI, Grid2, and Danders Frames all work standalone. The addon auto-detects what you have.
 
 ***
 
