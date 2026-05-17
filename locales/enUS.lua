@@ -68,6 +68,7 @@ L["Blizzard DM"]                = "Blizzard DM"
 L["ElvUI Tag Format"]           = "ElvUI Tag Format"
 L["Brackets: [dilvl]"]          = "Brackets: [dilvl]"
 L["Plain: [dilvl:plain]"]       = "Plain: [dilvl:plain]"
+L["ELVUI_TAGS_HINT"]            = "Pick [dilvl] (brackets: Razul [263]) or [dilvl:plain] (bare: Razul 263) inside any ElvUI Custom Text. Both tags are listed in ElvUI's tag browser."
 
 L["Danders Anchor Position"]    = "Danders Anchor Position"
 L["Inside frame"]               = "Inside frame"

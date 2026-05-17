@@ -70,15 +70,19 @@ local function collectDebugLines()
     addKV("issecretvalue",  issecretvalue ~= nil)
     add("")
 
-    -- BlizzDM integration state
-    if Details_iLvlDisplay_BlizzDMState then
-        add("--- Blizzard DM Integration ---")
-        for k, v in pairs(Details_iLvlDisplay_BlizzDMState) do
-            if type(v) ~= "table" and type(v) ~= "function" then
-                addKV(k, v)
+    -- BlizzDM integration state. The global is a FUNCTION that returns the
+    -- state table (not the table directly), so we call it first then iterate.
+    if type(Details_iLvlDisplay_BlizzDMState) == "function" then
+        local ok, state = pcall(Details_iLvlDisplay_BlizzDMState)
+        if ok and type(state) == "table" then
+            add("--- Blizzard DM Integration ---")
+            for k, v in pairs(state) do
+                if type(v) ~= "table" and type(v) ~= "function" then
+                    addKV(k, v)
+                end
             end
+            add("")
         end
-        add("")
     end
 
     -- Danders integration state

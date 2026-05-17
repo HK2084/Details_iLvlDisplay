@@ -1400,10 +1400,35 @@ ns.ApplySettingChange = function(key)
             RebuildNameIlvlMap()
             RefreshAllBarTexts()
         end
-    elseif key == "elvuiTag" or key == "elvuiTagPlain" then
+    elseif key == "elvuiTag" then
         NotifyElvUI()
     elseif key == "grid2Status" then
         NotifyElvUI()  -- Grid2 status updates piggyback on the same callback bus
+    elseif key == "dandersText" then
+        -- Toggle ON after auto-disable: reset error counter + re-register
+        -- callback so frames refresh. Toggle OFF: no extra work; next
+        -- refresh sees the flag and clears overlay text.
+        if db.dandersText and Details_iLvlDisplay_DandersReset then
+            pcall(Details_iLvlDisplay_DandersReset)
+        end
+    elseif key == "dandersPos" then
+        -- Live-apply position to visible Danders frames so the user sees
+        -- the change immediately (else they'd wait 30+s for next sort).
+        if Details_iLvlDisplay_DandersApplyPos then
+            pcall(Details_iLvlDisplay_DandersApplyPos, db.dandersPos)
+        end
+    elseif key == "dandersFontSize" then
+        if Details_iLvlDisplay_DandersApplyFontSize then
+            pcall(Details_iLvlDisplay_DandersApplyFontSize, db.dandersFontSize)
+        end
+    elseif key == "blizzDM" then
+        -- Tristate change (auto/on/off). Reset error counter so a prior
+        -- auto-disable doesn't immediately re-disable. NotifyElvUI bus
+        -- carries the change to BlizzDM integration.
+        if Details_iLvlDisplay_BlizzDMReset then
+            pcall(Details_iLvlDisplay_BlizzDMReset)
+        end
+        NotifyElvUI()
     end
 end
 

@@ -117,7 +117,12 @@ local function BuildDetailsPanel(parent)
 end
 
 local function BuildElvUIPanel(parent, prev)
-    local p = W.CreatePanel(parent, 1, 90, L["ElvUI tags"])
+    -- ElvUI exposes TWO independent tags ([dilvl] always-brackets and
+    -- [dilvl:plain] always-plain). User picks behavior by choosing which
+    -- tag to drop into their ElvUI Custom Text — there's no setting to
+    -- toggle. Per Agent #1 coverage review 2026-05-16: elvuiTagPlain was
+    -- a dead toggle (UI wrote it, elvui_tags.lua never read it).
+    local p = W.CreatePanel(parent, 1, 70, L["ElvUI tags"])
     p:SetPoint("TOPLEFT",  prev, "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
     p:SetPoint("TOPRIGHT", prev, "BOTTOMRIGHT", 0, -theme.WIDGET_GAP)
 
@@ -126,14 +131,12 @@ local function BuildElvUIPanel(parent, prev)
         function(v) setKey("elvuiTag", v) end)
     cb:SetPoint("TOPLEFT", p, "TOPLEFT", 12, -28)
 
-    local fmt = W.CreateRadioGroup(p, L["ElvUI Tag Format"],
-        { {value=false, label=L["Brackets: [dilvl]"]},
-          {value=true,  label=L["Plain: [dilvl:plain]"]} },
-        function() return getKey("elvuiTagPlain", false) end,
-        function(v) setKey("elvuiTagPlain", v) end,
-        "horizontal")
-    fmt:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 0, -8)
-    fmt:SetWidth(400)
+    local hint = W.CreateLabel(p,
+        "→ " .. L["ELVUI_TAGS_HINT"],
+        theme.FONT_HELPER, "secondary")
+    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 24, -4)
+    hint:SetWidth(540)
+    hint:SetJustifyH("LEFT")
     return p
 end
 
@@ -200,24 +203,17 @@ function page.Init(parent)
     info:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     info:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, 0)
 
-    -- ScrollFrame so the page is future-proof if we add more channels.
-    -- With current 5 panels (~400 px content), scrollbar usually inactive.
-    local sf, content = W.CreateScrollFrame(parent,
-        parent:GetWidth() or 680,
-        (parent:GetHeight() or 400) - 40)
-    sf:SetPoint("TOPLEFT",  info, "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
-    sf:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
-
-    content:SetWidth(sf:GetWidth() - 20)  -- leave room for scrollbar
+    -- Container frame (no ScrollFrame — content fits in the tab content
+    -- area, scroll was overhead per Hasan 2026-05-16).
+    local content = CreateFrame("Frame", nil, parent)
+    content:SetPoint("TOPLEFT",  info, "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
+    content:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
 
     local p1 = BuildDetailsPanel(content)
     local p2 = BuildElvUIPanel(content, p1)
     local p3 = BuildGrid2Panel(content, p2)
     local p4 = BuildDandersPanel(content, p3)
     local p5 = BuildBlizzDMPanel(content, p4)
-
-    -- Set content height to fit all panels (gap between each + headroom)
-    content:SetHeight(60 + 90 + 60 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
 end
 
 if ns.ui and ns.ui.main and ns.ui.main.RegisterPage then
