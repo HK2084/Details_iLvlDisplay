@@ -1023,9 +1023,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
             db = Details_iLvlDisplayDB
             ns.db = db  -- expose to UI / other sub-modules (single source of truth)
-            for k, v in pairs(defaults) do
-                if db[k] == nil then db[k] = v end
-            end
+            -- Production-hardening sequence (Round 6):
+            -- 1. Recursive merge fills missing keys (handles nested tables
+            --    like db.uiState, future-proof for adding nested settings).
+            -- 2. Schema migration upgrades old DB layouts to current.
+            -- 3. Read-time validators clamp/coerce out-of-range or wrongly-
+            --    typed values so manually-edited SavedVars don't crash.
+            RecursiveDefaultsMerge(db, defaults)
+            MigrateSchema(db)
+            ValidateDb(db)
 
             -- Persistent caches stored separately (not in defaults to avoid confusion)
             if not db.ilvlCache then db.ilvlCache = {} end
@@ -1348,6 +1354,123 @@ local function ShowDebugWindow(text)
 end
 -- Expose for blizzdm.lua trace output
 Details_iLvlDisplay_ShowDebugWindow = ShowDebugWindow
+
+---------------------------------------------------------------
+-- Production-hardening: recursive defaults-merge + schema version +
+-- read-time validators + Reset-to-Defaults. Adopted from DBM-Core.lua:3584-3592
+-- (recursive merge), ElvUI Core.lua:1971 (schemaVersion gate), Cell Revise.lua
+-- (validators). Read-time clamping is novel in the surveyed ecosystem — we're
+-- first to ship it. Goal: addon survives manually-edited or corrupted
+-- SavedVariables without crashing.
+---------------------------------------------------------------
+local CURRENT_SCHEMA_VERSION = 1
+
+-- Validators: clamp/coerce setting values to sane ranges. Run after
+-- defaults-merge so missing keys are filled first. Generic fallback below
+-- (boolean/number/string type-check + reset to default) covers settings
+-- not in this table.
+local VALIDATORS = {
+    dandersFontSize = function(v)
+        if type(v) ~= "number" then return 10 end
+        if v < 6 then return 6 end
+        if v > 30 then return 30 end
+        return math.floor(v + 0.5)
+    end,
+    dandersPos = function(v)
+        if type(v) ~= "string" then return "topright" end
+        -- Validate against the canonical POS_KEYS_SET. If POS_KEYS_SET
+        -- isn't loaded yet (load order race), trust the value and let the
+        -- next refresh catch a bad key.
+        if ns.POS_KEYS_SET and not ns.POS_KEYS_SET[v] then return "topright" end
+        return v
+    end,
+    layout = function(v)
+        if v ~= "inline" and v ~= "columns" then return "inline" end
+        return v
+    end,
+    ilvlPosition = function(v)
+        if v ~= "left" and v ~= "right" then return "right" end
+        return v
+    end,
+    blizzDM = function(v)
+        -- Tristate: nil / true / false are all valid
+        if v == nil or v == true or v == false then return v end
+        return nil
+    end,
+}
+
+local function RecursiveDefaultsMerge(target, source)
+    for k, v in pairs(source) do
+        if type(v) == "table" then
+            if type(target[k]) ~= "table" then target[k] = {} end
+            RecursiveDefaultsMerge(target[k], v)
+        elseif target[k] == nil then
+            target[k] = v
+        end
+    end
+end
+
+local function MigrateSchema(db_in)
+    local from = db_in.schemaVersion or 1
+    -- Placeholder for future migrations. Pattern:
+    --   if from < 2 then
+    --       -- migrate from v1 to v2 (e.g. rename a key, drop a removed enum value)
+    --       db_in.schemaVersion = 2
+    --       from = 2
+    --   end
+    db_in.schemaVersion = CURRENT_SCHEMA_VERSION
+end
+
+local function ValidateDb(db_in)
+    for k, defaultVal in pairs(defaults) do
+        local actualVal = db_in[k]
+        local validator = VALIDATORS[k]
+        if validator then
+            -- Specific validator wins (handles enum, range, type all at once)
+            local ok, newVal = pcall(validator, actualVal)
+            if ok then db_in[k] = newVal end
+        elseif type(defaultVal) == "boolean" then
+            if type(actualVal) ~= "boolean" then db_in[k] = defaultVal end
+        elseif type(defaultVal) == "number" then
+            if type(actualVal) ~= "number" then db_in[k] = defaultVal end
+        elseif type(defaultVal) == "string" then
+            if type(actualVal) ~= "string" then db_in[k] = defaultVal end
+        end
+    end
+end
+
+---------------------------------------------------------------
+-- Reset-to-Defaults — soft wipe: only resets known settings keys, preserves
+-- ilvlCache, setBonusCache, uiState. Triggered from the Settings UI via a
+-- StaticPopup confirmation. After reset, re-applies enabled + layout so the
+-- in-world state matches the wiped db.
+---------------------------------------------------------------
+ns.ResetToDefaults = function()
+    if not db then return end
+    local preserve = {
+        ilvlCache    = db.ilvlCache,
+        setBonusCache = db.setBonusCache,
+        uiState      = db.uiState,
+    }
+    -- Wipe only known defaults keys (preserve unknown user-added entries +
+    -- the preserved caches above)
+    for k in pairs(defaults) do db[k] = nil end
+    -- Re-fill from defaults
+    RecursiveDefaultsMerge(db, defaults)
+    -- Restore preserved
+    for k, v in pairs(preserve) do
+        if v ~= nil then db[k] = v end
+    end
+    -- Re-render
+    if ns.ApplySettingChange then
+        ns.ApplySettingChange("enabled")
+        ns.ApplySettingChange("layout")
+    end
+    if ns.ui and ns.ui.preview and ns.ui.preview.MarkDirty then
+        ns.ui.preview.MarkDirty()
+    end
+    print("|cFF00FF00Details! iLvl Display:|r All settings reset to defaults.")
+end
 
 ---------------------------------------------------------------
 -- ApplySettingChange — central refresh-router. Both the slash handler and

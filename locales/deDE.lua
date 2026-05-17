@@ -96,6 +96,8 @@ L["PREVIEW_DISABLED"]           = "(deaktiviert — Schalter 'Details! iLvl-Anze
 L["DIAGNOSTICS_INFO"]           = "Wenn du einen Bug findest, kopiere die untenstehende Ausgabe und schicke sie als CurseForge-Kommentar oder GitHub-Issue."
 L["Refresh"]                    = "Aktualisieren"
 L["Reset UI Error Counters"]    = "UI-Fehler-Zähler zurücksetzen"
+L["Reset to Defaults"]          = "Auf Standard zurücksetzen"
+L["RESET_DEFAULTS_CONFIRM"]     = "ALLE Einstellungen auf Standardwerte zurücksetzen?\n\nDein iLvl-Cache und die Fenster-Position bleiben erhalten."
 L["Manual Re-inspect"]          = "Manuelles Re-Inspect"
 
 ---------------------------------------------------------------

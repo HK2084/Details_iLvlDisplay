@@ -181,6 +181,28 @@ function page.Init(parent)
         end)
     resetBtn:SetPoint("LEFT", refreshBtn, "RIGHT", theme.WIDGET_GAP, 0)
 
+    -- Reset-to-Defaults button — destructive, gated by StaticPopup confirmation.
+    -- Registers the popup once at module load (idempotent) so the button click
+    -- can just StaticPopup_Show.
+    StaticPopupDialogs["DILVL_RESET_DEFAULTS"] = StaticPopupDialogs["DILVL_RESET_DEFAULTS"] or {
+        text         = L["RESET_DEFAULTS_CONFIRM"],
+        button1      = ACCEPT,
+        button2      = CANCEL,
+        OnAccept     = function()
+            if ns.ResetToDefaults then ns.ResetToDefaults() end
+            -- After reset, re-render this page so the diagnostics dump reflects
+            -- the fresh defaults
+            if ns.ui.main then ns.ui.main.SwitchTab("diagnostics") end
+        end,
+        timeout      = 0,
+        whichInstance = 1,
+        hideOnEscape = true,
+    }
+
+    local resetDefaultsBtn = W.CreateButton(actionBar, L["Reset to Defaults"], 200, 24,
+        function() StaticPopup_Show("DILVL_RESET_DEFAULTS") end)
+    resetDefaultsBtn:SetPoint("LEFT", resetBtn, "RIGHT", theme.WIDGET_GAP, 0)
+
     -- Initial population
     refresh()
 end
