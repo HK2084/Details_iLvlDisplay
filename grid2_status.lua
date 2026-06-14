@@ -30,7 +30,7 @@ DiLvl.GetColor = Grid2.statusLibrary.GetColor
 function DiLvl:IsActive(unit)
     local db = API.GetDb()
     if not db or not db.grid2Status then return false end
-    local guid = UnitGUID(unit)
+    local guid = API.SafeUnitGUID(unit)  -- secret-safe: nil (not a throw) inside instances
     if not guid then return false end
     local cached = API.GetCacheData(guid)
     return cached ~= nil and cached.ilvl ~= nil
@@ -39,7 +39,7 @@ end
 function DiLvl:GetText(unit)
     local db = API.GetDb()
     if not db or not db.grid2Status then return "" end
-    local guid = UnitGUID(unit)
+    local guid = API.SafeUnitGUID(unit)  -- secret-safe: nil (not a throw) inside instances
     if not guid then return "" end
     local cached, setBonus = API.GetCacheData(guid)
     if not cached or not cached.ilvl then return "" end

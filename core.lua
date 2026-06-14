@@ -113,6 +113,7 @@ local isSecretValue       = secrets.isSecretValue
 local _hasanysecretvalues = secrets._hasanysecretvalues
 local SafeUnitIsUnit      = secrets.SafeUnitIsUnit
 local SafeUnitName        = secrets.SafeUnitName
+local SafeUnitGUID        = secrets.SafeUnitGUID
 local IsInCombatSafe      = secrets.IsInCombatSafe
 local MayBeInCombat       = secrets.MayBeInCombat
 local secretStats         = secrets.stats
@@ -2421,6 +2422,7 @@ Details_iLvlDisplayAPI = {
     -- these guards locally — blizzdm.lua now reads them from here so
     -- the pcall hardening from secrets.lua applies consistently.
     SafeUnitName    = SafeUnitName,
+    SafeUnitGUID    = SafeUnitGUID,
     SafeUnitIsUnit  = SafeUnitIsUnit,
     isSecretValue   = isSecretValue,
     hasanysecretvalues = _hasanysecretvalues,

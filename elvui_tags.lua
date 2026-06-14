@@ -37,7 +37,7 @@ local function buildIlvl(unit, withBrackets)
     local db = API.GetDb()
     if not db or not db.elvuiTag then return "" end
 
-    local guid = UnitGUID(unit)
+    local guid = API.SafeUnitGUID(unit)  -- secret-safe: nil (not a throw) inside instances
     if not guid then return "" end
 
     local cached, setBonus = API.GetCacheData(guid)

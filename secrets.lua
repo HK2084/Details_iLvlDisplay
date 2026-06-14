@@ -104,6 +104,24 @@ function S.SafeUnitName(unit)
 end
 
 ----------------------------------------------------------------
+-- Safe UnitGUID wrapper. UnitGUID() can return a secret value inside
+-- instances; using a secret GUID as a table key throws ("attempt to use a
+-- secret value as a table key"), and the oUF / Grid2 tag environment can be
+-- tainted when a frame re-evaluates. ElvUI itself shipped a fix for exactly
+-- this ("oUF unitGUID secret error"). Returns the GUID, or nil when it's
+-- unavailable / secret / hard-rejected (12.0.7 flips the
+-- RequiresDeclassifiedUnitIdentity FailureMode to ReturnWithError, so the
+-- pcall matters here too).
+----------------------------------------------------------------
+function S.SafeUnitGUID(unit)
+    if not unit then return nil end
+    local ok, guid = pcall(UnitGUID, unit)
+    if not ok or not guid then return nil end
+    if S.isSecretValue(guid) then return nil end
+    return guid
+end
+
+----------------------------------------------------------------
 -- Safe InCombatLockdown wrappers (WoW 12.0+).
 --
 -- Inside instances, InCombatLockdown() can return a secret value. A
