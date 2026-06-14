@@ -489,7 +489,12 @@ local function RefreshAllColumns()
 
     for bar, cols in pairs(barColumns) do
         if not bar:IsShown() or not IsDetailsWindowAllowed(bar.instance_id) then
+            -- Clear text too (not just Hide): Pass 2 re-shows any bar whose
+            -- ilvlFS still has text, so leaving stale text on an excluded-window
+            -- bar could repaint it without a preceding ClearAllColumns.
+            cols.ilvlFS:SetText("")
             cols.ilvlFS:Hide()
+            cols.tierFS:SetText("")
             cols.tierFS:Hide()
         else
             -- Primary: Details! actor reference (always current, even during SECRET text reshuffles)
@@ -1667,7 +1672,7 @@ SlashCmdList["DILVL"] = function(msg)
         local arg = msg:match("^details size%s+(%S+)")
         local n = arg and tonumber(arg)
         if n and (n == 0 or (n >= DETAILS_FONT_MIN and n <= DETAILS_FONT_MAX)) then
-            n = math.floor(n)
+            n = math.floor(n + 0.5)  -- round, matching the VALIDATORS.detailsFontSize rule
             db.detailsFontSize = n
             if ns.ApplySettingChange then ns.ApplySettingChange("detailsFontSize") end
             if n == 0 then
