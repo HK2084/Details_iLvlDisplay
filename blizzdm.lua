@@ -1195,14 +1195,15 @@ if DamageMeter.ForEachSessionWindow then
                 -- re-resolves everything fresh via Ambiguate API.
                 if sw.ForEachEntryFrame then
                     sw:ForEachEntryFrame(function(frame)
-                        -- Preserve GUID when sourceName is still secret — the Init
-                        -- hook captured a valid GUID that can't be re-resolved without
-                        -- a readable sourceName. Clearing it would permanently lose
-                        -- the mapping until Blizzard unlocks the secret text.
-                        local sn = frame.sourceName
-                        if not sn or not isSecret(sn) then
-                            frame._dilvlGUID = nil
-                        end
+                        -- Clear unconditionally. A ScrollBox-recycled frame can
+                        -- represent a DIFFERENT player while its sourceName is still
+                        -- secret, so a preserved GUID would paint the previous
+                        -- occupant's iLvl onto the wrong bar. Erring toward "no data"
+                        -- (re-resolved fresh by InjectIlvl on the next readable-name
+                        -- pass) beats confidently-wrong data. Out of combat — where
+                        -- most session switches happen — sourceName is readable, so
+                        -- the re-resolve is immediate with no visible gap.
+                        frame._dilvlGUID = nil
                         frame._dilvlFontFile = nil
                         frame._dilvlFontSize = nil
                         frame._dilvlFontFlags = nil
