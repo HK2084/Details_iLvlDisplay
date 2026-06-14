@@ -199,7 +199,7 @@ The tags update instantly when inspect data arrives, on gear swaps, or when the 
 
 ## Links
 
-- [CurseForge](https://www.curseforge.com/wow/addons/details-item-level-display) — download & install
+- [CurseForge](https://www.curseforge.com/wow/addons/details-item-level-plugin) — download & install
 - [GitHub Issues](https://github.com/HK2084/Details_iLvlDisplay/issues) — bug reports & feature requests
 
 ---
