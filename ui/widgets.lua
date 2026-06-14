@@ -141,23 +141,31 @@ function W.CreateSlider(parent, label, minVal, maxVal, step, getter, setter, too
     if slider.Low  then slider.Low:SetText(tostring(minVal or 0)); theme.SetTextColor(slider.Low, "secondary") end
     if slider.High then slider.High:SetText(tostring(maxVal or 100)); theme.SetTextColor(slider.High, "secondary") end
 
+    -- SetValue() fires OnValueChanged synchronously, so we MUST distinguish our
+    -- own programmatic syncs (OnShow / initial) from real user drags. Without
+    -- this, a getter that synthesizes a display value (e.g. detailsFontSize 0
+    -- "auto" -> show 12) would write that synthesized value straight back to the
+    -- db just by opening the page. isSyncing gates the setter; syncTo() wraps
+    -- every programmatic set.
+    local isSyncing = false
+    local function syncTo(v)
+        isSyncing = true
+        slider:SetValue(v)
+        isSyncing = false
+        setLabel(v)
+    end
+
     slider:SetScript("OnShow", safe.WrapScript("Slider:OnShow:" .. (label or "?"), function(self)
-        if getter then
-            local v = getter() or minVal
-            self:SetValue(v)
-            setLabel(v)
-        end
+        if getter then syncTo(getter() or minVal) end
     end))
     -- Explicit initial sync (OnShow doesn't fire without state change)
     if getter then
         local ok, v = pcall(getter)
-        if ok and v then
-            slider:SetValue(v)
-            setLabel(v)
-        end
+        if ok and v then syncTo(v) end
     end
 
     slider:SetScript("OnValueChanged", safe.WrapScript("Slider:OnValueChanged:" .. (label or "?"), function(self, v)
+        if isSyncing then return end  -- programmatic sync, not a user drag — don't write back
         -- Snap to step for visual consistency
         v = math.floor((v / step + 0.5)) * step
         setLabel(v)
