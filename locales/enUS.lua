@@ -17,16 +17,13 @@ ns.L = L
 -- Window chrome
 ---------------------------------------------------------------
 L["Details! iLvl Display"]      = "Details! iLvl Display"
-L["Settings"]                   = "Settings"
 L["Open Settings"]              = "Open Settings"
-L["Close"]                      = "Close"
 
 ---------------------------------------------------------------
 -- Tabs
 ---------------------------------------------------------------
 L["General"]                    = "General"
 L["Output Channels"]            = "Output Channels"
-L["Live Preview"]               = "Live Preview"
 L["Diagnostics"]                = "Diagnostics"
 
 ---------------------------------------------------------------
@@ -65,15 +62,10 @@ L["Grid2 status"]               = "Grid2 status"
 L["Danders Frames overlay"]     = "Danders Frames overlay"
 L["Blizzard DM"]                = "Blizzard DM"
 
-L["ElvUI Tag Format"]           = "ElvUI Tag Format"
-L["Brackets: [dilvl]"]          = "Brackets: [dilvl]"
-L["Plain: [dilvl:plain]"]       = "Plain: [dilvl:plain]"
 L["ELVUI_TAGS_HINT"]            = "Pick [dilvl] (brackets: Razul [263]) or [dilvl:plain] (bare: Razul 263) inside any ElvUI Custom Text. Both tags are listed in ElvUI's tag browser."
 L["GRID2_HINT"]                 = "Configure the indicator placement in Grid2's GUI (Status -> dilvl)."
 
 L["Danders Anchor Position"]    = "Danders Anchor Position"
-L["Inside frame"]               = "Inside frame"
-L["Outside frame"]              = "Outside frame"
 L["Danders Font Size"]          = "Danders Font Size"
 L["TOOLTIP_DANDERS_SIZE"]       = "Size of the iLvl text on Danders Frames. Range 6-30, live update without /reload."
 
@@ -98,11 +90,9 @@ L["TOOLTIP_BLIZZDM_MODE"]       = "Auto: enabled when Details! is missing. Force
 ---------------------------------------------------------------
 -- Page: Live Preview
 ---------------------------------------------------------------
-L["PREVIEW_INFO"]               = "Mock frames update live as you change settings. They don't reflect actual unit data — they're styling samples."
 L["Damage Meter Preview"]       = "Damage Meter Preview"
 L["Unit Frame Preview"]         = "Unit Frame Preview"
 L["PREVIEW_UF_CAPTION"]         = "Sample frame — Grid2 / ElvUI render analogously"
-L["PREVIEW_DISABLED"]           = "(disabled — toggle 'Enable Details! iLvl Display' on the General tab)"
 
 ---------------------------------------------------------------
 -- Page: Diagnostics
@@ -112,15 +102,12 @@ L["Refresh"]                    = "Refresh"
 L["Reset UI Error Counters"]    = "Reset UI Error Counters"
 L["Reset to Defaults"]          = "Reset to Defaults"
 L["RESET_DEFAULTS_CONFIRM"]     = "Reset ALL settings to their default values?\n\nYour iLvl cache and window position will be preserved."
-L["Manual Re-inspect"]          = "Manual Re-inspect"
 
 ---------------------------------------------------------------
 -- Footer
 ---------------------------------------------------------------
 L["FOOTER_HINT"]                = "/dilvl debug for bug reports"
 L["BLIZZ_PANEL_SLASH_HINT"]     = "Slash: /dilvl   |   /dilvl debug for diagnostics"
-L["GitHub"]                     = "GitHub"
-L["CurseForge"]                 = "CurseForge"
 
 ---------------------------------------------------------------
 -- Error placeholders
