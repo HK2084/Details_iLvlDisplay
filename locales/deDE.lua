@@ -115,6 +115,7 @@ L["Manual Re-inspect"]          = "Manuelles Re-Inspect"
 -- Footer
 ---------------------------------------------------------------
 L["FOOTER_HINT"]                = "/dilvl debug für Bug-Reports"
+L["BLIZZ_PANEL_SLASH_HINT"]     = "Slash: /dilvl   |   /dilvl debug für Diagnose"
 
 ---------------------------------------------------------------
 -- Error placeholders

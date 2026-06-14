@@ -45,7 +45,7 @@ local function BuildCanvas()
 
     local hint = panel:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
     hint:SetPoint("TOPLEFT", btn, "BOTTOMLEFT", 0, -16)
-    hint:SetText("Slash: /dilvl ui   |   /dilvl debug for diagnostics")
+    hint:SetText(L["BLIZZ_PANEL_SLASH_HINT"])
     theme.SetTextColor(hint, "disabled")
 
     return panel

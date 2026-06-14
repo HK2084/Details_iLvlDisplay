@@ -118,6 +118,7 @@ L["Manual Re-inspect"]          = "Manual Re-inspect"
 -- Footer
 ---------------------------------------------------------------
 L["FOOTER_HINT"]                = "/dilvl debug for bug reports"
+L["BLIZZ_PANEL_SLASH_HINT"]     = "Slash: /dilvl   |   /dilvl debug for diagnostics"
 L["GitHub"]                     = "GitHub"
 L["CurseForge"]                 = "CurseForge"
 
