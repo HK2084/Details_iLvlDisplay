@@ -19,6 +19,7 @@ ns.ui.pages.channels = page
 local theme = ns.ui.theme
 local W     = ns.ui.widgets
 local L     = ns.L
+local safe  = ns.ui.safe
 
 ---------------------------------------------------------------
 -- DB accessors — defensive, never assume db is loaded.
@@ -112,8 +113,9 @@ local DETAILS_WINDOW_OPTIONS = {
 -- the next channel below it.
 ---------------------------------------------------------------
 local function BuildDetailsPanel(parent)
-    -- 140h fits checkbox + hint + (window dropdown | size slider) row.
-    local p = W.CreatePanel(parent, 1, 140, L["Details! bars"])
+    -- 155h fits checkbox + hint + (window dropdown | size slider) row +
+    -- the contextual "size needs Columns layout" note at the bottom.
+    local p = W.CreatePanel(parent, 1, 155, L["Details! bars"])
     p:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     p:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -20, 0)
 
@@ -148,6 +150,23 @@ local function BuildDetailsPanel(parent)
         function(v) setKey("detailsFontSize", v) end,
         L["TOOLTIP_DETAILS_SIZE"])
     sizeSlider:SetPoint("LEFT", windowDD, "RIGHT", 30, -2)
+
+    -- Smart caveat: the size slider only affects the Columns layout (own
+    -- FontStrings). Show this line ONLY while Inline is active — where size
+    -- has no effect — so the common Columns case stays uncluttered. Re-
+    -- evaluated on page show (e.g. after switching layout on the General tab).
+    local sizeNote = W.CreateLabel(p, L["DETAILS_SIZE_INLINE_NOTE"],
+        theme.FONT_HELPER, "accent")
+    sizeNote:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 14, 10)
+    sizeNote:SetPoint("RIGHT", p, "RIGHT", -16, 0)
+    sizeNote:SetJustifyH("LEFT")
+    local function refreshSizeNote()
+        local d = db()
+        if d and d.layout == "inline" then sizeNote:Show() else sizeNote:Hide() end
+    end
+    p:SetScript("OnShow", safe.WrapScript("DetailsPanel:OnShow", refreshSizeNote))
+    refreshSizeNote()
+
     return p
 end
 
@@ -259,9 +278,9 @@ function page.Init(parent)
     local p4 = BuildDandersPanel(content, p3)
     local p5 = BuildBlizzDMPanel(content, p4)
 
-    -- Total stacked panel height: 140(Details!) + 105(ElvUI) + 80(Grid2) +
-    -- 110(Danders) + 80(BlizzDM) = 515 + 4 gaps × WIDGET_GAP + headroom
-    content:SetHeight(140 + 105 + 80 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
+    -- Total stacked panel height: 155(Details!) + 105(ElvUI) + 80(Grid2) +
+    -- 110(Danders) + 80(BlizzDM) = 530 + 4 gaps × WIDGET_GAP + headroom
+    content:SetHeight(155 + 105 + 80 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
 end
 
 if ns.ui and ns.ui.main and ns.ui.main.RegisterPage then

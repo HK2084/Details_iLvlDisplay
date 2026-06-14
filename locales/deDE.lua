@@ -84,6 +84,7 @@ L["Window 5"]                   = "Fenster 5"
 L["TOOLTIP_DETAILS_WINDOW"]     = "Zeigt iLvl nur in EINEM Details!-Fenster statt in allen. 'Alle Fenster' ist Standard. Slash: /dilvl details window <all|1-10>."
 L["Details Font Size"]          = "Details! Schriftgröße"
 L["TOOLTIP_DETAILS_SIZE"]       = "Feste iLvl-Textgröße auf Details!-Balken (nur Spalten-Layout). Schieberegler 6-30; '/dilvl details size 0' nutzt Details' eigene Schrift."
+L["DETAILS_SIZE_INLINE_NOTE"]   = "ⓘ Schriftgröße gilt im Spalten-Layout — Layout im Tab Allgemein umschalten."
 
 L["Blizzard DM Mode"]           = "Blizzard DM Modus"
 L["Auto"]                       = "Automatisch"
