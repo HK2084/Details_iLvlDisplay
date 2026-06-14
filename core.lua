@@ -32,6 +32,7 @@ local lastMapID = nil -- track zone changes to detect new instances
 local inspectQueue = {}
 local isInspecting = false
 local pendingInspectGuid = nil -- GUID we requested via NotifyInspect (nil = we didn't trigger current inspect)
+local inspectGeneration  = 0   -- bumped by QueueGroupInspect; invalidates in-flight safety-timeout closures from a prior sweep
 local lastManualInspectTime = 0 -- GetTime() of last INSPECT_READY we didn't trigger (ElvUI-safe guard)
 local lastInspectInfo = nil -- {name, ilvl, source, time} last completed inspect for debug
 local detailsReady = false
@@ -957,9 +958,14 @@ local function ProcessNextInspect()
         pendingInspectGuid = entry.guid -- track that WE triggered this inspect
         NotifyInspect(entry.unit)
         -- Safety timeout: if INSPECT_READY never fires (server throttle, player
-        -- LoS'd mid-inspect, disconnect), unblock the queue after 15s.
+        -- LoS'd mid-inspect, disconnect), unblock the queue after 15s. Capture
+        -- the sweep generation so that a QueueGroupInspect in the meantime (it
+        -- wipes the queue and bumps the generation) turns this stale timer into
+        -- a no-op — otherwise it could start a SECOND ProcessNextInspect chain
+        -- over the freshly-rebuilt queue (double inspects / out-of-order removal).
+        local gen = inspectGeneration
         C_Timer.After(15, function()
-            if isInspecting and pendingInspectGuid == entry.guid then
+            if inspectGeneration == gen and isInspecting and pendingInspectGuid == entry.guid then
                 isInspecting = false
                 pendingInspectGuid = nil
                 C_Timer.After(0.5, ProcessNextInspect)
@@ -985,6 +991,7 @@ local function QueueGroupInspect()
     isInspecting = false
     pendingInspectGuid = nil
     wipe(inspectQueue)
+    inspectGeneration = inspectGeneration + 1  -- invalidate in-flight safety timeouts from the previous sweep
 
     local prefix, count, numGroup = GetGroupInfo()
     if numGroup <= 1 then return end
