@@ -63,7 +63,7 @@ Details_iLvlDisplay_DandersState = Details_iLvlDisplay_DandersState or {
 }
 local STATE = Details_iLvlDisplay_DandersState
 
-local fontStrings = {} -- frame -> our FontString
+local fontStrings = setmetatable({}, {__mode = "k"}) -- frame -> our FontString; weak keys so a frame Danders drops can fall out instead of pinning our overlay forever
 
 ---------------------------------------------------------------
 -- Local kill-switch. NOT shared with core.lua's detailsBarErrors — if
