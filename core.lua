@@ -189,9 +189,18 @@ local MIDNIGHT_TIER_SETS = util.MIDNIGHT_TIER_SETS
 local function GetIlvlForGuid(guid)
     if not guid then return nil end
 
-    -- Player's own GUID: always use GetAverageItemLevel (most accurate, no inspect needed)
-    -- Skip Details API for self — it can return stale values during combat
+    -- Player's own GUID: GetAverageItemLevel is the most accurate source (no
+    -- inspect needed) and we skip the Details API for self (it can be stale in
+    -- combat). But honor a fresh cached self entry instead of recomputing AND
+    -- allocating a new table on every column refresh — that was the only real
+    -- per-refresh allocation on the hot path. Equipment-change events
+    -- (PLAYER_EQUIPMENT_CHANGED / UNIT_INVENTORY_CHANGED -> UpdatePlayerCache)
+    -- refresh it instantly; this short TTL is just a backstop re-sync.
     if guid == UnitGUID("player") then
+        local cachedSelf = ilvlCache[guid]
+        if cachedSelf and cachedSelf.source == "self" and (time() - cachedSelf.time) < 30 then
+            return cachedSelf.ilvl
+        end
         local _, equipped = GetAverageItemLevel()
         if equipped and equipped > 0 then
             local ilvl = math.floor(equipped)
