@@ -20,7 +20,7 @@ local theme = ns.ui.theme
 local W     = ns.ui.widgets
 local L     = ns.L
 
-local HISTORY_URL = "https://github.com/HK2084/Details_iLvlDisplay/blob/master/HISTORY.md"
+local HISTORY_URL = "https://www.curseforge.com/wow/addons/details-item-level-plugin"
 
 -- Curated feature log, newest first. FEATURES ONLY — bugfixes belong in the
 -- version history, not here.
