@@ -133,7 +133,7 @@ local function BuildDetailsPanel(parent)
     cb:SetPoint("TOPLEFT", p, "TOPLEFT", PAD_X, CB_Y)
 
     local hint = W.CreateLabel(p,
-        "→ " .. L["Layout (Details!)"] .. " / " .. L["Position"]
+        L["Layout (Details!)"] .. " / " .. L["Position"]
             .. ": " .. L["General"],
         theme.FONT_HELPER, "secondary")
     hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", HINT_DX, HINT_DY)
@@ -192,7 +192,7 @@ local function BuildElvUIPanel(parent, prev)
     -- Top edge comes from TOPLEFT (rel. checkbox); RIGHT only constrains the
     -- width so the 2-line hint wraps without the top edge tilting.
     local hint = W.CreateLabel(p,
-        "→ " .. L["ELVUI_TAGS_HINT"],
+        L["ELVUI_TAGS_HINT"],
         theme.FONT_HELPER, "secondary")
     hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", HINT_DX, HINT_DY)
     hint:SetPoint("RIGHT",   p,  "RIGHT", -PAD_X, 0)
@@ -211,7 +211,7 @@ local function BuildGrid2Panel(parent, prev)
     cb:SetPoint("TOPLEFT", p, "TOPLEFT", PAD_X, CB_Y)
 
     local hint = W.CreateLabel(p,
-        "→ " .. L["GRID2_HINT"],
+        L["GRID2_HINT"],
         theme.FONT_HELPER, "secondary")
     hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", HINT_DX, HINT_DY)
     hint:SetPoint("RIGHT",   p,  "RIGHT", -PAD_X, 0)

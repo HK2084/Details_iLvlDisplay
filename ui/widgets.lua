@@ -127,26 +127,25 @@ function W.CreateSlider(parent, label, minVal, maxVal, step, getter, setter, too
     slider:SetValueStep(step or 1)
     slider:SetObeyStepOnDrag(true)
 
-    -- Re-skin template's Text/Low/High fontstrings to our theme.
+    -- The current value lives IN the label ("<label>:  <n>") at the top of the
+    -- slider, not as a readout below the thumb — a below-thumb readout spills
+    -- past the panel's bottom edge when the slider sits low in a panel.
+    local baseLabel = label or ""
     if slider.Text then
-        slider.Text:SetText(label or "")
         slider.Text:SetFontObject(theme.FONT_LABEL)
         theme.SetTextColor(slider.Text, "primary")
     end
+    local function setLabel(v)
+        if slider.Text then slider.Text:SetText(baseLabel .. ":  " .. tostring(v)) end
+    end
     if slider.Low  then slider.Low:SetText(tostring(minVal or 0)); theme.SetTextColor(slider.Low, "secondary") end
     if slider.High then slider.High:SetText(tostring(maxVal or 100)); theme.SetTextColor(slider.High, "secondary") end
-
-    -- Current-value readout below the slider thumb.
-    local valueFS = slider:CreateFontString(nil, "OVERLAY", theme.FONT_HELPER)
-    valueFS:SetPoint("TOP", slider, "BOTTOM", 0, -2)
-    theme.SetTextColor(valueFS, "accent")
-    slider.valueFS = valueFS
 
     slider:SetScript("OnShow", safe.WrapScript("Slider:OnShow:" .. (label or "?"), function(self)
         if getter then
             local v = getter() or minVal
             self:SetValue(v)
-            self.valueFS:SetText(tostring(v))
+            setLabel(v)
         end
     end))
     -- Explicit initial sync (OnShow doesn't fire without state change)
@@ -154,14 +153,14 @@ function W.CreateSlider(parent, label, minVal, maxVal, step, getter, setter, too
         local ok, v = pcall(getter)
         if ok and v then
             slider:SetValue(v)
-            valueFS:SetText(tostring(v))
+            setLabel(v)
         end
     end
 
     slider:SetScript("OnValueChanged", safe.WrapScript("Slider:OnValueChanged:" .. (label or "?"), function(self, v)
         -- Snap to step for visual consistency
         v = math.floor((v / step + 0.5)) * step
-        self.valueFS:SetText(tostring(v))
+        setLabel(v)
         if setter then setter(v) end
     end))
 
