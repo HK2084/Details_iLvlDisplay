@@ -122,3 +122,20 @@ L["FOOTER_HINT"]                = "/dilvl debug für Bug-Reports"
 L["PAGE_BROKEN_TITLE"]          = "Einstellungs-Seite defekt"
 L["PAGE_BROKEN_BODY"]           = "Seite '%s' wurde nach %d Fehlern deaktiviert.\nAndere Seiten funktionieren weiter. Nutze /dilvl Slash-Befehle\noder /reload zum Wiederherstellen."
 L["PAGE_BROKEN_LAST"]           = "Letzter Fehler: %s"
+
+---------------------------------------------------------------
+-- Page: What's New
+---------------------------------------------------------------
+L["What's New"]                 = "Neuigkeiten"
+L["WHATSNEW_INFO"]              = "Die neuesten Features, neueste zuerst. Bugfixes stehen in der unten verlinkten Versions-Historie."
+L["WHATSNEW_HISTORY"]           = "Vollständige Versions-Historie:"
+L["WN_150_UI"]                  = "Einstellungs-Fenster"
+L["WN_150_UI_D"]                = "Dieses Fenster — alle Optionen an einem Ort, keine Slash-Befehle mehr merken."
+L["WN_150_SIZE"]                = "Details!-Textgröße"
+L["WN_150_SIZE_D"]              = "Feste iLvl-Textgröße auf Details!-Balken (Spalten-Layout)."
+L["WN_150_WINDOW"]              = "Pro-Fenster-Anzeige"
+L["WN_150_WINDOW_D"]            = "iLvl nur in einem Details!-Fenster statt in allen anzeigen."
+L["WN_144_DANDERS"]             = "Danders Frames Textgröße"
+L["WN_144_DANDERS_D"]           = "Einstellbare iLvl-Textgröße plus Anker-Positionen außerhalb des Frames."
+L["WN_143_ELVUI"]               = "ElvUI Plain-Tag"
+L["WN_143_ELVUI_D"]             = "[dilvl:plain] — die nackte iLvl-Zahl ohne Klammern."

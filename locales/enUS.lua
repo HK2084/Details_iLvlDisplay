@@ -129,6 +129,23 @@ L["PAGE_BROKEN_BODY"]           = "Page '%s' has been disabled after %d errors.\
 L["PAGE_BROKEN_LAST"]           = "Last error: %s"
 
 ---------------------------------------------------------------
+-- Page: What's New
+---------------------------------------------------------------
+L["What's New"]                 = "What's New"
+L["WHATSNEW_INFO"]              = "The newest features, newest first. Bugfixes live in the full version history linked below."
+L["WHATSNEW_HISTORY"]           = "Full version history:"
+L["WN_150_UI"]                  = "Settings window"
+L["WN_150_UI_D"]                = "This window — every option in one place, no more remembering slash commands."
+L["WN_150_SIZE"]                = "Details! text size"
+L["WN_150_SIZE_D"]              = "Set a fixed iLvl text size on Details! bars (Columns layout)."
+L["WN_150_WINDOW"]              = "Per-window display"
+L["WN_150_WINDOW_D"]            = "Show iLvl on only one Details! window instead of all of them."
+L["WN_144_DANDERS"]             = "Danders Frames text size"
+L["WN_144_DANDERS_D"]           = "Adjustable iLvl text size plus off-frame anchor positions."
+L["WN_143_ELVUI"]               = "ElvUI plain tag"
+L["WN_143_ELVUI_D"]             = "[dilvl:plain] — the bare iLvl number without brackets."
+
+---------------------------------------------------------------
 -- Magic: missing keys return their own name as fallback so an untranslated
 -- string just shows in English (or the key itself) instead of nil/error.
 -- This is the ecosystem-standard pattern (AceLocale silent=true does the same).

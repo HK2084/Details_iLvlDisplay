@@ -363,7 +363,18 @@ function main.Open(pageId)
     f:Show()
 
     local state = GetDbState()
-    local target = pageId or (state and state.lastTab) or (main.pages[1] and main.pages[1].id)
+    -- Default tab: an explicit pageId wins; otherwise show "What's New" once
+    -- after the addon updates (so a new feature never goes unnoticed), then
+    -- fall back to the user's last-used tab.
+    local target = pageId
+    if not target then
+        if state and state.lastSeenVersion ~= ns.version and main.pagesByID["whatsnew"] then
+            target = "whatsnew"
+        else
+            target = (state and state.lastTab) or (main.pages[1] and main.pages[1].id)
+        end
+    end
+    if state then state.lastSeenVersion = ns.version end
     if target and main.pagesByID[target] then
         main.SwitchTab(target)
     elseif main.pages[1] then

@@ -1622,6 +1622,18 @@ SLASH_DILVL1 = "/dilvl"
 SlashCmdList["DILVL"] = function(msg)
     msg = msg:lower():trim()
 
+    if msg == "" then
+        -- Bare /dilvl opens the Settings UI — the home for every option and the
+        -- What's New overview. All subcommands below still work; the full text
+        -- list is /dilvl help.
+        if ns.ui and ns.ui.slash then
+            ns.ui.slash.HandleSlash("")
+        else
+            print("|cFF00FF00Details! iLvl Display:|r Settings UI not loaded yet — try /reload.")
+        end
+        return
+    end
+
     if msg == "on" then
         db.enabled = true
         RefreshAllBarTexts()
@@ -2287,7 +2299,7 @@ SlashCmdList["DILVL"] = function(msg)
 
     else
         print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion)
-        print("  /dilvl ui              — Open Settings UI")
+        print("  /dilvl [ui]            — Open the Settings UI (home for all options)")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
         print("  /dilvl details size <n>  — Details! text size (0=auto, 6-30; Columns layout)")
