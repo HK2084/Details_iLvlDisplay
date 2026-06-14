@@ -38,6 +38,14 @@ local _hasanysecretvalues  = API.hasanysecretvalues
 local SafeUnitName         = API.SafeUnitName
                             or function(unit) return UnitName(unit) end
 
+-- IsEncounterInProgress() is deprecated in 12.0 (it survives only on the
+-- loadDeprecationFallbacks compat shim and is slated for removal at 13.0).
+-- The canonical API is C_InstanceEncounter.IsEncounterInProgress(). Cache it
+-- at load with a fallback so all call sites below migrate transparently; the
+-- secret-return handling (only `== true` counts as in-progress) is unchanged.
+local IsEncounterInProgress = (C_InstanceEncounter and C_InstanceEncounter.IsEncounterInProgress)
+                            or IsEncounterInProgress
+
 ---------------------------------------------------------------
 -- Local fault isolation.
 -- Counter resets on /reload (non-persistent). disableSelf flips
