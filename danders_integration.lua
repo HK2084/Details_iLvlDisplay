@@ -78,7 +78,10 @@ local function SafeCall(label, fn, ...)
     if STATE.disabled then return nil end
     if STATE.dandersErrors >= MAX_DANDERS_ERRORS then return nil end
     local ok, a, b, c = pcall(fn, ...)
-    if ok then return a, b, c end
+    if ok then
+        STATE.dandersErrors = 0  -- success clears accumulated errors (consecutive-failure semantics)
+        return a, b, c
+    end
     STATE.dandersErrors = STATE.dandersErrors + 1
     STATE.lastError = ("[%s] %s"):format(label, tostring(a))
     if STATE.dandersErrors >= MAX_DANDERS_ERRORS then

@@ -81,7 +81,13 @@ local function SafeBlizzCall(label, fn, ...)
     if blizzDMState.disabled then return nil end
     if blizzDMState.errors >= BLIZZDM_ERROR_LIMIT then return nil end
     local ok, a, b, c = pcall(fn, ...)
-    if ok then return a, b, c end
+    if ok then
+        -- Success clears accumulated errors: the kill-switch should trip on 5
+        -- CONSECUTIVE failures (a persistently broken integration), not on 5
+        -- transient errors spread across a long session.
+        blizzDMState.errors = 0
+        return a, b, c
+    end
     blizzDMState.errors = blizzDMState.errors + 1
     blizzDMState.lastError = ("[%s] %s"):format(label, tostring(a))
     if blizzDMState.errors >= BLIZZDM_ERROR_LIMIT then
