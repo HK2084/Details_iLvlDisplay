@@ -94,13 +94,26 @@ local function blizzDMSet(opt)
 end
 
 ---------------------------------------------------------------
+-- Details! window picker. 0 = all windows (default), 1-5 cover the
+-- realistic multi-window setups; slash `/dilvl details window <n>`
+-- reaches 6-10 for the rare power user.
+---------------------------------------------------------------
+local DETAILS_WINDOW_OPTIONS = {
+    {value=0, label=L["All windows"]},
+    {value=1, label=L["Window 1"]},
+    {value=2, label=L["Window 2"]},
+    {value=3, label=L["Window 3"]},
+    {value=4, label=L["Window 4"]},
+    {value=5, label=L["Window 5"]},
+}
+
+---------------------------------------------------------------
 -- Per-channel panel builder. Returns the panel frame so caller can anchor
 -- the next channel below it.
 ---------------------------------------------------------------
 local function BuildDetailsPanel(parent)
-    -- 80h fits checkbox + hint UNDER it (DE labels are longer than EN; a
-    -- RIGHT-of-checkbox hint would overlap the longer label).
-    local p = W.CreatePanel(parent, 1, 80, L["Details! bars"])
+    -- 140h fits checkbox + hint + (window dropdown | size slider) row.
+    local p = W.CreatePanel(parent, 1, 140, L["Details! bars"])
     p:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     p:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -20, 0)
 
@@ -116,6 +129,25 @@ local function BuildDetailsPanel(parent)
         theme.FONT_HELPER, "secondary")
     hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 24, -4)
     hint:SetJustifyH("LEFT")
+
+    -- Restrict iLvl to a single Details! window (404Missingno request).
+    local windowDD = W.CreateDropdown(p, L["Details Window"],
+        DETAILS_WINDOW_OPTIONS,
+        function() return getKey("detailsWindowId", 0) end,
+        function(v) setKey("detailsWindowId", v) end,
+        L["TOOLTIP_DETAILS_WINDOW"])
+    windowDD:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 0, -26)
+
+    -- Fixed iLvl text size for the Columns layout (404Missingno request).
+    -- Slider sets a concrete 6-30; "/dilvl details size 0" restores auto
+    -- (match Details' own font). Getter shows 12 while in auto so the thumb
+    -- isn't pinned to the min.
+    local sizeSlider = W.CreateSlider(p, L["Details Font Size"],
+        6, 30, 1,
+        function() local v = getKey("detailsFontSize", 0); return (v and v > 0) and v or 12 end,
+        function(v) setKey("detailsFontSize", v) end,
+        L["TOOLTIP_DETAILS_SIZE"])
+    sizeSlider:SetPoint("LEFT", windowDD, "RIGHT", 30, -2)
     return p
 end
 
@@ -227,9 +259,9 @@ function page.Init(parent)
     local p4 = BuildDandersPanel(content, p3)
     local p5 = BuildBlizzDMPanel(content, p4)
 
-    -- Total stacked panel height: 80(Details!) + 105(ElvUI) + 80(Grid2) +
-    -- 110(Danders) + 80(BlizzDM) = 455 + 4 gaps × WIDGET_GAP + headroom
-    content:SetHeight(80 + 105 + 80 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
+    -- Total stacked panel height: 140(Details!) + 105(ElvUI) + 80(Grid2) +
+    -- 110(Danders) + 80(BlizzDM) = 515 + 4 gaps × WIDGET_GAP + headroom
+    content:SetHeight(140 + 105 + 80 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
 end
 
 if ns.ui and ns.ui.main and ns.ui.main.RegisterPage then

@@ -32,6 +32,8 @@ ns.defaults = {
     dandersFontSize = 10,  -- live-set via /dilvl danders size <n>; clamped to [6, 30] at the slash boundary
     layout = "inline",     -- "inline" (append to name) or "columns" (separate right-aligned columns)
     ilvlPosition = "right", -- "right" (after name) or "left" (between rank and name)
+    detailsFontSize = 0,   -- iLvl text size on Details! bars; 0 = match Details' font (auto), 6-30 = fixed override (columns layout). Live-set via /dilvl details size <n>
+    detailsWindowId = 0,   -- which Details! window shows iLvl; 0 = all windows, 1-10 = only that window. Live-set via /dilvl details window <n|all>
     -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
     --          true/false = user override via /dilvl blizzdm
 }
@@ -60,6 +62,16 @@ ns.POS_KEYS_SET = {
 -- consuming the seen flag) on clients where the dependency is missing,
 -- so a user installing ElvUI later still gets the ElvUI-specific hint.
 ns.LOGIN_HINTS = {
+    {
+        key  = "detailswindow",                             -- v1.5.0
+        gate = function() return Details ~= nil end,
+        msg  = "/dilvl details window <n|all> — show iLvl on only ONE Details! window instead of all of them (e.g. 'window 1'). 'all' restores the default.",
+    },
+    {
+        key  = "detailssize",                               -- v1.5.0
+        gate = function() return Details ~= nil end,
+        msg  = "/dilvl details size <n> — set a fixed iLvl text size on Details! bars (6-30), or 'size 0' to match Details' own font. Applies to the Columns layout.",
+    },
     {
         key  = "dandersposoff",                             -- v1.4.4
         gate = function() return DandersFrames_IsReady ~= nil end,

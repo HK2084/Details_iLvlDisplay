@@ -52,6 +52,7 @@ local VALIDATORS
 local RecursiveDefaultsMerge, MigrateSchema, ValidateDb
 local openRaidLib = nil -- LibOpenRaid-1.0 handle; assigned after ADDON_LOADED if available
 local barColumns = {}       -- bar -> {ilvlFS, tierFS} (custom column FontStrings for layout="columns")
+local fsBar = {}            -- lineText1 fontString -> owning bar (for per-window gating in the FontString-only refresh path)
 local columnRefreshPending = false -- debounce flag for next-frame column refresh
 local perfStats = {calls = 0, totalMs = 0, lastMs = 0, peak = 0} -- column refresh perf tracking
 local cachedColLayout = nil -- cached {leftA, leftW, secA, secW, gap, yOff} from last good measurement
@@ -99,6 +100,8 @@ local MIN_NAME_WIDTH = 50   -- px minimum for player name before hiding columns
 -- integration's applyFontSizeToAll always gets a sane value.
 local DANDERS_FONT_MIN = 6
 local DANDERS_FONT_MAX = 30
+local DETAILS_FONT_MIN = 6   -- /dilvl details size lower bound (0 = "auto, match Details' font")
+local DETAILS_FONT_MAX = 30  -- upper bound
 
 ---------------------------------------------------------------
 -- Secret-value defense layer (WoW 12.0+) lives in secrets.lua.
@@ -381,6 +384,21 @@ local function BuildTag(name, noLeadingSpace)
 end
 
 ---------------------------------------------------------------
+-- Per-window gate: limit Details! iLvl display to a single window.
+-- db.detailsWindowId: 0 = all windows (default), 1-10 = only that
+-- Details! instance. instanceId may be nil on bars Details! hasn't
+-- assigned an instance to yet — fail OPEN there so we never hide a bar
+-- we can't classify (worst case: a stray bar shows on the "wrong"
+-- window, which beats hiding wanted bars).
+---------------------------------------------------------------
+local function IsDetailsWindowAllowed(instanceId)
+    local want = db and db.detailsWindowId or 0
+    if want == 0 then return true end
+    if instanceId == nil then return true end
+    return instanceId == want
+end
+
+---------------------------------------------------------------
 -- Column layout helpers (layout = "columns")
 -- Creates dedicated FontStrings per bar for iLvl + tier display,
 -- anchored as separate right-aligned columns left of Details!'
@@ -391,6 +409,10 @@ local function CopyBarFont(bar, targetFS)
     if not source then return end
     local font, size, flags = source:GetFont()
     if font then
+        -- User can pin a fixed iLvl text size (db.detailsFontSize, 6-30);
+        -- 0 = match Details' own bar font (default, current behavior).
+        local override = db and db.detailsFontSize or 0
+        if override > 0 then size = override end
         targetFS:SetFont(font, size, flags)
         targetFS:SetShadowColor(source:GetShadowColor())
         targetFS:SetShadowOffset(source:GetShadowOffset())
@@ -455,7 +477,7 @@ local function RefreshAllColumns()
     local yOff = 0
 
     for bar, cols in pairs(barColumns) do
-        if not bar:IsShown() then
+        if not bar:IsShown() or not IsDetailsWindowAllowed(bar.instance_id) then
             cols.ilvlFS:Hide()
             cols.tierFS:Hide()
         else
@@ -679,6 +701,7 @@ local function HookBarTextIfNeeded(bar)
     local fontString = bar.lineText1
     if hookedFontStrings[fontString] then return end
     hookedFontStrings[fontString] = true
+    fsBar[fontString] = bar  -- remember owner for per-window gating in RefreshAllBarTexts
 
     -- Create column FontStrings for this bar (no-op if already created)
     CreateBarColumns(bar)
@@ -726,6 +749,9 @@ local function HookBarTextIfNeeded(bar)
             end
 
             if not db.showInDetails then return end
+            -- Per-window filter: this bar's window may be excluded (db.detailsWindowId).
+            -- Gate here covers both layouts — columns are also hidden in RefreshAllColumns.
+            if not IsDetailsWindowAllowed(bar.instance_id) then return end
 
             if db.layout == "columns" then
                 ScheduleColumnRefresh()
@@ -810,7 +836,9 @@ local function RefreshAllBarTexts()
     for fontString in pairs(hookedFontStrings) do
         -- barCleanText values are pre-validated on insert (isSecretValue checked
         -- in SetText hook and GetText seed). No pcall needed here.
-        if fontString:IsShown() then
+        -- Per-window filter: skip bars whose Details! window is excluded.
+        local ownBar = fsBar[fontString]
+        if fontString:IsShown() and (not ownBar or IsDetailsWindowAllowed(ownBar.instance_id)) then
             local text = barCleanText[fontString]
             if text then
                 local name = ExtractName(text)
@@ -1378,6 +1406,20 @@ VALIDATORS = {
         if v > 30 then return 30 end
         return math.floor(v + 0.5)
     end,
+    detailsFontSize = function(v)
+        if type(v) ~= "number" then return 0 end
+        if v == 0 then return 0 end                       -- 0 = auto (match Details' font)
+        if v < DETAILS_FONT_MIN then return DETAILS_FONT_MIN end
+        if v > DETAILS_FONT_MAX then return DETAILS_FONT_MAX end
+        return math.floor(v + 0.5)
+    end,
+    detailsWindowId = function(v)
+        if type(v) ~= "number" then return 0 end
+        v = math.floor(v + 0.5)
+        if v < 0 then return 0 end
+        if v > 10 then return 10 end
+        return v
+    end,
     dandersPos = function(v)
         if type(v) ~= "string" then return "topright" end
         -- Validate against the canonical POS_KEYS_SET. If POS_KEYS_SET
@@ -1508,6 +1550,23 @@ ns.ApplySettingChange = function(key)
         else
             ClearAllBarTags()
         end
+    elseif key == "detailsFontSize" then
+        -- Re-copy fonts (picks up the size override) then redraw columns.
+        -- Only affects the Columns layout (own FontStrings); inline text
+        -- is part of Details!' own FontString and keeps Details' size.
+        UpdateAllColumnFonts()
+        if db.layout == "columns" then RefreshAllColumns() end
+    elseif key == "detailsWindowId" then
+        -- Window filter changed: wipe all tags/columns, re-hook, redraw so
+        -- excluded windows go clean and the selected one (re)populates.
+        ClearAllBarTags()       -- also clears columns (calls ClearAllColumns)
+        HookAllBars()
+        RebuildNameIlvlMap()
+        if db.layout == "columns" then
+            RefreshAllColumns()
+        else
+            RefreshAllBarTexts()
+        end
     elseif key == "ilvlPosition" then
         if db.layout == "inline" then
             ClearAllBarTags()
@@ -1583,6 +1642,43 @@ SlashCmdList["DILVL"] = function(msg)
         RefreshAllBarTexts()
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r Set Bonus " .. (db.showSetBonus and "ON" or "OFF"))
+    elseif msg:match("^details size") then
+        local arg = msg:match("^details size%s+(%S+)")
+        local n = arg and tonumber(arg)
+        if n and (n == 0 or (n >= DETAILS_FONT_MIN and n <= DETAILS_FONT_MAX)) then
+            n = math.floor(n)
+            db.detailsFontSize = n
+            if ns.ApplySettingChange then ns.ApplySettingChange("detailsFontSize") end
+            if n == 0 then
+                print("|cFF00FF00Details! iLvl Display:|r Details text size: auto (matches Details' font)")
+            else
+                print(string.format("|cFF00FF00Details! iLvl Display:|r Details text size: %d (Columns layout)", n))
+            end
+        else
+            local cur = db.detailsFontSize or 0
+            print("|cFF00FF00Details! iLvl Display:|r Current Details text size: " .. ((cur == 0) and "auto" or tostring(cur)))
+            print(string.format("  Usage: /dilvl details size <0|%d-%d>  (0 = match Details' font; Columns layout)", DETAILS_FONT_MIN, DETAILS_FONT_MAX))
+        end
+
+    elseif msg:match("^details window") then
+        local arg = msg:match("^details window%s+(%S+)")
+        if arg == "all" or arg == "0" then
+            db.detailsWindowId = 0
+            if ns.ApplySettingChange then ns.ApplySettingChange("detailsWindowId") end
+            print("|cFF00FF00Details! iLvl Display:|r Details window: all windows")
+        else
+            local n = arg and tonumber(arg)
+            if n and n >= 1 and n <= 10 then
+                db.detailsWindowId = math.floor(n)
+                if ns.ApplySettingChange then ns.ApplySettingChange("detailsWindowId") end
+                print(string.format("|cFF00FF00Details! iLvl Display:|r Details window: only window %d", math.floor(n)))
+            else
+                local cur = db.detailsWindowId or 0
+                print("|cFF00FF00Details! iLvl Display:|r Current Details window: " .. ((cur == 0) and "all windows" or ("window " .. cur)))
+                print("  Usage: /dilvl details window <all|1-10>")
+            end
+        end
+
     elseif msg == "details" then
         db.showInDetails = not db.showInDetails
         if not db.showInDetails then
@@ -2194,6 +2290,8 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl ui              — Open Settings UI")
         print("  /dilvl on|off          — Enable / disable")
         print("  /dilvl details         — Toggle iLvl on Details! bars")
+        print("  /dilvl details size <n>  — Details! text size (0=auto, 6-30; Columns layout)")
+        print("  /dilvl details window <n> — Show iLvl on only one Details! window (all|1-10)")
         print("  /dilvl elvui on|off    — Toggle iLvl in ElvUI party frames")
         print("  /dilvl grid2 on|off    — Toggle iLvl status in Grid2 raid frames")
         print("  /dilvl danders on|off  — Toggle iLvl overlay on Danders Frames")
