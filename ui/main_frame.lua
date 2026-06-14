@@ -57,6 +57,15 @@ local function ClearChildren(parent)
     if not parent then return end
     for _, child in ipairs({parent:GetChildren()}) do
         child:Hide()
+        -- Detach update handlers before unparenting. WoW never GCs the frame
+        -- itself, but nulling the script slots releases the captured closures
+        -- and guarantees a stale OnShow/OnSizeChanged can't fire on a dead page
+        -- (e.g. a late C_Timer resolving against an orphaned scroll frame). All
+        -- four are generic Frame scripts, safe to null on any child type.
+        child:SetScript("OnShow", nil)
+        child:SetScript("OnHide", nil)
+        child:SetScript("OnUpdate", nil)
+        child:SetScript("OnSizeChanged", nil)
         child:ClearAllPoints()
         child:SetParent(nil)
     end
