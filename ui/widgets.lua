@@ -357,15 +357,66 @@ function W.CreateInfoBar(parent, text, height)
 end
 
 ---------------------------------------------------------------
--- CreateScrollFrame — themed wrapper around UIPanelScrollFrameTemplate.
--- Returns (scrollFrame, contentFrame) — anchor your content into the
--- contentFrame; it grows independent of the visible scrollFrame height.
+-- CreateScrollFrame — minimal, themed scroll area.
+--
+-- Deliberately NOT UIPanelScrollFrameTemplate: that template ships chunky
+-- Blizzard arrow buttons + a bright scrollbar that clash with the dark theme.
+-- Instead: a bare ScrollFrame driven by the mouse wheel, plus a thin gold
+-- position indicator on the right edge that auto-hides when everything fits.
+-- The content width is kept in sync with the scroll frame so child panels
+-- always fill the width (no manual gutter math at the call site).
+--
+-- Returns (scrollFrame, contentFrame) — anchor content into contentFrame;
+-- its height drives the scroll range.
 ---------------------------------------------------------------
 function W.CreateScrollFrame(parent, w, h)
-    local sf = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    local sf = CreateFrame("ScrollFrame", nil, parent)
     sf:SetSize(w, h)
     local content = CreateFrame("Frame", nil, sf)
-    content:SetSize(w - 24, 1) -- -24 for scrollbar gutter; height grows as children added
+    content:SetSize(w, 1) -- height grows as children are added
     sf:SetScrollChild(content)
+
+    -- Thin position indicator (wheel does the scrolling — this is just a hint).
+    -- Lives on a high-level overlay frame so it always draws above the scroll
+    -- child, and ignores the mouse so it never steals wheel/click from panels.
+    local sb = CreateFrame("Frame", nil, sf)
+    sb:SetAllPoints(sf)
+    sb:SetFrameLevel(sf:GetFrameLevel() + 20)
+    sb:EnableMouse(false)
+    local thumb = sb:CreateTexture(nil, "OVERLAY")
+    thumb:SetWidth(3)
+    thumb:SetColorTexture(theme.BORDER_ACTIVE[1], theme.BORDER_ACTIVE[2], theme.BORDER_ACTIVE[3], 0.6)
+    thumb:Hide()
+
+    local function refresh()
+        local range   = sf:GetVerticalScrollRange() or 0
+        local visible = sf:GetHeight()
+        if range <= 1 or visible <= 0 then thumb:Hide(); return end
+        local thumbH = math.max(24, visible * visible / (visible + range))
+        local frac   = (sf:GetVerticalScroll() or 0) / range
+        thumb:ClearAllPoints()
+        thumb:SetPoint("TOPRIGHT", sf, "TOPRIGHT", -1, -frac * (visible - thumbH))
+        thumb:SetHeight(thumbH)
+        thumb:Show()
+    end
+    sf.RefreshScrollbar = refresh
+
+    sf:EnableMouseWheel(true)
+    sf:SetScript("OnMouseWheel", function(self, delta)
+        local range = self:GetVerticalScrollRange() or 0
+        self:SetVerticalScroll(math.max(0, math.min(range, (self:GetVerticalScroll() or 0) - delta * 40)))
+    end)
+    sf:SetScript("OnVerticalScroll", refresh)
+    sf:SetScript("OnScrollRangeChanged", refresh)
+    sf:SetScript("OnSizeChanged", function(self, sw)
+        if sw and sw > 0 then content:SetWidth(sw) end
+        refresh()
+    end)
+    C_Timer.After(0, function()
+        local sw = sf:GetWidth()
+        if sw and sw > 0 then content:SetWidth(sw) end
+        refresh()
+    end)
+
     return sf, content
 end

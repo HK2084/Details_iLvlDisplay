@@ -112,10 +112,17 @@ local DETAILS_WINDOW_OPTIONS = {
 -- Per-channel panel builder. Returns the panel frame so caller can anchor
 -- the next channel below it.
 ---------------------------------------------------------------
+-- Shared vertical rhythm — keeps every channel panel consistently spaced.
+local PAD_X   = 12   -- inner left padding for checkbox / controls
+local CB_Y    = -28  -- checkbox top offset (just under the panel title)
+local HINT_DX = 24   -- hint indent (sits under the checkbox label)
+local HINT_DY = -5   -- gap from checkbox bottom to its hint line
+local ROW_DY  = -12  -- gap from a hint down to the control row below it
+
 local function BuildDetailsPanel(parent)
-    -- 155h fits checkbox + hint + (window dropdown | size slider) row +
-    -- the contextual "size needs Columns layout" note at the bottom.
-    local p = W.CreatePanel(parent, 1, 155, L["Details! bars"])
+    -- Height fits checkbox + hint + (window dropdown | size slider) row +
+    -- the contextual inline-note pinned to the bottom edge.
+    local p = W.CreatePanel(parent, 1, 158, L["Details! bars"])
     p:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, 0)
     p:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -20, 0)
 
@@ -123,27 +130,26 @@ local function BuildDetailsPanel(parent)
         function() return getKey("showInDetails", true) end,
         function(v) setKey("showInDetails", v) end,
         L["TOOLTIP_MASTER_ENABLE"])
-    cb:SetPoint("TOPLEFT", p, "TOPLEFT", 12, -28)
+    cb:SetPoint("TOPLEFT", p, "TOPLEFT", PAD_X, CB_Y)
 
     local hint = W.CreateLabel(p,
         "→ " .. L["Layout (Details!)"] .. " / " .. L["Position"]
             .. ": " .. L["General"],
         theme.FONT_HELPER, "secondary")
-    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 24, -4)
+    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", HINT_DX, HINT_DY)
+    hint:SetPoint("RIGHT",   p,  "RIGHT", -PAD_X, 0)
     hint:SetJustifyH("LEFT")
 
     -- Restrict iLvl to a single Details! window (404Missingno request).
+    -- Flows directly below the hint so the rhythm matches every panel.
     local windowDD = W.CreateDropdown(p, L["Details Window"],
         DETAILS_WINDOW_OPTIONS,
         function() return getKey("detailsWindowId", 0) end,
         function(v) setKey("detailsWindowId", v) end,
         L["TOOLTIP_DETAILS_WINDOW"])
-    windowDD:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 0, -26)
+    windowDD:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -HINT_DX, ROW_DY)
 
     -- Fixed iLvl text size for the Columns layout (404Missingno request).
-    -- Slider sets a concrete 6-30; "/dilvl details size 0" restores auto
-    -- (match Details' own font). Getter shows 12 while in auto so the thumb
-    -- isn't pinned to the min.
     local sizeSlider = W.CreateSlider(p, L["Details Font Size"],
         6, 30, 1,
         function() local v = getKey("detailsFontSize", 0); return (v and v > 0) and v or 12 end,
@@ -152,13 +158,13 @@ local function BuildDetailsPanel(parent)
     sizeSlider:SetPoint("LEFT", windowDD, "RIGHT", 30, -2)
 
     -- Smart caveat: the size slider only affects the Columns layout (own
-    -- FontStrings). Show this line ONLY while Inline is active — where size
-    -- has no effect — so the common Columns case stays uncluttered. Re-
-    -- evaluated on page show (e.g. after switching layout on the General tab).
+    -- FontStrings). Shown ONLY while Inline is active — where size has no
+    -- effect — pinned to the panel's bottom edge so the common Columns case
+    -- stays uncluttered. Re-evaluated on page show (layout lives on General).
     local sizeNote = W.CreateLabel(p, L["DETAILS_SIZE_INLINE_NOTE"],
         theme.FONT_HELPER, "accent")
-    sizeNote:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 14, 10)
-    sizeNote:SetPoint("RIGHT", p, "RIGHT", -16, 0)
+    sizeNote:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", PAD_X + 2, 10)
+    sizeNote:SetPoint("RIGHT", p, "RIGHT", -PAD_X, 0)
     sizeNote:SetJustifyH("LEFT")
     local function refreshSizeNote()
         local d = db()
@@ -173,42 +179,42 @@ end
 local function BuildElvUIPanel(parent, prev)
     -- ElvUI exposes TWO independent tags ([dilvl] always-brackets and
     -- [dilvl:plain] always-plain). User picks behavior by choosing which
-    -- tag to drop into their ElvUI Custom Text — there's no setting to
-    -- toggle.
-    -- 105h fits checkbox + 2-line wrapped hint. Hint width anchored to
-    -- panel.RIGHT - margin so it wraps based on panel width (resizable).
-    local p = W.CreatePanel(parent, 1, 105, L["ElvUI tags"])
+    -- tag to drop into their ElvUI Custom Text — there's no setting to toggle.
+    local p = W.CreatePanel(parent, 1, 100, L["ElvUI tags"])
     p:SetPoint("TOPLEFT",  prev, "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
     p:SetPoint("TOPRIGHT", prev, "BOTTOMRIGHT", 0, -theme.WIDGET_GAP)
 
     local cb = W.CreateCheckbox(p, L["ElvUI tags"],
         function() return getKey("elvuiTag", false) end,
         function(v) setKey("elvuiTag", v) end)
-    cb:SetPoint("TOPLEFT", p, "TOPLEFT", 12, -28)
+    cb:SetPoint("TOPLEFT", p, "TOPLEFT", PAD_X, CB_Y)
 
+    -- Top edge comes from TOPLEFT (rel. checkbox); RIGHT only constrains the
+    -- width so the 2-line hint wraps without the top edge tilting.
     local hint = W.CreateLabel(p,
         "→ " .. L["ELVUI_TAGS_HINT"],
         theme.FONT_HELPER, "secondary")
-    hint:SetPoint("TOPLEFT",  cb, "BOTTOMLEFT", 24, -4)
-    hint:SetPoint("TOPRIGHT", p,  "TOPRIGHT", -16, -52)
+    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", HINT_DX, HINT_DY)
+    hint:SetPoint("RIGHT",   p,  "RIGHT", -PAD_X, 0)
     hint:SetJustifyH("LEFT")
     return p
 end
 
 local function BuildGrid2Panel(parent, prev)
-    local p = W.CreatePanel(parent, 1, 80, L["Grid2 status"])
+    local p = W.CreatePanel(parent, 1, 88, L["Grid2 status"])
     p:SetPoint("TOPLEFT",  prev, "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
     p:SetPoint("TOPRIGHT", prev, "BOTTOMRIGHT", 0, -theme.WIDGET_GAP)
 
     local cb = W.CreateCheckbox(p, L["Grid2 status"],
         function() return getKey("grid2Status", false) end,
         function(v) setKey("grid2Status", v) end)
-    cb:SetPoint("TOPLEFT", p, "TOPLEFT", 12, -28)
+    cb:SetPoint("TOPLEFT", p, "TOPLEFT", PAD_X, CB_Y)
 
     local hint = W.CreateLabel(p,
         "→ " .. L["GRID2_HINT"],
         theme.FONT_HELPER, "secondary")
-    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 24, -4)
+    hint:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", HINT_DX, HINT_DY)
+    hint:SetPoint("RIGHT",   p,  "RIGHT", -PAD_X, 0)
     hint:SetJustifyH("LEFT")
     return p
 end
@@ -268,9 +274,9 @@ function page.Init(parent)
     sf:SetPoint("TOPLEFT",     info,   "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
     sf:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
 
-    -- Anchor scroll content full width minus scrollbar gutter
+    -- Content anchors to the scroll frame; CreateScrollFrame keeps the
+    -- content width synced to the frame, so panels fill the width on their own.
     content:SetPoint("TOPLEFT", sf, "TOPLEFT", 0, 0)
-    content:SetWidth(sf:GetWidth() - 20)
 
     local p1 = BuildDetailsPanel(content)
     local p2 = BuildElvUIPanel(content, p1)
@@ -278,9 +284,9 @@ function page.Init(parent)
     local p4 = BuildDandersPanel(content, p3)
     local p5 = BuildBlizzDMPanel(content, p4)
 
-    -- Total stacked panel height: 155(Details!) + 105(ElvUI) + 80(Grid2) +
-    -- 110(Danders) + 80(BlizzDM) = 530 + 4 gaps × WIDGET_GAP + headroom
-    content:SetHeight(155 + 105 + 80 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
+    -- Total stacked panel height: 158(Details!) + 100(ElvUI) + 88(Grid2) +
+    -- 110(Danders) + 80(BlizzDM) = 536 + 4 gaps × WIDGET_GAP + headroom
+    content:SetHeight(158 + 100 + 88 + 110 + 80 + theme.WIDGET_GAP * 4 + 10)
 end
 
 if ns.ui and ns.ui.main and ns.ui.main.RegisterPage then
