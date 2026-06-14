@@ -64,31 +64,55 @@ function page.Init(parent)
         if userInput then self:SetText(HISTORY_URL); self:SetCursorPosition(0) end
     end)
 
-    -- Scrollable feature list between the info bar and the link row.
+    -- Scrollable feature list — FULL WIDTH, between the info bar and the link
+    -- row. (Earlier bug: BOTTOMRIGHT was anchored to the short link label, so
+    -- the column got pinched to ~180px and every description wrapped into a
+    -- tower that overlapped the next entry.)
     local sf, content = W.CreateScrollFrame(parent, 660, 320)
-    sf:SetPoint("TOPLEFT",     info,      "BOTTOMLEFT", 0, -theme.WIDGET_GAP)
-    sf:SetPoint("BOTTOMRIGHT", linkLabel, "TOPRIGHT",   0, theme.WIDGET_GAP)
+    sf:SetPoint("TOPLEFT",     info,   "BOTTOMLEFT",  0, -theme.WIDGET_GAP)
+    sf:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 26)
     content:SetPoint("TOPLEFT", sf, "TOPLEFT", 0, 0)
 
-    local PAD_X = 12
-    local y = -4
+    -- Flow layout: each element anchors below the previous one, so a
+    -- description that wraps to several lines pushes the next entry down
+    -- instead of landing on top of it. prevX tracks the previous indent so we
+    -- can shift left/right between header / title / description levels.
+    local PAD_X = 14
+    local prev, prevX = nil, 0
+    local function place(fs, x, gap, wrap)
+        if prev then
+            fs:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", x - prevX, -gap)
+        else
+            fs:SetPoint("TOPLEFT", content, "TOPLEFT", x, -gap)
+        end
+        if wrap then
+            fs:SetPoint("RIGHT", content, "RIGHT", -PAD_X, 0)
+            fs:SetJustifyH("LEFT")
+        end
+        prev, prevX = fs, x
+    end
+
     for _, block in ipairs(buildEntries()) do
         local vh = W.CreateLabel(content, "v" .. block.ver, theme.FONT_HEADING, "accent")
-        vh:SetPoint("TOPLEFT", content, "TOPLEFT", PAD_X, y)
-        y = y - 24
+        place(vh, PAD_X, prev and 14 or 2)
         for _, it in ipairs(block.items) do
             local title = W.CreateLabel(content, "• " .. (it.t or "?"), theme.FONT_LABEL, "primary")
-            title:SetPoint("TOPLEFT", content, "TOPLEFT", PAD_X + 6, y)
-            y = y - 18
+            place(title, PAD_X + 10, 8)
             local desc = W.CreateLabel(content, it.d or "", theme.FONT_HELPER, "secondary")
-            desc:SetPoint("TOPLEFT", content, "TOPLEFT", PAD_X + 18, y)
-            desc:SetPoint("RIGHT",   content, "RIGHT", -PAD_X, 0)
-            desc:SetJustifyH("LEFT")
-            y = y - 22
+            place(desc, PAD_X + 20, 3, true)
         end
-        y = y - 10
     end
-    content:SetHeight(-y + 8)
+
+    -- Size the scroll child to the laid-out content once frame rects resolve,
+    -- so the scroll range is correct no matter how the descriptions wrapped.
+    content:SetHeight(440)
+    C_Timer.After(0, function()
+        local top, bottom = content:GetTop(), prev and prev:GetBottom()
+        if top and bottom then
+            content:SetHeight(math.max(1, top - bottom + 14))
+            if sf.RefreshScrollbar then sf.RefreshScrollbar() end
+        end
+    end)
 end
 
 if ns.ui and ns.ui.main and ns.ui.main.RegisterPage then
