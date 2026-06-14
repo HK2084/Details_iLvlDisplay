@@ -69,6 +69,15 @@ local function ClearChildren(parent)
         child:ClearAllPoints()
         child:SetParent(nil)
     end
+    -- GetChildren returns only child FRAMES; a page that created a FontString or
+    -- Texture directly on the content frame (e.g. the What's New history label)
+    -- leaves it behind, bleeding onto the next tab. Hide + unanchor those regions
+    -- too. (content has no regions of its own, so clearing all of them is safe.)
+    for _, region in ipairs({parent:GetRegions()}) do
+        if region.SetText then region:SetText("") end
+        region:Hide()
+        region:ClearAllPoints()
+    end
 end
 
 ---------------------------------------------------------------
