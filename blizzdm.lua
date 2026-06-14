@@ -720,16 +720,17 @@ local function InjectIlvl(frame)
         frame._dilvlFontFile = fontFile
         frame._dilvlFontSize = fontSize
         frame._dilvlFontFlags = fontFlags or ""
-        if not globalFontFile then
-            globalFontFile = fontFile
-            globalFontSize = fontSize
-            globalFontFlags = fontFlags or ""
-        end
+        -- Track the LATEST clean read (not write-once): if the user changes the
+        -- Blizzard DM font/scale mid-session, the global fallback the secret-clear
+        -- path (RestoreNameFS) uses follows along instead of staying stale.
+        globalFontFile = fontFile
+        globalFontSize = fontSize
+        globalFontFlags = fontFlags or ""
     end
     local textScale = nameFS:GetTextScale()
     if textScale and not isSecret(textScale) then
         frame._dilvlTextScale = textScale
-        if not globalTextScale then globalTextScale = textScale end
+        globalTextScale = textScale
     end
 
     -- Write-first: try SetText directly (works when FontString is clean).
