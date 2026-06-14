@@ -1097,40 +1097,32 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 local ok, lib = pcall(LibStub, "LibOpenRaid-1.0")
                 if ok and lib then
                     openRaidLib = lib
-                    -- GearUpdate fires with (unitName) after Details! broadcasts gear info.
-                    -- unitName is the full "Name-Realm" string.
-                    lib.RegisterCallback({}, "GearUpdate", function(_, unitName)
-                        if not unitName or not ilvlCache then return end
-                        local gearInfo = lib.GetUnitGear(unitName)
+                    -- LoR fires GearUpdate(GetUnitID(name), unitGearInfo, allUnitsGear):
+                    -- arg 1 is a UNIT TOKEN ("party3"/"raid11"/"player") for anyone in
+                    -- the group, NOT a "Name-Realm" string, and the gear table is arg 2.
+                    -- (The old code treated arg 1 as a name and matched it against the
+                    -- roster, which never matched for group members — so this fast path
+                    -- was silently dead and we fell back to the inspect queue.)
+                    lib.RegisterCallback({}, "GearUpdate", function(_, unit, gearInfo)
+                        if not unit or not ilvlCache then return end
+                        if isSecretValue(unit) then return end
+                        if not UnitExists(unit) then return end          -- token must be a live unit
+                        gearInfo = gearInfo or (lib.GetUnitGear and lib.GetUnitGear(unit))
                         if not gearInfo or not gearInfo.ilevel or gearInfo.ilevel <= 0 then return end
-                        -- Resolve GUID from live group tokens for cache keying
-                        local prefix, count = GetGroupInfo()
-                        for i = 1, count do
-                            local unit = prefix .. i
-                            if UnitExists(unit) then
-                                local fullName = GetUnitName(unit, true)
-                                if fullName == unitName then
-                                    local guid = UnitGUID(unit)
-                                    -- Skip own GUID — GetAverageItemLevel is always more accurate for self
-                                    if guid == UnitGUID("player") then break end
-                                    if guid then
-                                        local ilvl = math.floor(gearInfo.ilevel)
-                                        -- Only update if newer than what we have
-                                        local existing = ilvlCache[guid]
-                                        if not existing or ilvl ~= existing.ilvl or (time() - existing.time) > 300 then
-                                            local name, realm = SafeUnitName(unit)
-                                            if not name then break end
-                                            local storedName = (realm and realm ~= "") and (name.."-"..realm) or name
-                                            ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName, source = "lor"}
-                                            StoreNameIlvl(storedName, ilvl)
-                                            StoreNameIlvl(name, ilvl)
-                                            mapDirty = true
-                                            NotifyElvUI(storedName)
-                                        end
-                                    end
-                                    break
-                                end
-                            end
+                        local guid = UnitGUID(unit)
+                        if not guid or isSecretValue(guid) then return end
+                        if guid == UnitGUID("player") then return end    -- self: GetAverageItemLevel is more accurate
+                        local ilvl = math.floor(gearInfo.ilevel)
+                        local existing = ilvlCache[guid]
+                        if not existing or ilvl ~= existing.ilvl or (time() - existing.time) > 300 then
+                            local name, realm = SafeUnitName(unit)
+                            if not name then return end
+                            local storedName = (realm and realm ~= "") and (name.."-"..realm) or name
+                            ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName, source = "lor"}
+                            StoreNameIlvl(storedName, ilvl)
+                            StoreNameIlvl(name, ilvl)
+                            mapDirty = true
+                            NotifyElvUI(storedName)
                         end
                     end)
                 end
