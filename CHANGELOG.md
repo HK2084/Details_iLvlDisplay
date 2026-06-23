@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.5.1
+
+### Fixed
+
+- **Crash in restricted instances — the new event dungeons such as the Slave Pens.** Blizzard's 12.0 "secret value" system now hands back a *secret* GUID for indirect unit tokens like `targettarget` inside these instances, and comparing it threw `attempt to compare a secret string value` on `UNIT_INVENTORY_CHANGED` — which could break the addon for the rest of the run. Every unit-GUID lookup now goes through a secret-safe wrapper that skips a secret value instead of touching it. *(Reported by Profion85 — thank you for the detailed log, it made this a quick fix.)*
+- **Settings UI version-history label no longer bleeds onto the other tabs** (a v1.5.0 display glitch).
+
+### Reliability
+
+- **Routed every remaining unit-GUID, unit-name and combat-state read through the same secret-safe wrappers** — the inspect queue, group sweep, `INSPECT_READY`, the after-boss re-inspect, the Blizzard DM name resolver, Danders Frames, and the Settings UI. None of these reproduced the crash on their own (they only ever see your own party/raid, whose data isn't secret), but they shared the pattern, so they're now hardened against any current or future restricted content.
+- **The Settings UI opens correctly inside instances again** — the combat check no longer mistakes a secret "not in combat" value for "in combat" and wrongly defers the window.
+
+### Under the hood
+
+- Added a build-time lint rule that fails CI if a raw `UnitGUID` / `UnitName` / `UnitIsUnit` / `InCombatLockdown` call is ever introduced outside the addon's secret-handling layer — so this whole class of crash can't quietly come back.
+- **Listed for the upcoming 12.1.0 patch** (Interface `120100`) — checked against the 12.1.0 PTR API and found no breaking changes for this addon, so it loads cleanly on the PTR.
+
 ## v1.5.0
 
 ### New

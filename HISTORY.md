@@ -242,7 +242,7 @@ Full changelog for all versions. Current release notes: [CHANGELOG.md](CHANGELOG
 
 ### Fixed
 
-- **Addon broken inside instances** — `InCombatLockdown()` returns a secret value in WoW 12.0+ dungeons/raids, making the addon think you're permanently in combat. Inspects, bar refreshes, and roster updates were all blocked
+- **Addon broken inside instances** — combat state could get stuck "in combat" in WoW 12.0+ dungeons/raids when the combat *event args* (`PLAYER_IN_COMBAT_CHANGED`) arrived as secret values, blocking inspects, bar refreshes, and roster updates. Fixed by cross-checking `InCombatLockdown()` + `IsEncounterInProgress()` (both plain booleans) as the non-secret source of truth
 - Wrong version string in chat — now reads from TOC dynamically
 
 ---

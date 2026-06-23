@@ -19,6 +19,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Layer-1 secret-value invariant gate (.luacheckrc). Fails the release if a
+      # raw UnitGUID/UnitName/UnitIsUnit/InCombatLockdown call is added outside
+      # secrets.lua (luacheck code 113 = undefined global, because those six APIs
+      # are deliberately omitted from read_globals). --only 113 also surfaces
+      # syntax errors and undefined-global typos but ignores cosmetic warnings, so
+      # the gate stays focused on exactly the class of bug that caused the Slave
+      # Pens secret-value crash in v1.5.0.
+      - name: Secret-value invariant (luacheck)
+        uses: nebularg/actions-luacheck@v1
+        with:
+          files: .
+          args: --only 113
+          annotate: warning
+
       - uses: BigWigsMods/packager@v2
         with:
           args: -p 1501917 -n "{package-name}-{project-version}{nolib}{classic}:{package-name}-{project-version}{nolib}{classic}"
