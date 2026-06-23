@@ -36,7 +36,15 @@ local isSecret             = API.isSecretValue
 local _hasanysecretvalues  = API.hasanysecretvalues
                             or (hasanysecretvalues or function() return false end)
 local SafeUnitName         = API.SafeUnitName
-                            or function(unit) return UnitName(unit) end
+                            or function() return nil end
+local SafeUnitGUID         = API.SafeUnitGUID  or function() return nil end
+-- Combat-state wrappers from secrets.lua (via the API). IsInCombatSafe treats a
+-- secret/unknown InCombatLockdown as OUT of combat — exactly this file's
+-- long-standing rule that "only an explicit true counts as in combat", so the
+-- existing `== true` / `~= true` checks keep their meaning. InCombatRaw is for
+-- the /dilvl debug dump only; its one caller tests isSecret() before comparing.
+local IsInCombatSafe       = API.IsInCombatSafe or function() return false end
+local InCombatRaw          = API.InCombatRaw    or function() return false end
 
 -- IsEncounterInProgress() is deprecated in 12.0 (it survives only on the
 -- loadDeprecationFallbacks compat shim and is slated for removal at 13.0).
@@ -191,9 +199,12 @@ local globalFontSize = nil     -- cached from first CLEAN frame: font size
 local globalFontFlags = nil    -- cached from first CLEAN frame: font flags ("OUTLINE" etc.)
 local globalTextScale = nil    -- cached from first CLEAN frame: Blizzard's runtime text scale
 do
-    local icl = InCombatLockdown()
-    -- InCombatLockdown() returns secret in instances (Issue #2).
-    -- Only trust an explicit true; secret or false → assume out of combat.
+    local icl = IsInCombatSafe()
+    -- InCombatLockdown() is a plain bool in 12.0.x (NOT secret — verified against
+    -- RestrictedActionsDocumentation). IsInCombatSafe() just routes it through the
+    -- wrapper for invariant uniformity (secret => false defensively). The real
+    -- secret risk is the combat EVENT args, handled in PLAYER_IN_COMBAT_CHANGED.
+    -- Only an explicit true counts as in combat.
     if icl == true then inCombat = true end
 end
 
@@ -275,7 +286,7 @@ end
 local function ResolveFrameGUID(frame)
     -- isLocalPlayer is NeverSecret, set by Blizzard's Init
     if frame.isLocalPlayer == true then
-        return UnitGUID("player")
+        return SafeUnitGUID("player")
     end
 
     local cachedGUID = frame._dilvlGUID
@@ -793,6 +804,12 @@ end
 -- next UpdateName hook fires a full refresh. Event-driven, no timer (#19).
 local deferredRetryPending = false
 
+-- Forward-declared HERE, above the UpdateName hook, on purpose: that hook's #19
+-- deferred-retry path closes over ScheduleRefresh. Declared only at their
+-- definitions (far below) the closure would capture a nil global and the
+-- post-combat secret-unlock recovery would silently never fire (dead code).
+local ScheduleRefresh, StartPostCombatRefresh
+
 local function RefreshAllFrames()
     if blizzDMState.disabled then return end
     local db = API.GetDb()
@@ -803,7 +820,7 @@ local function RefreshAllFrames()
     -- Safety reset: if inCombat is stuck but we're clearly OOC, force-reset.
     -- Catches Delve/M+ edge cases where combat events fire in unexpected order.
     if inCombat then
-        local icl = InCombatLockdown()
+        local icl = IsInCombatSafe()
         local eip = IsEncounterInProgress()
         if icl ~= true and eip ~= true then
             inCombat = false
@@ -935,15 +952,14 @@ local refreshStats = {total = 0, tagged = 0, passes = 0, lastPass = 0}
 local refreshFrame = CreateFrame("Frame")
 refreshFrame:Hide()  -- starts idle, no CPU cost
 
--- Forward declarations (used in OnUpdate before the full bodies are defined)
-local ScheduleRefresh
-local StartPostCombatRefresh
+-- ScheduleRefresh / StartPostCombatRefresh are forward-declared near the top of
+-- the file (above the UpdateName hook) so the #19 deferred-retry closure binds them.
 
 refreshFrame:SetScript("OnUpdate", function(self, elapsed)
     -- Safety reset: if inCombat is stuck but ICL + EIP both say OOC, force-reset.
     -- Must run BEFORE IsGroupInCombat() check, otherwise we never reach RefreshAllFrames.
     if inCombat then
-        local icl = InCombatLockdown()
+        local icl = IsInCombatSafe()
         local eip = IsEncounterInProgress()
         if icl ~= true and eip ~= true then
             inCombat = false
@@ -1037,7 +1053,7 @@ RegisterHandler("PLAYER_IN_COMBAT_CHANGED", function(...)
     -- Problem: in Delves, PLAYER_IN_COMBAT_CHANGED fires with secret args
     -- AFTER combat ends. inCombat got stuck true with no event to reset it.
     if _hasanysecretvalues(...) then
-        local icl = InCombatLockdown()
+        local icl = IsInCombatSafe()
         if icl == true then
             inCombat = true
             trace("COMBAT_CHANGED → SECRET args, ICL=true → IN")
@@ -1053,7 +1069,7 @@ RegisterHandler("PLAYER_IN_COMBAT_CHANGED", function(...)
     local combatState = ...
     if isSecret(combatState) then
         -- Lazy-taint: hasanysecretvalues passed but individual arg is secret
-        local icl = InCombatLockdown()
+        local icl = IsInCombatSafe()
         if icl == true then
             inCombat = true
             trace("COMBAT_CHANGED → lazy-secret, ICL=true → IN")
@@ -1103,7 +1119,7 @@ end)
 RegisterHandler("ENCOUNTER_END", function()
     -- Don't blindly set inCombat=false here — trash packs after a boss can
     -- mean we're still in combat. Use InCombatLockdown() as truth.
-    local icl = InCombatLockdown()
+    local icl = IsInCombatSafe()
     if icl ~= true then
         inCombat = false
     end
@@ -1124,7 +1140,7 @@ RegisterHandler("PLAYER_ENTERING_WORLD", OnTransition)
 RegisterHandler("DAMAGE_METER_COMBAT_SESSION_UPDATED", function()
     -- Safety reset on data events too (OnUpdate may be hidden/idle)
     if inCombat then
-        local icl = InCombatLockdown()
+        local icl = IsInCombatSafe()
         local eip = IsEncounterInProgress()
         if icl ~= true and eip ~= true then
             inCombat = false
@@ -1239,7 +1255,7 @@ API.GetBlizzDMDebug = function()
 
     -- Detailed combat state for debug output
     local eip = IsEncounterInProgress()
-    local icl = InCombatLockdown()
+    local icl = InCombatRaw()
     local unitFlagsCombat = false
     local count = GetNumGroupMembers()
     if count > 0 then
@@ -1254,7 +1270,7 @@ API.GetBlizzDMDebug = function()
     end
     local combatInfo = {
         groupCombat = IsGroupInCombat(),
-        iclRaw = (icl == true and "YES") or (isSecret(icl) and "SECRET") or "no",
+        iclRaw = (isSecret(icl) and "SECRET") or (icl == true and "YES") or "no",
         inCombat = inCombat,
         encounter = eip == true,
         encounterSecret = eip and isSecret(eip),

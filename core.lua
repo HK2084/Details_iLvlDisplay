@@ -117,6 +117,7 @@ local SafeUnitName        = secrets.SafeUnitName
 local SafeUnitGUID        = secrets.SafeUnitGUID
 local IsInCombatSafe      = secrets.IsInCombatSafe
 local MayBeInCombat       = secrets.MayBeInCombat
+local InCombatRaw         = secrets.InCombatRaw
 local secretStats         = secrets.stats
 
 ---------------------------------------------------------------
@@ -157,7 +158,7 @@ end
 ---------------------------------------------------------------
 local function ResolveFullNameByGuid(guid)
     if not guid then return nil end
-    if guid == UnitGUID("player") then
+    if guid == SafeUnitGUID("player") then
         local n, r = SafeUnitName("player")
         if not n then return nil end
         return (r and r ~= "") and (n .. "-" .. r) or n
@@ -165,7 +166,7 @@ local function ResolveFullNameByGuid(guid)
     local prefix, count = GetGroupInfo()
     for i = 1, count do
         local unit = prefix .. i
-        if UnitGUID(unit) == guid then
+        if SafeUnitGUID(unit) == guid then
             local n, r = SafeUnitName(unit)
             if not n then return nil end
             return (r and r ~= "") and (n .. "-" .. r) or n
@@ -198,7 +199,7 @@ local function GetIlvlForGuid(guid)
     -- per-refresh allocation on the hot path. Equipment-change events
     -- (PLAYER_EQUIPMENT_CHANGED / UNIT_INVENTORY_CHANGED -> UpdatePlayerCache)
     -- refresh it instantly; this short TTL is just a backstop re-sync.
-    if guid == UnitGUID("player") then
+    if guid == SafeUnitGUID("player") then
         local cachedSelf = ilvlCache[guid]
         if cachedSelf and cachedSelf.source == "self" and (time() - cachedSelf.time) < 30 then
             return cachedSelf.ilvl
@@ -281,7 +282,7 @@ local function RebuildNameIlvlMap()
         for i = 1, count do
             local unit = prefix .. i
             if UnitExists(unit) and UnitIsPlayer(unit) then
-                local guid = UnitGUID(unit)
+                local guid = SafeUnitGUID(unit)
                 local cached = guid and ilvlCache[guid]
                 if cached and cached.ilvl then
                     seenGuids[guid] = true
@@ -317,7 +318,7 @@ local function RebuildNameIlvlMap()
         end
 
         -- Own player
-        local pguid = UnitGUID("player")
+        local pguid = SafeUnitGUID("player")
         local pcached = pguid and ilvlCache[pguid]
         if pcached and pcached.ilvl then
             local pname = SafeUnitName("player")
@@ -959,7 +960,7 @@ local function ProcessNextInspect()
     isInspecting = true
     local entry = table.remove(inspectQueue, 1)
 
-    if UnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, false) then
+    if SafeUnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, false) then
         pendingInspectGuid = entry.guid -- track that WE triggered this inspect
         NotifyInspect(entry.unit)
         -- Safety timeout: if INSPECT_READY never fires (server throttle, player
@@ -1003,12 +1004,17 @@ local function QueueGroupInspect()
 
     for i = 1, count do
         local unit = prefix .. i
-        -- UnitGUID compare instead of UnitIsUnit: UnitIsUnit returns secret values
-        -- in combat (12.0+) and requires CanCompareUnitTokens guard (12.0.5+).
-        -- UnitGUID is fundamental infrastructure — always safe.
-        if UnitExists(unit) and UnitIsPlayer(unit) and UnitGUID(unit) ~= UnitGUID("player") then
-            local guid = UnitGUID(unit)
-            if guid then
+        -- Self-check via SafeUnitGUID, NOT raw UnitGUID. UnitGUID() can return a
+        -- SECRET value for a restricted-identity unit (12.0.7 flipped the
+        -- RequiresDeclassifiedUnitIdentity FailureMode to ReturnWithError), and a
+        -- raw secret-GUID comparison throws "attempt to compare a secret string
+        -- value". SafeUnitGUID returns nil on secret, so we skip that member this
+        -- sweep and pick them up next pass. (This site previously assumed UnitGUID
+        -- was "always safe" — the Slave Pens crash at UNIT_INVENTORY_CHANGED
+        -- disproved that for any unit whose identity is restricted.)
+        if UnitExists(unit) and UnitIsPlayer(unit) then
+            local guid = SafeUnitGUID(unit)
+            if guid and guid ~= SafeUnitGUID("player") then
                 -- Pre-populate nameToIlvl/nameToSetBonus from cache now while we have the unit.
                 -- UnitName() is reliable here; at INSPECT_READY the unit token
                 -- may already be stale if the player moved or reloaded.
@@ -1044,7 +1050,7 @@ local function UpdatePlayerCache()
     if not ilvlCache then return end
     local _, equipped = GetAverageItemLevel()
     if not equipped or equipped <= 0 then return end
-    local guid = UnitGUID("player")
+    local guid = SafeUnitGUID("player")
     if not guid then return end
     local pname = SafeUnitName("player")
     if not pname then return end
@@ -1131,9 +1137,9 @@ frame:SetScript("OnEvent", function(self, event, ...)
                         if not UnitExists(unit) then return end          -- token must be a live unit
                         gearInfo = gearInfo or (lib.GetUnitGear and lib.GetUnitGear(unit))
                         if not gearInfo or not gearInfo.ilevel or gearInfo.ilevel <= 0 then return end
-                        local guid = UnitGUID(unit)
-                        if not guid or isSecretValue(guid) then return end
-                        if guid == UnitGUID("player") then return end    -- self: GetAverageItemLevel is more accurate
+                        local guid = SafeUnitGUID(unit)
+                        if not guid then return end
+                        if guid == SafeUnitGUID("player") then return end    -- self: GetAverageItemLevel is more accurate
                         local ilvl = math.floor(gearInfo.ilevel)
                         local existing = ilvlCache[guid]
                         if not existing or ilvl ~= existing.ilvl or (time() - existing.time) > 300 then
@@ -1211,9 +1217,9 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
         for i = 1, count do
             local u = prefix .. i
-            if UnitGUID(u) == guid then
+            if SafeUnitGUID(u) == guid then
                 -- Skip own GUID — GetAverageItemLevel is always more accurate for self
-                if guid == UnitGUID("player") then break end
+                if guid == SafeUnitGUID("player") then break end
                 local ilvl = C_PaperDollInfo.GetInspectItemLevel(u)
                 if ilvl and ilvl > 0 then
                     local name, realm = SafeUnitName(u)
@@ -1306,7 +1312,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local softExpire = time() - (CACHE_EXPIRE - 60) -- 60s left before real expiry
             local prefix, count = GetGroupInfo()
             for i = 1, count do
-                local guid = UnitGUID(prefix .. i)
+                local guid = SafeUnitGUID(prefix .. i)
                 if guid and ilvlCache[guid] then
                     ilvlCache[guid].time = softExpire
                 end
@@ -1328,17 +1334,24 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "UNIT_INVENTORY_CHANGED" then
         if _hasanysecretvalues(...) then return end -- (#15)
-        -- Re-inspect group member when they equip new gear.
-        -- Fires per unit token ("party1", "raid5", etc.)
+        -- Re-inspect a group member when they equip new gear.
+        -- The event ALSO fires for derived tokens ("targettarget", "focus",
+        -- nameplates, …) whose UnitGUID() is SECRET inside restricted instances
+        -- (event dungeons like the Slave Pens). The unit-token string itself is
+        -- not secret — only the GUID it resolves to — so isSecretValue(unit)
+        -- passes and the old raw `UnitGUID(unit) ~= UnitGUID("player")` compare
+        -- threw "attempt to compare a secret string value". Route the foreign
+        -- GUID through SafeUnitGUID (nil on secret/unavailable); UnitGUID("player")
+        -- is always declassified, so the surviving compare is plain-vs-plain.
         local unit = ...
         if isSecretValue(unit) then return end
-        if unit and UnitIsPlayer(unit) and UnitGUID(unit) ~= UnitGUID("player") and not IsInCombatSafe() then
-            local guid = UnitGUID(unit)
-            if guid and ilvlCache[guid] then
-                -- Invalidate stale cache so QueueGroupInspect picks them up
-                ilvlCache[guid].time = 0
-                C_Timer.After(2, QueueGroupInspect)
-            end
+        if not unit or not UnitIsPlayer(unit) or IsInCombatSafe() then return end
+        local guid = SafeUnitGUID(unit)
+        if not guid or guid == SafeUnitGUID("player") then return end -- secret, gone, or self
+        if ilvlCache[guid] then
+            -- Invalidate stale cache so QueueGroupInspect picks them up
+            ilvlCache[guid].time = 0
+            C_Timer.After(2, QueueGroupInspect)
         end
     end
 end)
@@ -1726,7 +1739,7 @@ SlashCmdList["DILVL"] = function(msg)
         local now = time()
         for guid, data in pairs(ilvlCache) do
             local name = data.name or "Unknown"
-            if guid == UnitGUID("player") then
+            if guid == SafeUnitGUID("player") then
                 name = SafeUnitName("player") or name
             end
             if name == "Unknown" and Details and Details.item_level_pool and Details.item_level_pool[guid] then
@@ -1773,7 +1786,7 @@ SlashCmdList["DILVL"] = function(msg)
         for _ in pairs(barColumns) do colCount = colCount + 1 end
 
         local prefix, count, numGroup = GetGroupInfo()
-        local rawCombat = InCombatLockdown()
+        local rawCombat = InCombatRaw()
         local inCombat = isSecretValue(rawCombat) and "SECRET(safe=no)" or (rawCombat and "yes" or "no")
         local manualPause = (GetTime() - lastManualInspectTime) < 60 and "yes" or "no"
         local pending = pendingInspectGuid and pendingInspectGuid:sub(1,8) .. ".." or "none"
@@ -2363,7 +2376,7 @@ Details_iLvlDisplayAPI = {
         -- which missed non-connected cross-realm players.
         local cleanName = Ambiguate(name, "none")
         local pName = SafeUnitName("player")
-        if pName == cleanName then return UnitGUID("player") end
+        if pName == cleanName then return SafeUnitGUID("player") end
         -- Try roster first
         local prefix, count
         if IsInRaid() then
@@ -2376,7 +2389,14 @@ Details_iLvlDisplayAPI = {
                 local unit = prefix .. i
                 local uName = SafeUnitName(unit)
                 if uName == cleanName then
-                    return UnitGUID(unit)
+                    -- UnitGUID(unit) can be SECRET for a restricted group member;
+                    -- SafeUnitGUID returns nil there. Never hand back a secret —
+                    -- every caller (BlizzDM, Danders) compares it or uses it as a
+                    -- table key and would throw. Fall through to the ilvlCache
+                    -- reverse-lookup, which may still hold a usable plain GUID.
+                    local g = SafeUnitGUID(unit)
+                    if g then return g end
+                    break
                 end
             end
         end
@@ -2436,6 +2456,9 @@ Details_iLvlDisplayAPI = {
     SafeUnitName    = SafeUnitName,
     SafeUnitGUID    = SafeUnitGUID,
     SafeUnitIsUnit  = SafeUnitIsUnit,
+    IsInCombatSafe  = IsInCombatSafe,
+    MayBeInCombat   = MayBeInCombat,
+    InCombatRaw     = InCombatRaw,
     isSecretValue   = isSecretValue,
     hasanysecretvalues = _hasanysecretvalues,
 }

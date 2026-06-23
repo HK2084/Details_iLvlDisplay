@@ -373,7 +373,10 @@ end
 -- Public Open / Close / Toggle
 ---------------------------------------------------------------
 function main.Open(pageId)
-    if InCombatLockdown() then
+    -- MayBeInCombat (secret => true), not raw InCombatLockdown(): inside restricted
+    -- instances InCombatLockdown() can return a secret-wrapped false (truthy userdata),
+    -- which would wrongly defer opening the settings window when out of combat.
+    if ns.secrets.MayBeInCombat() then
         ns._uiOpenPending = pageId or true
         return false
     end

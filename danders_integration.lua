@@ -177,7 +177,12 @@ local function updateFrame(frame)
 
     local unit = SafeCall("frame.unit", function() return frame.unit end)
     if not unit then clearText(frame) return end
-    local guid = SafeCall("UnitGUID", UnitGUID, unit)
+    -- SafeUnitGUID, NOT raw UnitGUID: a SafeCall/pcall only catches a hard error,
+    -- it does NOT stop UnitGUID from RETURNING a secret value for a restricted
+    -- token. A secret is truthy userdata, so `if not guid` would pass it through
+    -- and the GetCacheData(guid) table-key lookup below would throw. SafeUnitGUID
+    -- returns nil on secret, so the guard short-circuits cleanly.
+    local guid = API.SafeUnitGUID(unit)
     if not guid then clearText(frame) return end
 
     local cached, setBonus = API.GetCacheData(guid)
@@ -301,7 +306,7 @@ Details_iLvlDisplay_DandersDebug = function()
         idx = idx + 1
         if idx > 8 then return end
         local unit = frame.unit
-        local guid = unit and UnitGUID(unit) or nil
+        local guid = unit and API.SafeUnitGUID(unit) or nil  -- secret-safe: nil, not a throw
         local cached = guid and select(1, API.GetCacheData(guid)) or nil
         local fs = fontStrings[frame]
         local fsText = fs and fs:GetText() or "<no FS>"

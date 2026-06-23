@@ -22,7 +22,10 @@ function slash.HandleSlash(rest)
         return
     end
 
-    if InCombatLockdown() then
+    -- MayBeInCombat (secret => true), not raw InCombatLockdown(): inside restricted
+    -- instances InCombatLockdown() can return a secret-wrapped false, which is truthy
+    -- userdata in Lua — a raw check would falsely "defer" the UI on every /dilvl ui.
+    if ns.secrets.MayBeInCombat() then
         print("|cFF00FF00Details! iLvl Display:|r Settings UI deferred until combat ends.")
     end
     main.Toggle(tab)

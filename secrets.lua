@@ -109,9 +109,11 @@ end
 -- secret value as a table key"), and the oUF / Grid2 tag environment can be
 -- tainted when a frame re-evaluates. ElvUI itself shipped a fix for exactly
 -- this ("oUF unitGUID secret error"). Returns the GUID, or nil when it's
--- unavailable / secret / hard-rejected (12.0.7 flips the
--- RequiresDeclassifiedUnitIdentity FailureMode to ReturnWithError, so the
--- pcall matters here too).
+-- unavailable / secret / hard-rejected. (Verified build 12.0.7.68256: UnitGUID
+-- is gated by the SecretWhenUnitIdentityRestricted predicate — it RETURNS a
+-- secret value for derived/foreign tokens, it does NOT hard-error; the
+-- isSecretValue check covers that. The pcall future-proofs a FailureMode flip
+-- and the separate RequiresDeclassifiedUnitIdentity precondition used elsewhere.)
 ----------------------------------------------------------------
 function S.SafeUnitGUID(unit)
     if not unit then return nil end
@@ -144,4 +146,16 @@ function S.MayBeInCombat()
     local v = InCombatLockdown()
     if S.isSecretValue(v) then return true end
     return v
+end
+
+----------------------------------------------------------------
+-- Raw InCombatLockdown for DIAGNOSTICS ONLY (/dilvl debug). Returns the
+-- unmodified value so the bug-report dump can SHOW whether it is secret
+-- ("YES"/"SECRET"/"no"). The only non-policy raw read in the file; every
+-- caller MUST test isSecretValue() BEFORE any comparison. Routed through here
+-- so the .luacheckrc invariant (no raw InCombatLockdown outside secrets.lua)
+-- has zero exceptions — grep stays clean, CI stays absolute.
+----------------------------------------------------------------
+function S.InCombatRaw()
+    return InCombatLockdown()
 end
