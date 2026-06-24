@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.5.2
+
+### Fixed
+
+*   **Crash in the newest raids/instances (e.g. the Sporefall raid) while using Blizzard's built-in Damage Meter.** In the new restricted content, enemy units on Blizzard's meter made it throw a secret-value error through the addon — repeatedly, throughout each fight (the reporter saw it hundreds of times). Every call into Blizzard's meter is now secret-safe, so it can't crash there anymore. _(reported by Profion85 — thanks for the detailed logs!)_
+*   **Item-level tags on Details! bars survive leaving a group.** Players who left now keep their cached name, so their tag reappears on its own within a couple of seconds instead of needing a `/reload`.
+
+### Under the hood
+
+*   Hardened every remaining call into Blizzard's Damage Meter and all bar-width measurements against the 12.0 secret-value system — including the `/dilvl debug` output — so nothing in restricted content can throw.
+
 ## v1.5.1
 
 ### Fixed
