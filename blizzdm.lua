@@ -54,6 +54,20 @@ local InCombatRaw          = API.InCombatRaw    or function() return false end
 local IsEncounterInProgress = (C_InstanceEncounter and C_InstanceEncounter.IsEncounterInProgress)
                             or IsEncounterInProgress
 
+-- frame:GetNameText() is a Blizzard DamageMeter mixin method that INTERNALLY
+-- compares the secret field sourceDisplayType (DamageMeterEntry.lua:87). Inside a
+-- restricted instance that compare throws *inside the call* in our tainted context
+-- ("secret ... while tainted by Details_iLvlDisplay") — before it ever returns, so
+-- a result-side isSecret() guard cannot help: the pcall must wrap the CALL itself.
+-- Returns the name, or nil on throw/secret → caller falls through to its next name
+-- source. NEVER call frame:GetNameText() raw.
+local function SafeGetNameText(frame)
+    if not frame.GetNameText then return nil end
+    local ok, t = pcall(frame.GetNameText, frame)
+    if ok and t and not isSecret(t) then return t end
+    return nil
+end
+
 ---------------------------------------------------------------
 -- Local fault isolation.
 -- Counter resets on /reload (non-persistent). disableSelf flips
@@ -163,7 +177,7 @@ local function traceFrameState(tag, detailed)
                     local snS = (not sn and "nil") or (isSecret(sn) and "SEC") or tostring(sn):sub(1,15)
                     local nt = frame.nameText
                     local ntS = (not nt and "nil") or (isSecret(nt) and "SEC") or tostring(nt):sub(1,20)
-                    local gnt = frame.GetNameText and frame:GetNameText()
+                    local gnt = SafeGetNameText(frame)
                     local gntS = (not gnt and "nil") or (isSecret(gnt) and "SEC") or tostring(gnt):sub(1,20)
                     local lp = frame.isLocalPlayer == true and "YOU" or ""
                     local gd = frame._dilvlGUID and "GUID" or "noGUID"
@@ -486,7 +500,7 @@ local function ClearOverlay(frame)
         if not fsTxt or isSecret(fsTxt) then
             -- Check if we have ANY text to restore before nuking with SetToDefaults
             local restoreText
-            local blizzText = frame.GetNameText and frame:GetNameText()
+            local blizzText = SafeGetNameText(frame)
             if blizzText and not isSecret(blizzText) then
                 restoreText = blizzText
             else
@@ -675,7 +689,7 @@ local function InjectIlvl(frame)
         nameSource = "nameText"
     else
         -- Priority 2: GetNameText() — formatted with rank, readable post-combat
-        local fmtText = frame.GetNameText and frame:GetNameText()
+        local fmtText = SafeGetNameText(frame)
         if fmtText and not isSecret(fmtText) then
             baseName = fmtText
             nameSource = "GetNameText"
@@ -909,7 +923,11 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
             name and not isSecret(name) and tostring(name) or "?", display))
     end
 
-    InjectIlvl(self)
+    -- Structural backstop: route the only un-wrapped InjectIlvl entry through the
+    -- kill-switch wrapper too. If any FUTURE foreign-mixin call inside InjectIlvl
+    -- throws on a secret, it's counted toward the 5-error auto-disable instead of
+    -- crashing the UpdateName hook. (Per-site SafeGetNameText is the primary fix.)
+    SafeBlizzCall("InjectIlvl", InjectIlvl, self)
 end)
 
 ---------------------------------------------------------------

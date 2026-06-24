@@ -227,10 +227,15 @@ local function GetIlvlForGuid(guid)
             -- BlizzDM frames. Falls back to nil when player is not in
             -- the current roster — RebuildNameIlvlMap will retry the
             -- enrichment on the next actor scan.
+            -- Never overwrite a known name with nil: ResolveFullNameByGuid returns
+            -- nil once the player leaves the roster, and RebuildNameIlvlMap's
+            -- cache-fallback skips entries that have no name — which dropped a
+            -- departed player's Details!-bar tag until /reload. Keep the prior name.
+            local prev = ilvlCache[guid]
             ilvlCache[guid] = {
                 ilvl = ilvl,
                 time = time(),
-                name = ResolveFullNameByGuid(guid),
+                name = ResolveFullNameByGuid(guid) or (prev and prev.name),
                 source = "details",
             }
             return ilvl
@@ -550,7 +555,7 @@ local function RefreshAllColumns()
                             if a > key4a then key4a = a end
                             local t = fs:GetText()
                             if t and not isSecretValue(t) and t ~= "" then
-                                local w = fs:GetStringWidth() or 0
+                                local w = fs:GetStringWidth() or 0; if isSecretValue(w) then w = 0 end
                                 if w > key4w then key4w = w end
                             end
                         end
@@ -563,7 +568,7 @@ local function RefreshAllColumns()
                             if a > key3a then key3a = a end
                             local t = fs:GetText()
                             if t and not isSecretValue(t) and t ~= "" then
-                                local w = fs:GetStringWidth() or 0
+                                local w = fs:GetStringWidth() or 0; if isSecretValue(w) then w = 0 end
                                 if w > key3w then key3w = w end
                             end
                         end
@@ -576,7 +581,7 @@ local function RefreshAllColumns()
                             if a > key2a then key2a = a end
                             local t = fs:GetText()
                             if t and not isSecretValue(t) and t ~= "" then
-                                local w = fs:GetStringWidth() or 0
+                                local w = fs:GetStringWidth() or 0; if isSecretValue(w) then w = 0 end
                                 if w > key2w then key2w = w end
                             end
                         end
@@ -634,6 +639,11 @@ local function RefreshAllColumns()
                 -- already hidden in pass 1
             else
                 local barWidth = bar.statusbar and bar.statusbar:GetWidth() or 0
+                -- GetWidth() returns a SECRET number when the bar is anchored to a
+                -- secret-positioned region (SecretWhenAnchoringSecret); the width
+                -- arithmetic below would throw. Clamp to 0 → this bar falls into the
+                -- hide branch (no columns shown) instead of crashing.
+                if isSecretValue(barWidth) then barWidth = 0 end
 
                 -- Dynamic hide: ilvl (last to hide)
                 if barWidth - (ilvlAnchor + maxWidthIlvl) < MIN_NAME_WIDTH then
@@ -1983,9 +1993,10 @@ SlashCmdList["DILVL"] = function(msg)
                     if shown <= 2 then
                         print(string.format("    [bar %d] cleanText=%s", shown, ct and ct:sub(1,30) or "nil"))
                         print(string.format("      name=%s  ilvl=%s", tostring(n), tostring(iv)))
+                        local bw = bar.statusbar and bar.statusbar:GetWidth() or 0
+                        if isSecretValue(bw) then bw = 0 end -- secret width → no crash in /dilvl debug
                         print(string.format("      barWidth=%.1f  shown=%s",
-                            bar.statusbar and bar.statusbar:GetWidth() or 0,
-                            tostring(bar:IsShown())))
+                            bw, tostring(bar:IsShown())))
                         print(string.format("      ilvlFS: text=%s shown=%s  tierFS: text=%s shown=%s",
                             tostring(cols.ilvlFS:GetText()), tostring(cols.ilvlFS:IsShown()),
                             tostring(cols.tierFS:GetText()), tostring(cols.tierFS:IsShown())))
@@ -2003,7 +2014,7 @@ SlashCmdList["DILVL"] = function(msg)
                                 local txt = fs:GetText()
                                 if txt then
                                     if isSecretValue(txt) then sw = "SECRET"
-                                    else sw = string.format("%.1f", fs:GetStringWidth() or 0) end
+                                    else local sw0 = fs:GetStringWidth() or 0; sw = isSecretValue(sw0) and "SECRET" or string.format("%.1f", sw0) end
                                 else sw = "0" end
                                 local ts = txt and (isSecretValue(txt) and "SECRET" or txt:sub(1,10)) or "nil"
                                 print(string.format("      %s: %s ox=%s sw=%s text=%s", k, vis, ox, sw, ts))
@@ -2020,7 +2031,7 @@ SlashCmdList["DILVL"] = function(msg)
                             if a > dk4a then dk4a = a end
                             local t = fs:GetText()
                             if t and not isSecretValue(t) and t ~= "" then
-                                local w = fs:GetStringWidth() or 0
+                                local w = fs:GetStringWidth() or 0; if isSecretValue(w) then w = 0 end
                                 if w > dk4w then dk4w = w end
                             end
                         end
@@ -2033,7 +2044,7 @@ SlashCmdList["DILVL"] = function(msg)
                             if a > dk3a then dk3a = a end
                             local t = fs:GetText()
                             if t and not isSecretValue(t) and t ~= "" then
-                                local w = fs:GetStringWidth() or 0
+                                local w = fs:GetStringWidth() or 0; if isSecretValue(w) then w = 0 end
                                 if w > dk3w then dk3w = w end
                             end
                         end
@@ -2046,7 +2057,7 @@ SlashCmdList["DILVL"] = function(msg)
                             if a > dk2a then dk2a = a end
                             local t = fs:GetText()
                             if t and not isSecretValue(t) and t ~= "" then
-                                local w = fs:GetStringWidth() or 0
+                                local w = fs:GetStringWidth() or 0; if isSecretValue(w) then w = 0 end
                                 if w > dk2w then dk2w = w end
                             end
                         end
@@ -2086,6 +2097,7 @@ SlashCmdList["DILVL"] = function(msg)
             for bar in pairs(barColumns) do
                 if bar:IsShown() and bar.statusbar then
                     sampleWidth = bar.statusbar:GetWidth()
+                    if isSecretValue(sampleWidth) then sampleWidth = 0 end -- secret width → no crash in /dilvl debug
                     break
                 end
             end
