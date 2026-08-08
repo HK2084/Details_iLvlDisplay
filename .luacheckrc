@@ -53,6 +53,7 @@ globals = {
 	"Details_iLvlDisplayAPI",
 	"Details_iLvlDisplayDB",
 	"Details_iLvlDisplay_BlizzDMReset",
+	"Details_iLvlDisplay_BlizzDMSelfTest",
 	"Details_iLvlDisplay_BlizzDMState",
 	"Details_iLvlDisplay_BlizzTrace",
 	"Details_iLvlDisplay_DandersApplyFontSize",

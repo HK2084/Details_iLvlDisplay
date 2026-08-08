@@ -33,6 +33,15 @@ jobs:
           args: --only 113
           annotate: warning
 
+      # Layer-1b secret-MIXIN invariant. luacheck can't flag method calls (it
+      # doesn't know the receiver's type), so this grep gate fails the release if
+      # a raw secret-touching foreign-mixin call (e.g. frame:GetNameText(), which
+      # internally compares the secret sourceDisplayType) is added outside its
+      # pcall-wrapping safe helper. This is the class that caused the v1.5.2
+      # Sporefall/Val taint-crash.
+      - name: Secret-mixin invariant (taint guard)
+        run: bash tools/lint-secret-mixin.sh
+
       - uses: BigWigsMods/packager@v2
         with:
           args: -p 1501917 -n "{package-name}-{project-version}{nolib}{classic}:{package-name}-{project-version}{nolib}{classic}"

@@ -196,6 +196,92 @@ local function traceFrameState(tag, detailed)
 end
 
 ---------------------------------------------------------------
+-- Taint-safety self-test (/dilvl taint).
+-- Actively pcall-probes the Blizzard DamageMeter entry-mixin surface we call
+-- into and classifies every foreign call as ok / secret-result / THROWS. A
+-- THROWS line is the v1.5.2 taint-crash class: a mixin method (e.g. GetNameText,
+-- which internally compares the secret sourceDisplayType) that throws *inside
+-- the call* while our execution is tainted — the exact failure SafeGetNameText /
+-- SafeBlizzCall exist to absorb. Running this inside a restricted instance
+-- BEFORE a release surfaces such a call as a diagnostic line instead of a live
+-- crash. Read-only; every probe is pcall-wrapped so the test can never error.
+---------------------------------------------------------------
+-- Probes a mixin method RAW inside a pcall — deliberately NOT via SafeGetNameText,
+-- because the whole point is to detect whether the raw call throws (which the safe
+-- wrapper would silently swallow). Dynamic index, so the mixin-lint's ':Method('
+-- rule does not flag it, and it stays pcall-guarded regardless.
+local function probeCall(frame, method)
+    if not frame[method] then return "n/a" end
+    local ok, res = pcall(frame[method], frame)
+    if not ok then return "THROWS(" .. tostring(res):gsub("[\r\n]", " "):sub(1, 48) .. ")" end
+    if res == nil then return "nil" end
+    if isSecret(res) then return "SECRET" end
+    if type(res) == "string" then return "ok'" .. res:sub(1, 16) .. "'" end
+    return "ok:" .. type(res)
+end
+
+local function fieldState(v)
+    if v == nil then return "nil" end
+    if isSecret(v) then return "SECRET" end
+    if type(v) == "string" then return "'" .. v:sub(1, 16) .. "'" end
+    return tostring(v):sub(1, 16)
+end
+
+-- Returns an array of report lines (strings). Never throws.
+function Details_iLvlDisplay_BlizzDMSelfTest()
+    local out = {}
+    local function add(s) out[#out + 1] = s end
+    add("=== BlizzDM taint-safety self-test ===")
+    add(format("env: DamageMeter=%s  DamageMeterEntryMixin=%s  killswitch=%s(err=%d)",
+        DamageMeter and "loaded" or "MISSING",
+        DamageMeterEntryMixin and "present" or "MISSING",
+        tostring(blizzDMState.disabled), blizzDMState.errors))
+    add(format("state: IsInCombatSafe=%s  encounterInProgress=%s",
+        tostring(IsInCombatSafe()), tostring(IsEncounterInProgress() == true)))
+    if not (DamageMeter and DamageMeter.ForEachSessionWindow) then
+        add("No session-window iterator — open Blizzard's damage meter and re-run (ideally in a restricted instance, in combat).")
+        return out
+    end
+    local frames, throws, secretFrames, sampled = 0, 0, 0, 0
+    local ok, err = pcall(function()
+        DamageMeter:ForEachSessionWindow(function(sw)
+            if not sw.ForEachEntryFrame then return end
+            sw:ForEachEntryFrame(function(frame)
+                frames = frames + 1
+                local gnt = probeCall(frame, "GetNameText")
+                if gnt:find("THROWS", 1, true) then throws = throws + 1 end
+                local sdt = fieldState(frame.sourceDisplayType) -- the field GetNameText compares
+                local sn  = fieldState(frame.sourceName)
+                local nt  = fieldState(frame.nameText)
+                if sdt == "SECRET" or sn == "SECRET" or nt == "SECRET" then
+                    secretFrames = secretFrames + 1
+                end
+                if sampled < 8 then
+                    sampled = sampled + 1
+                    add(format("  [%d]%s GetNameText=%s | sourceDisplayType=%s sourceName=%s nameText=%s",
+                        frames, frame.isLocalPlayer == true and "*" or "", gnt, sdt, sn, nt))
+                end
+            end)
+        end)
+    end)
+    if not ok then
+        add("ITERATION-ERROR: " .. tostring(err))
+        return out
+    end
+    add(format("totals: frames=%d  GetNameText-THROWS=%d  secret-field-frames=%d", frames, throws, secretFrames))
+    if throws > 0 then
+        add(">>> TAINT-CRASH CLASS ACTIVE: GetNameText throws on " .. throws
+            .. " frame(s). The raw call is unsafe here — SafeGetNameText/SafeBlizzCall are absorbing it. Never call it raw.")
+    elseif frames == 0 then
+        add("No entry frames found (meter empty). Re-run after a fight with the meter visible.")
+    else
+        add("OK: no foreign-mixin call currently throws. Re-run inside a restricted instance IN COMBAT to stress the secret path.")
+    end
+    add("(* = local player. SECRET = value is secret-wrapped right now. Probe is read-only and self-contained.)")
+    return out
+end
+
+---------------------------------------------------------------
 -- Combat state tracking.
 -- We skip injection entirely when ANYONE in the group is in combat,
 -- not just the player. Blizzard's Secret Value system locks down
