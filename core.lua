@@ -39,6 +39,21 @@ local detailsReady = false
 local hookedFontStrings = {} -- track which FontStrings we already hooked
 local hookedInstances = {}   -- track which Details! instance frames have OnSizeChanged hooked
 local HookInstanceResize     -- forward declaration (assigned after OnDetailsResize is defined)
+
+-- Resize-hook diagnostics (surfaced in /dilvl debug). Added in v1.5.3 because the
+-- hook silently never installed for ~4 months: we read `instance.baseFrame`, but
+-- Details! spells the field `instance.baseframe` (lowercase f, classes/class_instance.lua:2508).
+-- Lua field lookup is case-sensitive, so the guard below always took the early return.
+-- These counters make "did the hook actually install / fire?" observable instead of
+-- something you can only discover by reading Details' source.
+local resizeStats = {
+    attempts = 0,       -- HookInstanceResize() calls
+    installed = 0,      -- OnSizeChanged hooks actually attached
+    noFrame = 0,        -- instance exposed no usable frame field (the old silent failure)
+    fired = 0,          -- OnSizeChanged callbacks received from Details!
+    refreshed = 0,      -- debounced full refreshes completed
+    field = nil,        -- which field resolved last: "baseframe" / "baseFrame" / "frame"
+}
 local barCleanText = {}    -- fontString -> last clean text set by Details! (never our injected text)
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
@@ -534,7 +549,7 @@ local function RefreshAllColumns()
                 cols.tierFS:SetText(sb and ("|cFF00FF00" .. sb .. "|r") or "")
 
                 -- Measure our ilvl column
-                local iw = cols.ilvlFS:GetStringWidth() or 0
+                local iw = cols.ilvlFS:GetStringWidth() or 0; if isSecretValue(iw) then iw = 0 end
                 if iw > maxWidthIlvl then maxWidthIlvl = iw end
 
                 -- yOffset (once)
@@ -898,6 +913,7 @@ end
 ---------------------------------------------------------------
 local resizeDebounce = nil
 local function OnDetailsResize()
+    resizeStats.fired = resizeStats.fired + 1
     -- Immediate next-frame column refresh (cheap, 0.09ms) for responsive resize
     if db and db.layout == "columns" then
         ScheduleColumnRefresh()
@@ -916,16 +932,30 @@ local function OnDetailsResize()
         UpdateAllColumnFonts() -- re-copy fonts (Details! font may have changed)
         RebuildNameIlvlMap()  -- re-populate name->ilvl from cache (cache is intact)
         RefreshAllBarTexts()  -- inject tags immediately, don't wait for next ticker
+        resizeStats.refreshed = resizeStats.refreshed + 1
     end)
 end
 
--- Details! instance frames expose their main window as baseFrame (preferred) or frame.
--- We hook OnSizeChanged once per instance so resize triggers an immediate refresh.
+-- Details! instance frames expose their main window as `baseframe` — lowercase f
+-- (assigned in Details' classes/class_instance.lua:2508 and :2605; ~1470 usages, and
+-- there is no capital-F variant anywhere in Details!). We previously only read
+-- `baseFrame`, which is always nil, so this hook never installed. The old spellings
+-- are kept as trailing fallbacks: harmless, and they cost nothing if Details! ever
+-- renames the field back.
 HookInstanceResize = function(instance)
-    local frame = instance.baseFrame or instance.frame
-    if not frame or hookedInstances[frame] then return end
+    resizeStats.attempts = resizeStats.attempts + 1
+    local frame = instance.baseframe or instance.baseFrame or instance.frame
+    if not frame then
+        resizeStats.noFrame = resizeStats.noFrame + 1
+        return
+    end
+    resizeStats.field = (instance.baseframe and "baseframe")
+                     or (instance.baseFrame and "baseFrame")
+                     or "frame"
+    if hookedInstances[frame] then return end
     hookedInstances[frame] = true
-    pcall(frame.HookScript, frame, "OnSizeChanged", OnDetailsResize)
+    local ok = pcall(frame.HookScript, frame, "OnSizeChanged", OnDetailsResize)
+    if ok then resizeStats.installed = resizeStats.installed + 1 end
 end
 
 ---------------------------------------------------------------
@@ -1837,6 +1867,13 @@ SlashCmdList["DILVL"] = function(msg)
             prefix, numGroup, inCombat))
         print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d bonusMap  %d hooks  %d columns",
             cacheCount, setBonusCount, mapCount, bonusMapCount, hookCount, colCount))
+        -- Resize-hook health (v1.5.3). installed=0 with attempts>0 means the
+        -- OnSizeChanged hook never attached — that was the pre-1.5.3 bug (we read
+        -- instance.baseFrame, Details! spells it baseframe). Expect installed>=1 per
+        -- open Details! window, field=baseframe, and fired>0 after dragging the window edge.
+        print(string.format("  Resize-hook: %d installed / %d attempts  noFrame=%d  field=%s  fired=%d  refreshed=%d",
+            resizeStats.installed, resizeStats.attempts, resizeStats.noFrame,
+            tostring(resizeStats.field), resizeStats.fired, resizeStats.refreshed))
         print(string.format("  Queue: %d pending  inspecting: %s  manualPause: %s  pending: %s",
             #inspectQueue, tostring(isInspecting), manualPause, pending))
         -- Queue contents (who is waiting)
@@ -2064,7 +2101,7 @@ SlashCmdList["DILVL"] = function(msg)
                     end
                     -- Our ilvl width
                     if iv then
-                        local iw = cols.ilvlFS:GetStringWidth() or 0
+                        local iw = cols.ilvlFS:GetStringWidth() or 0; if isSecretValue(iw) then iw = 0 end
                         if iw > dMaxIlvl then dMaxIlvl = iw end
                     end
                 end
@@ -2159,7 +2196,13 @@ SlashCmdList["DILVL"] = function(msg)
             local sid = aura.spellId
             local name = aura.name or "?"
             if sid then
-                print(string.format("  [%d] %s (spellID=%d)", i, name, sid))
+                -- 12.1.0 (PTR 3) makes aura fields secret in instances/combat/M+;
+                -- string.format("%d"/"%s", secret) would throw. Guard before the format.
+                if isSecretValue(sid) or isSecretValue(name) then
+                    print(string.format("  [%d] <secret aura>", i))
+                else
+                    print(string.format("  [%d] %s (spellID=%d)", i, name, sid))
+                end
                 found = found + 1
             end
         end
@@ -2293,6 +2336,15 @@ SlashCmdList["DILVL"] = function(msg)
             print("|cFF00FF00Details! iLvl Display:|r Blizz DM trace not available (blizzdm.lua not loaded)")
         end
 
+    elseif msg == "taint" then
+        -- Active taint-safety self-test: pcall-probes the Blizzard DM foreign-mixin
+        -- surface and flags any call that throws while tainted (the v1.5.2 class).
+        if Details_iLvlDisplay_BlizzDMSelfTest then
+            ShowDebugWindow(table.concat(Details_iLvlDisplay_BlizzDMSelfTest(), "\n"))
+        else
+            print("|cFF00FF00Details! iLvl Display:|r Taint self-test needs Blizzard's Damage Meter loaded.")
+        end
+
     elseif msg == "position" or msg == "position left" or msg == "position right" then
         if msg == "position left" then
             db.ilvlPosition = "left"
@@ -2361,6 +2413,7 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl map             — Show name→iLvl map")
         print("  /dilvl tier            — Scan own tier slots")
         print("  /dilvl auras           — Show own auras (spellID debug)")
+        print("  /dilvl taint           — BlizzDM taint-safety self-test (run in a restricted instance)")
     end
 end
 

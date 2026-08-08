@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.5.3
+
+### Fixed
+
+*   **Item level reappears instantly when you resize the Details! window.** The refresh that runs on resize never actually ran — it watched for a window field that Details! spells differently, so it silently did nothing. Until now the display was repaired a second or two later by the periodic update, which is why it mostly went unnoticed. It is immediate again.
+*   **No more possible error while measuring text in restricted instances.** Two of the width measurements behind the Columns layout weren't secret-value safe yet — the other measurements around them already were. Brought in line, so nothing there can throw.
+
+### New
+
+*   **`/dilvl taint`** — a self-test that checks whether Blizzard's Damage Meter can currently be read safely, and reports exactly what is locked down. Handy when reporting a bug from inside a restricted instance.
+
+### Under the hood
+
+*   `/dilvl debug` now reports resize-hook health (installed / fired / refreshed), so a silently missing hook can't hide again.
+*   The aura list in `/dilvl auras` is secret-value safe, ahead of patch 12.1 making aura data secret.
+*   Build-time guard that fails CI if a call into another addon's mixin is ever added without its safe wrapper — the class of bug behind the v1.5.2 crash.
+
 ## v1.5.2
 
 ### Fixed

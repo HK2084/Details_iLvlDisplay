@@ -7,8 +7,10 @@ manual-changelog:
 ignore:
   - .github
   - .gitignore
+  - .luacheckrc
   - .pkgmeta
   - .release
+  - tools
   - logo.png
   - icon_source.png
   - claude_prompt.txt
