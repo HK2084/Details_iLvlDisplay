@@ -126,10 +126,12 @@ end
 ----------------------------------------------------------------
 -- Safe InCombatLockdown wrappers (WoW 12.0+).
 --
--- Inside instances, InCombatLockdown() can return a secret value. A
--- secret-wrapped false is truthy in Lua (userdata, not nil/false), so a
--- raw `if InCombatLockdown() then` is ALWAYS true when the return is
--- secret. Two wrappers with opposite secret-default policies:
+-- Inside instances, InCombatLockdown() can return a secret value. A secret
+-- never reads as nil/false in a conditional — even when the value behind it
+-- IS false — so a raw `if InCombatLockdown() then` is ALWAYS true when the
+-- return is secret. (Note: a secret keeps its underlying Lua type; type() on
+-- a secret string still says "string". The reliable test is issecretvalue(),
+-- never a type check.) Two wrappers with opposite secret-default policies:
 --
 --   IsInCombatSafe()   -- secret => false  (use for inspect queue,
 --                                            refresh, measurement)

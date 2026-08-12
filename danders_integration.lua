@@ -179,9 +179,11 @@ local function updateFrame(frame)
     if not unit then clearText(frame) return end
     -- SafeUnitGUID, NOT raw UnitGUID: a SafeCall/pcall only catches a hard error,
     -- it does NOT stop UnitGUID from RETURNING a secret value for a restricted
-    -- token. A secret is truthy userdata, so `if not guid` would pass it through
-    -- and the GetCacheData(guid) table-key lookup below would throw. SafeUnitGUID
-    -- returns nil on secret, so the guard short-circuits cleanly.
+    -- token. A secret never reads as nil/false, so `if not guid` would pass it
+    -- through (it keeps its Lua type — a secret GUID is still a string — so no
+    -- type check catches it either) and the GetCacheData(guid) table-key lookup
+    -- below would throw. SafeUnitGUID returns nil on secret, so the guard
+    -- short-circuits cleanly.
     local guid = API.SafeUnitGUID(unit)
     if not guid then clearText(frame) return end
 
