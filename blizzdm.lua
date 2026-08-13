@@ -12,7 +12,9 @@
 --   - READ-ONLY: never modifies Blizzard frame fields (nameText etc.)
 --   - Never calls frame:UpdateName() — avoids taint + stack overflow
 --   - Never calls C_DamageMeter APIs directly
---   - Overlay FontString when native is locked by secret text
+--   - When the native FontString is locked by secret text we leave it alone
+--     and skip the tag; there is no overlay FontString (an earlier design
+--     claimed one, but it was never created — the branches were removed)
 --   - issecretvalue/issecrettable guards before any field read
 --   - If any global is missing → silent exit, no errors
 --
@@ -541,13 +543,23 @@ end
 -- Returns true if aspect was cleared.
 ---------------------------------------------------------------
 local function ClearSecretText(frame, nameFS)
-    -- Try surgical clear first (Blizzard internal API, may exist)
+    -- Surgical clear, IF Blizzard ever ships it. As of 12.1 it does not:
+    -- grepping ClearAspect across the whole wow-ui-source Interface/ tree
+    -- returns nothing, so this branch has never executed and the
+    -- SetToDefaults path below is what always runs. The feature check stays
+    -- because it costs one comparison and picks the better path for free the
+    -- day the method appears — but do not mistake it for working code.
     if nameFS.ClearAspect and Enum and Enum.SecretAspect then
         local ok = pcall(nameFS.ClearAspect, nameFS, Enum.SecretAspect.Text)
         if ok then return true end
     end
-    -- Fallback: nuclear SetToDefaults + full restore
-    nameFS:SetToDefaults()
+    -- The path that actually runs. SetToDefaults is a Blizzard widget method
+    -- called on a frame we do not own, in a file whose whole premise is that
+    -- such calls can throw while tainted (that was the v1.5.2 crash), so it
+    -- gets the same pcall treatment as every other foreign call here.
+    -- RestoreNameFS only makes sense if the reset succeeded.
+    local ok = pcall(nameFS.SetToDefaults, nameFS)
+    if not ok then return false end
     RestoreNameFS(frame, nameFS)
     return true
 end
@@ -564,7 +576,6 @@ local function StripAllTags()
     DamageMeter:ForEachSessionWindow(function(sw)
         if not sw.ForEachEntryFrame then return end
         sw:ForEachEntryFrame(function(frame)
-            if frame._dilvlNameFS then frame._dilvlNameFS:Hide() end
             local nameFS = frame.GetName and frame:GetName()
             if not nameFS or type(nameFS) == "string" then return end
             local ok, txt = pcall(nameFS.GetText, nameFS)
@@ -579,9 +590,6 @@ local function StripAllTags()
 end
 
 local function ClearOverlay(frame)
-    if frame._dilvlNameFS then
-        frame._dilvlNameFS:Hide()
-    end
     local nameFS = frame:GetName()
     if not nameFS or type(nameFS) == "string" then return end
     nameFS:SetAlpha(1)
@@ -856,7 +864,6 @@ local function InjectIlvl(frame)
     -- Write-first: try SetText directly (works when FontString is clean).
     nameFS:SetText(displayText)
     nameFS:SetAlpha(1)
-    if frame._dilvlNameFS then frame._dilvlNameFS:Hide() end
 
     local fsTxt = nameFS:GetText()
     if fsTxt and not isSecret(fsTxt) then
@@ -1346,7 +1353,6 @@ if DamageMeter.ForEachSessionWindow then
                         frame._dilvlTextScale = nil
                         frame._dilvlTextColor = nil
                         frame._dilvlColorSetByAddon = nil
-                        frame._dilvlNameFS = nil
                     end)
                     -- Reset per-player resolve fails (session switch = new context)
                     WipeAllFailCounters("session-switch")
@@ -1427,9 +1433,7 @@ API.GetBlizzDMDebug = function()
             local tagged = false
             local txtSecret = false
             local alphaHidden = false
-            local hasOverlay = false
             local nativeTxt = nil
-            local ovrTxt = nil
             local nameFS = frame:GetName()
             local nameFSType = nameFS and type(nameFS) or "nil"
             if nameFS and type(nameFS) ~= "string" then
@@ -1455,55 +1459,6 @@ API.GetBlizzDMDebug = function()
             elseif nameFS and type(nameFS) == "string" then
                 -- GetName() returned a string (frame name), not a FontString!
                 nativeTxt = "STR:" .. nameFS:sub(1, 20)
-            end
-            -- Also check overlay FontString
-            if frame._dilvlNameFS then
-                local otxt = frame._dilvlNameFS:GetText()
-                local ovr = frame._dilvlNameFS
-                local ovrW = ovr:GetWidth() or 0
-                local ovrH = ovr:GetHeight() or 0
-                local ovrA = ovr:GetAlpha() or 0
-                -- Guard against secret contamination from anchoring
-                if isSecret(ovrW) then ovrW = -1 end
-                if isSecret(ovrH) then ovrH = -1 end
-                if isSecret(ovrA) then ovrA = -1 end
-                local ovrFont = "?"
-                local ovrFontObj = ovr:GetFontObject()
-                if ovrFontObj and not isSecret(ovrFontObj) then
-                    ovrFont = tostring(ovrFontObj:GetName() or ovrFontObj)
-                elseif ovrFontObj and isSecret(ovrFontObj) then
-                    ovrFont = "SECRET"
-                else
-                    ovrFont = "nil"
-                end
-                -- Also check native FontString dimensions for comparison
-                local nativeW = nameFS and type(nameFS) ~= "string" and nameFS:GetWidth() or 0
-                local nativeH = nameFS and type(nameFS) ~= "string" and nameFS:GetHeight() or 0
-                if isSecret(nativeW) then nativeW = -1 end
-                if isSecret(nativeH) then nativeH = -1 end
-                local ovrShown = ovr:IsShown()
-                if isSecret(ovrShown) then ovrShown = false end
-                if ovrShown then
-                    hasOverlay = true
-                    local otxtStr = "(nil)"
-                    if otxt and not isSecret(otxt) then otxtStr = tostring(otxt):sub(1, 25)
-                    elseif otxt and isSecret(otxt) then otxtStr = "(secret)" end
-                    ovrTxt = string.format("%s  dim:%.0fx%.0f(n:%.0fx%.0f) a:%.1f font:%s",
-                        otxtStr, ovrW, ovrH, nativeW, nativeH, ovrA, ovrFont)
-                else
-                    local otxtHid = "nil"
-                    if otxt and not isSecret(otxt) then otxtHid = tostring(otxt):sub(1, 20)
-                    elseif otxt and isSecret(otxt) then otxtHid = "(secret)" end
-                    ovrTxt = "HIDDEN:" .. otxtHid
-                end
-                if not tagged and otxt and type(otxt) == "string" and otxt:find("%[%d+%]") then
-                    tagged = true
-                    hasTag = hasTag + 1
-                    if txtSecret then
-                        secretName = secretName - 1
-                        txtSecret = false
-                    end
-                end
             end
 
             -- Determine what path InjectIlvl would take
@@ -1561,9 +1516,7 @@ API.GetBlizzDMDebug = function()
                 tagged = tagged,
                 secret = txtSecret,
                 alphaHidden = alphaHidden,
-                overlay = hasOverlay,
                 nativeTxt = nativeTxt,
-                ovrTxt = ovrTxt,
                 cacheName = cacheName,
                 textColor = (function()
                     -- Show current FS color + source for debug

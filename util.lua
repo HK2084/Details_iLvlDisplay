@@ -28,11 +28,22 @@ local U = ns.util
 -- behaviour this silently goes back to using it. The match is the fallback.
 -- Realm names cannot contain "-", so the first segment is the character name.
 ----------------------------------------------------------------
+-- SECRET SAFETY: type() cannot detect a secret — a secret string still reports
+-- "string" (see the note in secrets.lua). Ambiguate accepts secret arguments
+-- (PlayerScriptDocumentation: SecretArguments = "AllowedWhenTainted", and
+-- `fullName` carries no NeverSecret flag), so a secret in means a secret out.
+-- Both the input and Ambiguate's result are therefore checked with
+-- issecretvalue, not type(): returning a secret here would hand it straight to
+-- `nameToIlvl[shortName] = ilvl` in core.lua, and a secret table key throws.
+-- Returning the input unchanged is the safe answer — callers already treat "no
+-- short form" as normal.
 function U.StripRealm(name)
     if not name or type(name) ~= "string" then return name end
+    if issecretvalue and issecretvalue(name) then return name end
     if Ambiguate then
         local short = Ambiguate(name, "none")
-        if short and type(short) == "string" and short ~= name then
+        if short and type(short) == "string" and short ~= name
+           and not (issecretvalue and issecretvalue(short)) then
             return short
         end
     end

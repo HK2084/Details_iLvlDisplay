@@ -1206,6 +1206,25 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- multiple tickers and OnTick runs multiple times per interval.
         if not detailsReady and not tickerStarted then
             tickerStarted = true
+
+            -- Re-read our OWN tier set once the item cache is warm.
+            -- C_Item.GetItemInfo is async: on a fresh login the tier pieces are
+            -- usually not cached yet, so GetSetBonusForUnit undercounts and we
+            -- store `false` for the session (reported 2026-08-13: four equipped
+            -- tier pieces, /dilvl tier showing all four as whitelist=YES, and
+            -- still no [4P] until an item was re-equipped).
+            --
+            -- Registered OUTSIDE the setup closure below on purpose. In there
+            -- they would sit behind RebuildNameIlvlMap/HookAllBars, and a throw
+            -- in any of those would silently drop the repair — while
+            -- tickerStarted (set just above) prevents the block from ever
+            -- re-arming. The result would be the exact original symptom with no
+            -- error to explain it. These two calls depend on nothing in that
+            -- closure. UpdatePlayerCache is idempotent and returns early when
+            -- the cache is not bound yet.
+            C_Timer.After(5, UpdatePlayerCache)
+            C_Timer.After(20, UpdatePlayerCache)
+
             C_Timer.After(3, function()
                 detailsReady = true
                 if Details then
@@ -1235,19 +1254,6 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 C_Timer.After(15, QueueGroupInspect)
                 C_Timer.After(30, QueueGroupInspect)
 
-                -- Re-read our OWN tier set once the item cache is warm.
-                -- C_Item.GetItemInfo is async: on a fresh login the tier slot
-                -- items are usually not cached yet, so GetSetBonusForUnit
-                -- undercounts and we store `false` for the whole session. The
-                -- GET_ITEM_INFO_RECEIVED retry above is meant to repair that,
-                -- but it never fired in practice (reported 2026-08-13: four
-                -- equipped tier pieces, /dilvl tier showed all four as
-                -- whitelist=YES, yet the player had no [4P] until an item was
-                -- re-equipped, which forced PLAYER_EQUIPMENT_CHANGED).
-                -- These two cheap re-reads close that hole regardless of why
-                -- the event path misses; UpdatePlayerCache is idempotent.
-                C_Timer.After(5, UpdatePlayerCache)
-                C_Timer.After(20, UpdatePlayerCache)
             end)
         end
 
@@ -1825,14 +1831,36 @@ SlashCmdList["DILVL"] = function(msg)
     elseif msg == "debug" then
         -- Full bug-report output — also shown in scrollable popup for easy copy-paste.
         -- Temporarily wrap print() to capture all output into a buffer.
+        --
+        -- TWO THINGS THIS MUST GET RIGHT, both learned the hard way:
+        -- 1. Forward ALL arguments. The wrapper used to take a single `m`, so
+        --    while the dump ran, any other addon calling print(a, b, c) silently
+        --    lost b and c.
+        -- 2. Restore `print` NO MATTER WHAT. This swaps a GLOBAL for ~370 lines.
+        --    Before, a single throw anywhere in the dump left our wrapper
+        --    installed for the rest of the session — breaking every addon that
+        --    prints, and doing it in the one command people run when something
+        --    is already wrong. The body is wrapped in pcall below and `print` is
+        --    restored on both paths.
         local debugBuf = {}
         local origPrint = print
-        print = function(m)
-            origPrint(m)
-            local s = tostring(m)
-            if isSecretValue(s) then s = "(secret)" end
-            debugBuf[#debugBuf + 1] = s
+        print = function(...)
+            origPrint(...)
+            local n = select("#", ...)
+            if n == 1 then
+                local v = ...
+                debugBuf[#debugBuf + 1] = isSecretValue(v) and "(secret)" or tostring(v)
+            else
+                local parts = {}
+                for i = 1, n do
+                    local v = select(i, ...)
+                    parts[i] = isSecretValue(v) and "(secret)" or tostring(v)
+                end
+                debugBuf[#debugBuf + 1] = table.concat(parts, " ")
+            end
         end
+
+        local dumpOk, dumpErr = pcall(function()
 
         local cacheCount, mapCount, hookCount, setBonusCount, bonusMapCount, colCount = 0, 0, 0, 0, 0, 0
         for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
@@ -1988,7 +2016,6 @@ SlashCmdList["DILVL"] = function(msg)
                     local flags = ""
                     if e.secret then flags = flags .. " SECRET" end
                     if e.alphaHidden then flags = flags .. " ALPHA0" end
-                    if e.overlay then flags = flags .. " OVR" end
                     flags = flags .. " [" .. (e.path or "?") .. "]"
                     if e.nameFSType then flags = flags .. " fs:" .. e.nameFSType end
                     local failStr = ""
@@ -2002,10 +2029,9 @@ SlashCmdList["DILVL"] = function(msg)
                         e.cached and "yes" or "no",
                         e.tagged and "yes" or "no",
                         flags, failStr))
-                    -- Extended debug: show native text, overlay text, cache name
+                    -- Extended debug: show native text and cache name
                     local extra = "        "
                     if e.nativeTxt then extra = extra .. "native:" .. e.nativeTxt end
-                    if e.ovrTxt then extra = extra .. "  ovr:" .. e.ovrTxt end
                     if e.cacheName then extra = extra .. "  cName:" .. e.cacheName end
                     if e.textColor then extra = extra .. "  color:" .. e.textColor end
                     print(extra)
@@ -2199,9 +2225,18 @@ SlashCmdList["DILVL"] = function(msg)
             end
         end
         print("=== end ===")
+        end)
 
-        -- Restore original print and show copy-paste popup
+        -- Restore original print on BOTH paths, then show the copy-paste popup.
+        -- A partial dump is still worth showing: whatever was collected before
+        -- the error is usually exactly what the bug report needs, and the error
+        -- itself is appended so it travels with the report.
         print = origPrint
+        if not dumpOk then
+            local msg2 = "|cFFFF4444[dump aborted: " .. tostring(dumpErr) .. "]|r"
+            origPrint(msg2)
+            debugBuf[#debugBuf + 1] = msg2
+        end
         ShowDebugWindow(table.concat(debugBuf, "\n"))
 
     elseif msg == "auras" then
