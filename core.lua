@@ -36,7 +36,11 @@ local inspectGeneration  = 0   -- bumped by QueueGroupInspect; invalidates in-fl
 local lastManualInspectTime = 0 -- GetTime() of last INSPECT_READY we didn't trigger (ElvUI-safe guard)
 local lastInspectInfo = nil -- {name, ilvl, source, time} last completed inspect for debug
 local detailsReady = false
-local hookedFontStrings = {} -- track which FontStrings we already hooked
+-- Weak keys, same pattern as danders_integration.lua: Details! throws its bar
+-- FontStrings away on window close/reopen. With strong keys this table pinned
+-- every dead FontString for the session, and the "hooks" count in /dilvl debug
+-- only ever grew -- so it measured history, not live hooks.
+local hookedFontStrings = setmetatable({}, {__mode = "k"}) -- FontString -> true
 local hookedInstances = {}   -- track which Details! instance frames have OnSizeChanged hooked
 local HookInstanceResize     -- forward declaration (assigned after OnDetailsResize is defined)
 
@@ -1873,9 +1877,16 @@ SlashCmdList["DILVL"] = function(msg)
         local prefix, count, numGroup = GetGroupInfo()
         local rawCombat = InCombatRaw()
         local inCombat = isSecretValue(rawCombat) and "SECRET(safe=no)" or (rawCombat and "yes" or "no")
-        local manualPause = (GetTime() - lastManualInspectTime) < 60 and "yes" or "no"
+        -- Guard the 0 sentinel: without it every session reports a phantom
+        -- pause during the first minute after client launch.
+        local manualPause = (lastManualInspectTime > 0
+            and (GetTime() - lastManualInspectTime) < 60) and "yes" or "no"
         local pending = pendingInspectGuid and pendingInspectGuid:sub(1,8) .. ".." or "none"
-        local wowBuild = select(4, GetBuildInfo())
+        -- GetBuildInfo returns version, build, date, tocversion. Field 4 is the
+        -- INTERFACE number (120100), not the build (69283) -- labelling it
+        -- "WoW build" sent every bug report in with the wrong number.
+        local wowVer, wowBuildNum = GetBuildInfo()
+        local wowToc = select(4, GetBuildInfo())
         local detailsVer = Details and (Details.userversion or Details.version) or "n/a"
 
         print("=== Details! iLvl Display v" .. addonVersion .. " — Bug Report ===")
@@ -1885,8 +1896,11 @@ SlashCmdList["DILVL"] = function(msg)
         print(string.format("  Modules: init=%s  secrets=%s  util=%s",
             ns.addonName and "ok" or "MISSING",
             (ns.secrets and ns.secrets.SafeUnitName) and "ok" or "MISSING",
-            (ns.util and ns.util.GetIlvlColor) and "ok" or "MISSING"))
-        print(string.format("  WoW build: %s  Details: %s", wowBuild, tostring(detailsVer)))
+            -- probe the NEWEST util export, not the oldest: GetIlvlColor has
+            -- existed since v1.0, so it says "ok" even for a stale util.lua.
+            (ns.util and ns.util.StripRealm) and "ok" or "MISSING"))
+        print(string.format("  WoW: %s.%s (toc %s)  Details: %s",
+            tostring(wowVer), tostring(wowBuildNum), tostring(wowToc), tostring(detailsVer)))
         local blizzDMState = db.blizzDM == nil and ("AUTO(" .. (Details and "off" or "on") .. ")") or (db.blizzDM and "ON" or "OFF")
         print(string.format("  Addon: %s  Details-bars: %s  ElvUI-tag: %s  BlizzDM: %s  Layout: %s  Position: %s",
             db.enabled and "ON" or "OFF",
@@ -1910,8 +1924,19 @@ SlashCmdList["DILVL"] = function(msg)
         end
         print(string.format("  Group: %s (%d members)  InCombat: %s",
             prefix, numGroup, inCombat))
-        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap  %d bonusMap  %d hooks  %d columns",
-            cacheCount, setBonusCount, mapCount, bonusMapCount, hookCount, colCount))
+        -- Short-form count: with cross-realm players cached, nameMap must hold
+        -- BOTH "Name-Realm" and "Name". Zero short forms against a non-empty
+        -- cache is the realm-stripping bug and nothing else -- that ratio was
+        -- the tell that identified it on 2026-08-13, and it took a manual
+        -- /dilvl map to see. Now it is one line in the standard dump.
+        local shortForms = 0
+        for k in pairs(nameToIlvl) do
+            if type(k) == "string" and not k:find("-", 1, true) then
+                shortForms = shortForms + 1
+            end
+        end
+        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap (%d short-form)  %d bonusMap  %d hooks  %d columns",
+            cacheCount, setBonusCount, mapCount, shortForms, bonusMapCount, hookCount, colCount))
         -- Resize-hook health (v1.5.3). installed=0 with attempts>0 means the
         -- OnSizeChanged hook never attached — that was the pre-1.5.3 bug (we read
         -- instance.baseFrame, Details! spells it baseframe). Expect installed>=1 per
@@ -1966,7 +1991,9 @@ SlashCmdList["DILVL"] = function(msg)
             end
         end
         if #cbErrSummary > 0 then
-            print(string.format("  Callback errors (%d/%d limit): %s",
+            -- The first number is how many callbacks have errors, NOT an error
+            -- count against the limit -- the old label read as "3/5 errors".
+            print(string.format("  Callbacks with errors: %d  (limit %d per callback): %s",
                 #cbErrSummary, CALLBACK_ERROR_LIMIT, table.concat(cbErrSummary, "  ")))
         else
             print(string.format("  Callback errors: 0  (limit: %d/cb, auto-unregister on breach)",
@@ -2011,7 +2038,9 @@ SlashCmdList["DILVL"] = function(msg)
                     ci.refreshPasses or 0,
                     ci.refreshTagged or 0,
                     ci.refreshTotal or 0,
-                    ci.refreshLastPass and (GetTime() - ci.refreshLastPass) or 0,
+                    -- 0 means "never ran"; truthiness would print client uptime
+                    (ci.refreshLastPass and ci.refreshLastPass > 0)
+                        and (GetTime() - ci.refreshLastPass) or -1,
                     ci.deferredRetry and "PENDING" or "no"))
             else
                 -- Fallback for old format
@@ -2296,7 +2325,14 @@ SlashCmdList["DILVL"] = function(msg)
             end
         end
         if found == 0 then
-            print("    (no sets in this range — try another, e.g. /dilvl sets 2000 2080)")
+            -- Distinguish "range is empty" from "the API is gone": probe a set
+            -- we know exists (1990 is in our own whitelist).
+            local probeOk, probeName = pcall(C_Item.GetItemSetInfo, 1990)
+            if not probeOk or not probeName or probeName == "" then
+                print("    C_Item.GetItemSetInfo unavailable or blocked — not a range problem.")
+            else
+                print("    (no sets in this range — try another, e.g. /dilvl sets 2000 2080)")
+            end
         else
             print(string.format("    %d set(s) found. Whitelist currently holds %d IDs.", found, (function()
                 local n = 0; for _ in pairs(MIDNIGHT_TIER_SETS) do n = n + 1 end; return n
