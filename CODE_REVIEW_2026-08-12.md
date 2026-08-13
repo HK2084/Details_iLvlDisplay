@@ -8,6 +8,39 @@
 
 ---
 
+## 0. Erledigt-Stand (Nachtrag 2026-08-14)
+
+Alle Defekte dieses Reviews sind gefixt. Die Zeilennummern unten stammen vom Stand `691720a` und stimmen nach den Fixes nicht mehr — der Befund gilt, die Adresse nicht.
+
+| # | Status | Commit |
+| --- | --- | --- |
+| D1 | Dump-Body in `pcall`, `print` auf beiden Pfaden restauriert | `385885c` |
+| D2 | `tostring(name)` / `ilvl or 0` | `385885c` |
+| D3 | `pendingInspect` als Menge + Pause nur bei offenem Inspect-Fenster | `0eb8f10` |
+| D4 | Ein `RefreshMethods`-Aufruf **pro** Tag | `0eb8f10` |
+| D5 | `pcall` um `GetBuffDataByIndex` | `385885c` |
+| D6 / D7 | siehe `cd5dd15` (Timer-Closure, toter Overlay-Code) | `cd5dd15` |
+| D8 | `OnTick` → `SafeCall(TickBody)` | `0eb8f10` |
+| D9 | Ticker zuerst, `tickerStarted` erst nach `NewTicker`, `bootstrapArmed` als Zonen-Guard | `0eb8f10` |
+| D10 | Deref im `pcall`, Callback wird geparkt statt verworfen (`RestoreCallback`) | `0eb8f10` |
+| D11 | Details!-Pool-Zeitstempel wird geehrt | `5c8b2d6` |
+| D12 | ElvUI-Refresh mit Ein-Transitions-Latch | `0eb8f10` |
+| **D13** | **neu, siehe unten** | `0eb8f10` |
+
+### D13 — `GROUP_ROSTER_UPDATE` leerte die Name→iLvl-Map und ließ sie bis zum nächsten Tick leer
+
+Nicht aus dem Review, sondern aus drei Live-Dumps eines Felskiefer-Worldboss-Raids am 13.08. abends. Zwei davon zeigten `0 nameMap` bei 32 Cache-Einträgen.
+
+Der alte Kommentar begründete das Wipe mit „unit tokens reshuffle on roster changes". Die Map ist aber nach **Namen** verschlüsselt, nicht nach Unit-Token — aus `raid12` wird `raid8`, `Torvi-Onyxia → 287` bleibt wahr. Dazu wiped `RebuildNameIlvlMap` als eigenen ersten Schritt und trägt über den Cache-Fallback auch Ex-Gruppenmitglieder wieder ein. Das frühe Wipe konnte also nichts gewinnen und riss nur ein Loch von bis zu einem Ticker-Intervall. In einer Gruppe, die von 17 auf 34 Spieler wächst, stand das Loch fast dauerhaft offen.
+
+**Gegenprobe nach dem Fix, gleiche Situation:** 15 s nach Gruppenbeitritt `101 nameMap (53 short-form)`, `MapDirty: false`.
+
+### Live-Beleg für den Cache-Fix (D11 / Purge)
+
+Der Dump direkt nach dem `/reload` am 14.08. enthielt acht Einträge jenseits von 7200 s — Kayio 7334, Scamanda 7333, Holywoman 7332, Zagariton 7332, Shilyn 7296, Torvi 7272, Grematory 7271, Barbarrosh 7261. Unter dem alten Purge wären genau die gelöscht worden, und vier davon (Torvi `[287]`, Kayio `[277]`, Zagariton `[289]`, Shilyn `[279]`) sind die Tags, die der Blizzard-Meter im selben Dump als `CLEAN` anzeigt.
+
+---
+
 ## 1. Gesamturteil
 
 Das ist eine ungewöhnlich disziplinierte Codebase für ein WoW-Addon. Die Secret-Value-Verteidigung hält: über alle Top-Level-Dateien gibt es keinen einzigen ausführbaren Roh-Aufruf von `UnitGUID`/`UnitName`/`UnitIsUnit` außerhalb von `secrets.lua` — die 16 Grep-Treffer stecken sämtlich in Kommentaren. Beide CI-Gates laufen sauber (`luacheck --only 113`: 0/0 über 21 Dateien). Die Fremd-Feld-Zugriffe auf Details!, Blizzard_DamageMeter, ElvUI, Grid2 und DandersFrames sind — bis auf **eine** Ausnahme — gegen die echte Peer-Quelle korrekt; das ist nach dem `baseframe`-Debakel bemerkenswert. Der Kill-Switch-Gedanke ist real implementiert und nicht nur behauptet.
