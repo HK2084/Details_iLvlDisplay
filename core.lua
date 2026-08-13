@@ -49,7 +49,7 @@ local CACHE_DISCARD = 7 * 24 * 3600 -- 7 days: only then is it really junk
 local lastMapID = nil -- track zone changes to detect new instances
 local inspectQueue = {}
 local isInspecting = false
-local pendingInspectGuid = nil -- GUID we requested via NotifyInspect (nil = we didn't trigger current inspect)
+local pendingInspect = {}      -- guid -> true for every NotifyInspect WE fired (a set, not a scalar: sweeps overlap)
 local inspectGeneration  = 0   -- bumped by QueueGroupInspect; invalidates in-flight safety-timeout closures from a prior sweep
 local lastManualInspectTime = 0 -- GetTime() of last INSPECT_READY we didn't trigger (ElvUI-safe guard)
 local lastInspectInfo = nil -- {name, ilvl, source, time} last completed inspect for debug
@@ -79,7 +79,8 @@ local resizeStats = {
 local barCleanText = {}    -- fontString -> last clean text set by Details! (never our injected text)
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
-local tickerStarted = false -- guard against multiple tickers on repeated PLAYER_ENTERING_WORLD
+local tickerStarted = false -- true only once C_Timer.NewTicker actually returned (what /dilvl debug reports)
+local bootstrapArmed = false -- guard against scheduling the 3s login setup twice on rapid zoning
 local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI is built
 -- Defaults-merge / schema-migration / validators are defined further down
 -- but referenced inside the ADDON_LOADED OnEvent closure, so they need
@@ -116,6 +117,7 @@ local DETAILS_BAR_ERROR_LIMIT = 5
 local CALLBACK_ERROR_LIMIT = 5
 local _callbackErrors = {}      -- name -> consecutive error count
 local _callbackErrorLogged = {} -- name -> bool (logged-once flag)
+local _callbackParked = {}      -- name -> fn, set aside on auto-unregister so it can be restored
 local function SafeCall(fn, ...)
     if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
     local ok, err = pcall(fn, ...)
@@ -1002,7 +1004,14 @@ end
 ---------------------------------------------------------------
 -- Periodic update: hook new bars + rebuild map only if dirty
 ---------------------------------------------------------------
-local function OnTick()
+-- Runs every 2s. Routed through SafeCall (not called directly) because it
+-- reaches deep into Details! internals: RefreshAllBarTexts alone does
+-- hundreds of unguarded reads, and a restored-but-truncated cachedColLayout
+-- from SavedVariables is enough to make the arithmetic throw. Unprotected,
+-- that error repeated every 2 seconds for the rest of the session; via
+-- SafeCall it trips the existing 5-error limit and disables only the
+-- Details!-bar feature.
+local function TickBody()
     if not db or not db.enabled then return end
 
     -- Details-specific work (skip in ElvUI-only mode)
@@ -1019,19 +1028,43 @@ local function OnTick()
     end
 end
 
+local function OnTick()
+    SafeCall(TickBody)
+end
+
 ---------------------------------------------------------------
 -- Inspect group
 ---------------------------------------------------------------
+-- Is the player looking at the inspect window right now?
+--
+-- We used to treat EVERY INSPECT_READY we hadn't requested as "the player is
+-- manually inspecting" and pause for 60s. In a raid that is wrong nearly all
+-- the time: Details! runs its own inspect queue, so foreign INSPECT_READY
+-- arrives constantly and the pause never lifted. Three live dumps from a
+-- 34-player world boss group showed `manualPause: yes` with 8-14 players
+-- stuck in the queue.
+--
+-- The old comment justified skipping this check with "ElvUI replaces the
+-- Blizzard frame". It does not — ElvUI reads _G.InspectFrame itself
+-- (ElvUI/Game/Shared/Modules/Misc/InfoItemLevel.lua:67, :180, :450, :462),
+-- it only skins it. The global is nil until Blizzard_InspectUI loads on
+-- demand, and it cannot load without the player opening an inspect window,
+-- so "no frame" is a reliable "not inspecting".
+local function InspectWindowOpen()
+    local frame = _G.InspectFrame
+    if not frame then return false end
+    local ok, shown = pcall(frame.IsShown, frame)
+    return ok and shown or false
+end
+
 local function ProcessNextInspect()
     if IsInCombatSafe() or #inspectQueue == 0 then
         isInspecting = false
         return
     end
 
-    -- Don't fire our background inspect while the player is manually inspecting.
-    -- InspectFrame:IsShown() is unreliable with ElvUI (replaces the Blizzard frame).
-    -- Instead: if we received an INSPECT_READY we didn't trigger within the last 30s,
-    -- assume the player is still using the inspect window and wait.
+    -- Don't fire our background inspect while the player has the inspect
+    -- window open — see the INSPECT_READY handler for how that is detected.
     if (GetTime() - lastManualInspectTime) < 60 then
         isInspecting = false
         C_Timer.After(5, ProcessNextInspect)
@@ -1042,7 +1075,7 @@ local function ProcessNextInspect()
     local entry = table.remove(inspectQueue, 1)
 
     if SafeUnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, false) then
-        pendingInspectGuid = entry.guid -- track that WE triggered this inspect
+        pendingInspect[entry.guid] = true -- track that WE triggered this inspect
         NotifyInspect(entry.unit)
         -- Safety timeout: if INSPECT_READY never fires (server throttle, player
         -- LoS'd mid-inspect, disconnect), unblock the queue after 15s. Capture
@@ -1052,9 +1085,9 @@ local function ProcessNextInspect()
         -- over the freshly-rebuilt queue (double inspects / out-of-order removal).
         local gen = inspectGeneration
         C_Timer.After(15, function()
-            if inspectGeneration == gen and isInspecting and pendingInspectGuid == entry.guid then
+            if inspectGeneration == gen and isInspecting and pendingInspect[entry.guid] then
                 isInspecting = false
-                pendingInspectGuid = nil
+                pendingInspect[entry.guid] = nil
                 C_Timer.After(0.5, ProcessNextInspect)
             end
         end)
@@ -1076,7 +1109,7 @@ local function QueueGroupInspect()
     -- INSPECT_READY never fired, isInspecting stays true and the queue
     -- would never start. Always reset here since we're rebuilding from scratch.
     isInspecting = false
-    pendingInspectGuid = nil
+    wipe(pendingInspect)
     wipe(inspectQueue)
     inspectGeneration = inspectGeneration + 1  -- invalidate in-flight safety timeouts from the previous sweep
 
@@ -1256,8 +1289,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- Guard against multiple tickers: PLAYER_ENTERING_WORLD fires on every
         -- zone transition. Without this flag, rapid zoning within 3s creates
         -- multiple tickers and OnTick runs multiple times per interval.
-        if not detailsReady and not tickerStarted then
-            tickerStarted = true
+        if not detailsReady and not tickerStarted and not bootstrapArmed then
+            bootstrapArmed = true
 
             -- Re-read our OWN tier set once the item cache is warm.
             -- C_Item.GetItemInfo is async: on a fresh login the tier pieces are
@@ -1279,11 +1312,31 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
             C_Timer.After(3, function()
                 detailsReady = true
-                if Details then
-                    RebuildNameIlvlMap()
-                    HookAllBars()
-                end
+
+                -- Ticker FIRST, and tickerStarted only once it really exists.
+                -- It used to be created after the two Details! calls below,
+                -- with tickerStarted set before the closure even ran: a throw
+                -- in RebuildNameIlvlMap or HookAllBars killed the ticker, the
+                -- login message, and all three inspect sweeps for the whole
+                -- session — while the guard above blocked every later
+                -- PLAYER_ENTERING_WORLD from retrying. /dilvl debug made it
+                -- worse by reporting "Ticker: true" the entire time.
                 C_Timer.NewTicker(2, OnTick)
+                tickerStarted = true
+
+                -- Inspect in both modes (Details + ElvUI-only).
+                -- Scheduled before anything that can throw, for the same
+                -- reason as the ticker above.
+                C_Timer.After(5, QueueGroupInspect)
+                -- LFR: unit tokens for all 25 players may not exist yet after 5s.
+                -- Retry at 15s and 30s to catch late-appearing group members.
+                C_Timer.After(15, QueueGroupInspect)
+                C_Timer.After(30, QueueGroupInspect)
+
+                if Details then
+                    pcall(RebuildNameIlvlMap)
+                    pcall(HookAllBars)
+                end
 
                 -- Build mode string for login message
                 local modes = {}
@@ -1298,25 +1351,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 print("|cFF00FF00Details! iLvl Display|r v" .. addonVersion .. " loaded (" .. modeStr .. "). /dilvl")
 
                 ShowLoginHints()
-
-                -- Inspect in both modes (Details + ElvUI-only)
-                C_Timer.After(5, QueueGroupInspect)
-                -- LFR: unit tokens for all 25 players may not exist yet after 5s.
-                -- Retry at 15s and 30s to catch late-appearing group members.
-                C_Timer.After(15, QueueGroupInspect)
-                C_Timer.After(30, QueueGroupInspect)
-
             end)
         end
 
-        -- Rebuild name maps on zone change (unit tokens may have changed).
-        -- Cache entries are kept — the 2h TTL handles staleness, and players
-        -- viewing old Details! segments still see iLvl from previous groups.
+        -- Rebuild name maps on zone change. Same reasoning as the roster
+        -- branch below: flag only, no wipe — the rebuild clears them itself.
         if ilvlCache then
             local currentMap = C_Map.GetBestMapForUnit("player")
             if currentMap and currentMap ~= lastMapID then
-                wipe(nameToIlvl)
-                wipe(nameToSetBonus)
                 mapDirty = true
                 lastMapID = currentMap
             end
@@ -1365,16 +1407,16 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
         -- Only advance the queue if WE triggered this INSPECT_READY.
-        -- If the player manually inspects someone, set a 60s pause so our
-        -- background queue doesn't override their inspection.
         mapDirty = true
         NotifyElvUI(lastInspectInfo and lastInspectInfo.name or nil)
-        if guid == pendingInspectGuid then
-            pendingInspectGuid = nil
+        if pendingInspect[guid] then
+            pendingInspect[guid] = nil
             ClearInspectPlayer()
             C_Timer.After(1.0, ProcessNextInspect)
-        else
-            -- Manual inspect by the player — pause our queue for 30s.
+        elseif InspectWindowOpen() then
+            -- Someone else asked for this inspect AND the player has the
+            -- inspect window open — back off so we don't repopulate it
+            -- under them.
             lastManualInspectTime = GetTime()
         end
 
@@ -1440,11 +1482,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "GROUP_ROSTER_UPDATE" then
         if not IsInCombatSafe() and db and db.enabled then
-            -- Wipe name maps immediately — unit tokens reshuffle on roster
-            -- changes so old name->iLvl mappings are unreliable until we
-            -- re-inspect and re-populate from fresh unit tokens.
-            wipe(nameToIlvl)
-            wipe(nameToSetBonus)
+            -- Mark for rebuild, but do NOT wipe here. The maps are keyed by
+            -- NAME, not by unit token, so a roster reshuffle cannot make an
+            -- entry wrong: "Torvi-Onyxia -> 287" stays true whether she is
+            -- raid12 or raid8. RebuildNameIlvlMap wipes as its own first
+            -- step and re-adds ex-group members from the cache anyway, so
+            -- wiping early gained nothing and cost up to one ticker interval
+            -- of untagged bars. In a world boss raid filling from 17 to 34
+            -- players this fired constantly; two live dumps caught the map
+            -- at 0 entries while the cache held 32.
             mapDirty = true
             NotifyElvUI()
             C_Timer.After(3, QueueGroupInspect)
@@ -1941,7 +1987,11 @@ SlashCmdList["DILVL"] = function(msg)
         -- pause during the first minute after client launch.
         local manualPause = (lastManualInspectTime > 0
             and (GetTime() - lastManualInspectTime) < 60) and "yes" or "no"
-        local pending = pendingInspectGuid and pendingInspectGuid:sub(1,8) .. ".." or "none"
+        -- pendingInspect is a set now, so report how many of our own requests
+        -- are still in flight rather than a single GUID.
+        local pendingCount = 0
+        for _ in pairs(pendingInspect) do pendingCount = pendingCount + 1 end
+        local pending = (pendingCount > 0) and (pendingCount .. " in flight") or "none"
         -- GetBuildInfo returns version, build, date, tocversion. Field 4 is the
         -- INTERFACE number (120100), not the build (69283) -- labelling it
         -- "WoW build" sent every bug report in with the wrong number.
@@ -2417,6 +2467,7 @@ SlashCmdList["DILVL"] = function(msg)
 
     elseif msg == "elvui" or msg == "elvui on" then
         db.elvuiTag = true
+        Details_iLvlDisplayAPI:RestoreCallback("elvui")
         NotifyElvUI()
         print("|cFF00FF00Details! iLvl Display:|r ElvUI tag |cFFFFD900[dilvl]|r enabled. Add it to your ElvUI name/health tag.")
     elseif msg == "elvui off" then
@@ -2429,6 +2480,7 @@ SlashCmdList["DILVL"] = function(msg)
             print("|cFF00FF00Details! iLvl Display:|r Grid2 not installed.")
         else
             db.grid2Status = true
+            Details_iLvlDisplayAPI:RestoreCallback("grid2")
             NotifyElvUI()
             print("|cFF00FF00Details! iLvl Display:|r Grid2 status |cFFFFD900dilvl|r enabled. Add it to a Grid2 text indicator.")
         end
@@ -2711,6 +2763,18 @@ Details_iLvlDisplayAPI = {
         self._callbacks[name] = nil
         _callbackErrors[name] = nil
         _callbackErrorLogged[name] = nil
+        _callbackParked[name] = nil
+    end,
+    -- Bring a parked callback back after the error that killed it is gone
+    -- (ElvUI finished its profile switch, Grid2 reloaded its layout).
+    -- Called from the /dilvl elvui|grid2 on branches, which reset the
+    -- counters anyway. No-op if nothing is parked under that name.
+    RestoreCallback = function(self, name)
+        local parked = _callbackParked[name]
+        if not parked or self._callbacks[name] then return false end
+        _callbackParked[name] = nil
+        self:RegisterCallback(name, parked)
+        return true
     end,
     -- Secret-value defense surface (#26). Sub-files used to duplicate
     -- these guards locally — blizzdm.lua now reads them from here so
@@ -2761,6 +2825,14 @@ NotifyElvUI = function(playerName)
                     .. name .. "] error: " .. tostring(err))
             end
             if n >= CALLBACK_ERROR_LIMIT then
+                -- Park, don't discard. All four RegisterCallback sites run at
+                -- load time and nobody ever re-registers, so dropping the
+                -- function used to kill that integration for the session with
+                -- /reload as the only cure. Details!-bars, BlizzDM and Danders
+                -- all have reset paths; ElvUI and Grid2 simply never got one.
+                -- Parked callbacks come back via RestoreCallback (/dilvl elvui
+                -- on, /dilvl grid2 on).
+                _callbackParked[name] = cb
                 registry[name] = nil
                 geterrorhandler()("Details! iLvl Display: callback ["
                     .. name .. "] auto-unregistered after "

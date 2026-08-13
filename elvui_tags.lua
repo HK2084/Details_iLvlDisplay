@@ -16,9 +16,10 @@
 --
 -- UPDATE STRATEGY: event-driven, no polling timer.
 -- core.lua fires registered callbacks after: INSPECT_READY, gear swap,
--- GROUP_ROSTER_UPDATE. Our callback calls Tags:RefreshMethods on both
--- tag names, re-rendering every visible frame using either tag.
--- During 3h farming with no group changes: zero extra calls.
+-- GROUP_ROSTER_UPDATE. Our callback calls Tags:RefreshMethods once per
+-- tag name (it takes exactly one), re-rendering every visible frame
+-- using that tag. During 3h farming with no group changes: zero extra
+-- calls — and none at all while the feature is switched off.
 
 if not ElvUI then return end -- no ElvUI installed → silent exit
 
@@ -79,11 +80,43 @@ E:AddTagInfo("dilvl:plain", "Details! iLvl Display",
 ---------------------------------------------------------------
 -- Register callback: core.lua fires all registered callbacks
 -- whenever cached iLvl data changes. We respond by calling
--- RefreshMethods which re-renders every visible frame using
--- either tag immediately. This is the official oUF API for
--- forcing a tag re-evaluation; it accepts multiple tag names
--- in one call so both variants refresh together.
+-- RefreshMethods, the official oUF API for forcing a tag
+-- re-evaluation, which re-renders every visible frame using
+-- that tag.
+--
+-- ONE tag per call: oUF's RefreshMethods takes a single named
+-- parameter and no vararg (oUF/elements/tags.lua:1070), so the
+-- second tag name we used to pass was silently dropped and
+-- [dilvl:plain] never refreshed. Its pattern is built as a
+-- literal '%[dilvl%]' too, which would not match [dilvl:plain]
+-- even if the argument had arrived.
+--
+-- The whole call sits INSIDE the pcall closure, not as pcall
+-- arguments: Lua evaluates arguments first, so the old form
+-- dereferenced E.oUF.Tags outside the protection and threw for
+-- real whenever ElvUI's oUF was momentarily nil (profile switch,
+-- ElvUI update) — five of those and core.lua unregistered us.
 ---------------------------------------------------------------
+
+-- Latch so we still run once on the ON -> OFF transition. Returning
+-- early whenever the tag is off would leave stale "[284]" text on the
+-- frames after /dilvl elvui off.
+local lastEnabled = false
+
 API:RegisterCallback("elvui", function()
-    pcall(E.oUF.Tags.RefreshMethods, E.oUF.Tags, "dilvl", "dilvl:plain")
+    local db = API.GetDb()
+    local on = (db and db.elvuiTag) and true or false
+    -- Default is elvuiTag = false, i.e. the normal state for every ElvUI
+    -- user who never enabled this. RefreshMethods is not cheap: it walks
+    -- bracketFuncs and tagStringFuncs, gsubs twice per entry and forces a
+    -- recompile across every tagged FontString in the UI. A post-kill sweep
+    -- fires ~25 INSPECT_READY in ~12s, so this used to burn real time for
+    -- people who never turned the feature on.
+    if not on and not lastEnabled then return end
+    lastEnabled = on
+
+    pcall(function()
+        E.oUF.Tags:RefreshMethods("dilvl")
+        E.oUF.Tags:RefreshMethods("dilvl:plain")
+    end)
 end)
