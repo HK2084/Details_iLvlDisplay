@@ -224,8 +224,7 @@ local GetIlvlColor       = util.GetIlvlColor
 local GetSetBonusForUnit = util.GetSetBonusForUnit
 local TIER_SLOTS         = util.TIER_SLOTS
 local MIDNIGHT_TIER_SETS = util.MIDNIGHT_TIER_SETS
--- Realm stripper. Do NOT call Ambiguate directly for this: it stopped
--- stripping the realm in 12.1 (see util.StripRealm for the evidence).
+-- Realm stripper. Never Ambiguate directly — see util.StripRealm.
 local StripRealm         = util.StripRealm
 
 ---------------------------------------------------------------
@@ -310,8 +309,6 @@ local function StoreNameIlvl(name, ilvl)
     if not name or not ilvl then return end
     nameToIlvl[name] = ilvl
     -- Store the realm-less form too, because Details! bars show only "Name".
-    -- StripRealm, not raw Ambiguate: Ambiguate stopped stripping in 12.1 and
-    -- this entry silently vanished from the map (see util.StripRealm).
     local shortName = StripRealm(name)
     if shortName ~= name then
         nameToIlvl[shortName] = ilvl
@@ -371,7 +368,6 @@ local function RebuildNameIlvlMap()
                 StoreNameBonus(cached.name, setBonusCache[guid])
                 -- Cross-realm: cached.name may be "Name-Realm". Also store short
                 -- name so Details! bars (which show only "Name") still match.
-                -- StripRealm, not raw Ambiguate — see util.StripRealm (12.1).
                 local shortName = StripRealm(cached.name)
                 if shortName ~= cached.name then
                     StoreNameIlvl(shortName, cached.ilvl)
@@ -811,7 +807,6 @@ local function HookBarTextIfNeeded(bar)
         if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
         SafeCall(function()
             -- Details! Itemlevelfinder passes "secret string" values to SetText.
-            -- Per-field guard: check the value, skip if tainted. No pcall needed.
             if isSecretValue(text) then
                 barCleanText[self] = nil
                 if db.layout == "columns" then
@@ -1225,16 +1220,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 cachedColLayout = db.cachedColLayout
             end
 
-            -- Drop only genuinely ancient entries. This used to purge at
-            -- CACHE_EXPIRE (2h) and was the single deletion site in the addon;
-            -- replaying it against a real SavedVariables file reproduced the
-            -- reported 21 -> 9 collapse exactly, including which twelve players
-            -- lost their tags. Since the renderer ignores age entirely, deleting
-            -- here is the only thing that ever removes a tag — and it removes it
-            -- permanently for anyone no longer in the group.
-            -- A malformed entry (no timestamp) is kept rather than dropped: it
-            -- still renders, and treating "unknown age" as "infinitely old" is
-            -- how the time = 0 marker used to destroy fresh data.
+            -- The addon's ONLY deletion site — see CACHE_REFRESH/CACHE_DISCARD
+            -- at the top of this file for why it must use the 7-day number.
+            -- A malformed entry (no timestamp) is kept rather than dropped:
+            -- treating "unknown age" as "infinitely old" is exactly how the
+            -- old time = 0 marker destroyed fresh data.
             local now = time()
             for guid, data in pairs(ilvlCache) do
                 if type(data.time) == "number" and data.time > 0
@@ -1463,13 +1453,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if isSecretValue(success) then return end -- Delves: success can be lazy-tainted
         if db and db.enabled and success == 1 then
             -- Mark the group for re-inspection WITHOUT touching the timestamp.
-            -- The old code back-dated .time to (CACHE_EXPIRE - 60) hoping the
-            -- re-inspect 5s later would pick them up — but the queue gate needs
-            -- age >= CACHE_EXPIRE, and 7140 + 5 is not >= 7200, so it queued
-            -- nobody, every single boss kill. All it achieved was ageing the
-            -- whole group to 60s from deletion. Since .time is also the deletion
-            -- key, any fake age is really a deletion request.
-            -- A separate flag says "refresh me" without saying "I am old".
+            -- .time is also the deletion key, so back-dating it to force a
+            -- refresh was really a deletion request: the old code aged the
+            -- whole group to 60s short of the purge and still queued nobody,
+            -- every single boss kill. A separate flag says "refresh me"
+            -- without saying "I am old".
             local prefix, count = GetGroupInfo()
             for i = 1, count do
                 local guid = SafeUnitGUID(prefix .. i)
@@ -2676,14 +2664,12 @@ Details_iLvlDisplayAPI = {
     -- Iterates party/raid units — O(n) but n ≤ 40, called by blizzdm.lua on
     -- UpdateName hook and event-driven refresh (not a per-frame hot-path).
     -- Handles cross-realm names: sourceName may be "Name-Realm" while
-    -- UnitName() returns just "Name". Ambiguate() strips the realm suffix.
+    -- UnitName() returns just "Name", so every comparison below runs on the
+    -- stripped form.
     -- Fallback: if player left the group, reverse-lookup from ilvlCache
     -- so Blizz DM can still show iLvl for past sessions.
     ResolveGUIDByName = function(name)
         if not name then return nil end
-        -- StripRealm, not raw Ambiguate: Ambiguate stopped stripping the realm
-        -- in 12.1, which left cleanName as "Name-Realm" and broke every
-        -- comparison below (see util.StripRealm).
         local cleanName = StripRealm(name)
         local pName = SafeUnitName("player")
         if pName == cleanName then return SafeUnitGUID("player") end
@@ -2741,9 +2727,8 @@ Details_iLvlDisplayAPI = {
     end,
     -- Shared color function so ElvUI tag uses the same tier colors.
     GetIlvlColor = GetIlvlColor,
-    -- Shared realm stripper. Every channel must use this instead of calling
-    -- Ambiguate itself — Ambiguate stopped stripping the realm in 12.1
-    -- (evidence in util.StripRealm), which silently broke name matching.
+    -- Shared realm stripper. Every channel must use this and never Ambiguate
+    -- directly — see util.StripRealm.
     StripRealm = StripRealm,
     -- Live db reference — elvui_tags.lua checks db.elvuiTag at call time.
     GetDb = function() return db end,

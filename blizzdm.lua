@@ -40,9 +40,8 @@ local _hasanysecretvalues  = API.hasanysecretvalues
 local SafeUnitName         = API.SafeUnitName
                             or function() return nil end
 local SafeUnitGUID         = API.SafeUnitGUID  or function() return nil end
--- Realm stripper. NOT raw Ambiguate: it stopped stripping the realm in 12.1
--- (evidence in util.StripRealm). The fallback keeps this file working even if
--- core.lua is older than this one.
+-- Realm stripper. Never Ambiguate directly — see util.StripRealm. The
+-- fallback keeps this file working even if core.lua is older than this one.
 local StripRealm           = API.StripRealm
                             or function(n)
                                    if type(n) ~= "string" then return n end
@@ -659,10 +658,8 @@ local function ResetFailCounter(name, reason)
     end
     -- Cross-realm symmetry: BlizzDM may show a truncated form (FontString
     -- width). Clear the realm-less variant too so whichever form the counter
-    -- is keyed under gets reset. StripRealm, not Ambiguate("short"): since
-    -- 12.1 Ambiguate returns the name unchanged, so this branch never cleared
-    -- anything and a GAVE-UP could stick for the whole session even after the
-    -- player resolved fine under the other spelling.
+    -- is keyed under gets reset — otherwise a GAVE-UP sticks for the whole
+    -- session even after the player resolves fine under the other spelling.
     local short = StripRealm(name)
     if short and short ~= name and nameResolveFails[short] then
         nameResolveFails[short] = nil
