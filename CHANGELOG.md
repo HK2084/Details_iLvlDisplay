@@ -6,6 +6,16 @@
 
 *   **Season 2 tier sets are recognised from day one.** All thirteen new set bonuses are in, so 2P/4P appears as soon as people start wearing the new gear.
 
+### Fixed
+
+*   **Item levels fill in far quicker in raids.** When another addon inspected someone, we mistook it for you opening the inspect window and paused for a minute — in a raid that kept repeating, leaving people untagged.
+*   **Tags no longer blink out when someone joins or leaves the group.** Every roster change cleared all item levels until the next update; in a group that is still filling up, that was most of the time.
+*   **ElvUI's `[dilvl:plain]` tag now refreshes** with the rest instead of waiting for a gear change — and if you never switched the ElvUI tag on, it costs you nothing at all now.
+
+### Under the hood
+
+*   An error inside Details! can no longer take down the update loop or the login setup for the rest of the session, and a channel that switched itself off after repeated errors comes back with `/dilvl elvui on` or `/dilvl grid2 on`.
+
 ## v1.5.4
 
 ### Fixed
