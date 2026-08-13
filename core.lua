@@ -27,7 +27,25 @@ local ilvlCache -- points to db.ilvlCache after ADDON_LOADED (persistent SavedVa
 local setBonusCache = {} -- guid -> "2P" / "4P" / false (no bonus) / nil (never inspected); persisted after ADDON_LOADED
 local nameToIlvl = {}    -- "PlayerName" -> ilvl
 local nameToSetBonus = {} -- "PlayerName" -> "2P" / "4P" / nil (mirrors nameToIlvl, O(1) BuildTag lookup)
-local CACHE_EXPIRE = 7200 -- 2 hours; stale entries purged on new instance or after boss
+-- TWO different decisions, so two different numbers. They used to be one
+-- constant, which meant an entry was never merely "worth refreshing" — the
+-- moment it qualified for a refresh it also qualified for deletion.
+--
+-- CACHE_REFRESH  when to ask for fresh data if the player is reachable.
+-- CACHE_DISCARD  when to actually throw data away. Deliberately huge.
+--
+-- Why discarding is nearly always wrong: RebuildNameIlvlMap renders a tag from
+-- `cached.ilvl and cached.name` and never looks at the timestamp, so age is
+-- invisible to the display — deletion is the ONLY thing that makes a tag
+-- disappear. And the entries that age out first are the players who already
+-- left the group, which is exactly the case the cache-fallback exists for.
+-- Those cannot be re-inspected either: QueueGroupInspect requires
+-- UnitExists(unit) in the live roster. So the old code applied a
+-- "re-inspect soon" TTL to data that was not re-inspectable, and every purge
+-- permanently destroyed tags it could never rebuild. Measured on 2026-08-13:
+-- 51 -> 21 -> 9 entries in one evening, all still well inside the old TTL.
+local CACHE_REFRESH = 7200        -- 2h: re-inspect if we can reach them
+local CACHE_DISCARD = 7 * 24 * 3600 -- 7 days: only then is it really junk
 local lastMapID = nil -- track zone changes to detect new instances
 local inspectQueue = {}
 local isInspecting = false
@@ -235,7 +253,7 @@ local function GetIlvlForGuid(guid)
     end
 
     local cached = ilvlCache[guid]
-    if cached and (time() - cached.time < CACHE_EXPIRE) then
+    if cached and (time() - cached.time < CACHE_REFRESH) then
         return cached.ilvl
     end
 
@@ -243,6 +261,20 @@ local function GetIlvlForGuid(guid)
     if Details and Details.ilevel and Details.ilevel.GetIlvl then
         local ok, data = pcall(Details.ilevel.GetIlvl, Details.ilevel, guid)
         if ok and data and data.ilvl and data.ilvl > 0 then
+            -- Adopt Details' OWN timestamp, and refuse anything already stale.
+            -- GetIlvl hands back the raw pool entry with no age filter at all
+            -- (Details-Damage-Meter/core/inspect.lua:560-562 is a bare table
+            -- read), and that pool is persisted across sessions. We used to
+            -- stamp time() on it, i.e. relabel a value from days ago as brand
+            -- new -- which then out-survived a fresh inspect for another full
+            -- CACHE_REFRESH and kept showing the gear someone wore last week.
+            -- Returning nil instead lets the inspect pipeline fetch real data;
+            -- no tag for a moment beats a confidently wrong one.
+            local poolTime = (type(data.time) == "number" and data.time > 0)
+                             and data.time or nil
+            if poolTime and (time() - poolTime) >= CACHE_REFRESH then
+                return nil
+            end
             local ilvl = math.floor(data.ilvl)
             -- Enrich with Name-Realm via roster lookup so the post-disband
             -- reverse-lookup in ResolveGUIDByName can match cross-realm
@@ -256,7 +288,9 @@ local function GetIlvlForGuid(guid)
             local prev = ilvlCache[guid]
             ilvlCache[guid] = {
                 ilvl = ilvl,
-                time = time(),
+                -- Details' timestamp when it has one, so the entry ages from
+                -- when the data was actually gathered, not from when we read it.
+                time = poolTime or time(),
                 name = ResolveFullNameByGuid(guid) or (prev and prev.name),
                 source = "details",
             }
@@ -1076,9 +1110,13 @@ local function QueueGroupInspect()
                         StoreNameBonus(name, setBonusCache[guid])
                     end
                 end
-                -- Queue only if iLvl is stale; setBonusCache is now persisted so
-                -- no need to re-inspect just because it's absent after a reload.
-                if not cached or (time() - cached.time >= CACHE_EXPIRE) then
+                -- Queue if we have nothing, if something explicitly marked the
+                -- entry stale (boss kill, gear change), or if it aged past the
+                -- refresh horizon. The stale flag replaces the old trick of
+                -- back-dating .time, which could not work: the back-dated age
+                -- was always just under this very threshold.
+                if not cached or cached.stale
+                   or (time() - cached.time >= CACHE_REFRESH) then
                     table.insert(inspectQueue, {guid = guid, unit = unit})
                 end
             end
@@ -1154,10 +1192,20 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 cachedColLayout = db.cachedColLayout
             end
 
-            -- Purge entries older than CACHE_EXPIRE on load; keep setBonusCache in sync
+            -- Drop only genuinely ancient entries. This used to purge at
+            -- CACHE_EXPIRE (2h) and was the single deletion site in the addon;
+            -- replaying it against a real SavedVariables file reproduced the
+            -- reported 21 -> 9 collapse exactly, including which twelve players
+            -- lost their tags. Since the renderer ignores age entirely, deleting
+            -- here is the only thing that ever removes a tag — and it removes it
+            -- permanently for anyone no longer in the group.
+            -- A malformed entry (no timestamp) is kept rather than dropped: it
+            -- still renders, and treating "unknown age" as "infinitely old" is
+            -- how the time = 0 marker used to destroy fresh data.
             local now = time()
             for guid, data in pairs(ilvlCache) do
-                if (now - data.time) >= CACHE_EXPIRE then
+                if type(data.time) == "number" and data.time > 0
+                   and (now - data.time) >= CACHE_DISCARD then
                     ilvlCache[guid] = nil
                     setBonusCache[guid] = nil
                 end
@@ -1372,16 +1420,19 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local _, _, _, _, success = ...
         if isSecretValue(success) then return end -- Delves: success can be lazy-tainted
         if db and db.enabled and success == 1 then
-            -- Don't force-expire ALL entries: players out of inspect range (common
-            -- in LFR) would lose their tags and never get them back this session.
-            -- Instead set cache age to just-under-expiry so QueueGroupInspect will
-            -- re-queue them when in range, but existing data stays visible until then.
-            local softExpire = time() - (CACHE_EXPIRE - 60) -- 60s left before real expiry
+            -- Mark the group for re-inspection WITHOUT touching the timestamp.
+            -- The old code back-dated .time to (CACHE_EXPIRE - 60) hoping the
+            -- re-inspect 5s later would pick them up — but the queue gate needs
+            -- age >= CACHE_EXPIRE, and 7140 + 5 is not >= 7200, so it queued
+            -- nobody, every single boss kill. All it achieved was ageing the
+            -- whole group to 60s from deletion. Since .time is also the deletion
+            -- key, any fake age is really a deletion request.
+            -- A separate flag says "refresh me" without saying "I am old".
             local prefix, count = GetGroupInfo()
             for i = 1, count do
                 local guid = SafeUnitGUID(prefix .. i)
                 if guid and ilvlCache[guid] then
-                    ilvlCache[guid].time = softExpire
+                    ilvlCache[guid].stale = true
                 end
             end
             C_Timer.After(5, QueueGroupInspect)
@@ -1416,8 +1467,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local guid = SafeUnitGUID(unit)
         if not guid or guid == SafeUnitGUID("player") then return end -- secret, gone, or self
         if ilvlCache[guid] then
-            -- Invalidate stale cache so QueueGroupInspect picks them up
-            ilvlCache[guid].time = 0
+            -- Flag for re-inspection. This used to write time = 0, which the
+            -- load-time purge read as an age of ~1.79 billion seconds and
+            -- deleted on sight. That was only survivable if the +2s inspect
+            -- below actually succeeded — and it silently does not when the
+            -- player is in combat (QueueGroupInspect returns early), out of
+            -- range, or has left the group, so a simple gear swap before a pull
+            -- could destroy a perfectly good entry at the next reload.
+            ilvlCache[guid].stale = true
             C_Timer.After(2, QueueGroupInspect)
         end
     end
@@ -1814,15 +1871,18 @@ SlashCmdList["DILVL"] = function(msg)
             end
             local age = now - data.time
             local sb = setBonusCache[guid] and ("|cFF00FF00[" .. setBonusCache[guid] .. "]|r ") or ""
-            -- time=0 means force-expired (set by ENCOUNTER_END to trigger re-inspect)
-            local ageStr = data.time == 0 and "force-expired" or (age .. "s ago")
-            local isExpired = data.time == 0 or age > CACHE_EXPIRE
+            -- `stale` = explicitly flagged for re-inspect (boss kill, gear change).
+            -- The old marker was time = 0, which the load purge read as an age of
+            -- ~1.79 billion seconds and deleted. Age and "needs refresh" are now
+            -- separate facts, so both can be shown honestly.
+            local ageStr = (age .. "s ago") .. (data.stale and " (flagged)" or "")
+            local isExpired = data.stale or age >= CACHE_REFRESH
             local ageColor = isExpired and "|cFFFF4444" or "|cFF888888"
             local expiredNote = isExpired and " |cFFFF4444[EXPIRED]|r" or ""
             print(string.format("  %s: %s|cFFFFD900%d|r iLvl %s(%s)%s",
                 name, sb, data.ilvl, ageColor, ageStr, expiredNote))
             count = count + 1
-            if age > CACHE_EXPIRE then expired = expired + 1 end
+            if age >= CACHE_REFRESH then expired = expired + 1 end
         end
         print(string.format("|cFF00FF00Details! iLvl Display:|r %d cached, %d expired", count, expired))
 
@@ -2238,7 +2298,7 @@ SlashCmdList["DILVL"] = function(msg)
             local now = time()
             for guid, data in pairs(ilvlCache) do
                 local name = data.name or "?"
-                local age = data.time == 0 and "force-exp" or (now - data.time) .. "s"
+                local age = ((now - data.time) .. "s") .. (data.stale and "+flag" or "")
                 local sb = setBonusCache[guid] and ("[" .. setBonusCache[guid] .. "] ") or ""
                 local src = data.source and string.upper(data.source) or "?"
                 print(string.format("    %s: %s%d iLvl [%s] (%s)", name, sb, data.ilvl, src, age))
