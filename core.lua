@@ -2225,6 +2225,33 @@ SlashCmdList["DILVL"] = function(msg)
         end
         if found == 0 then print("  (none found or spellIds are secret)") end
 
+    elseif msg == "sets" or msg:match("^sets%s") then
+        -- Find the item-set IDs for a new season without waiting for someone to
+        -- equip the gear. Blizzard ships the set table with the patch, so the IDs
+        -- are readable as soon as the patch is live — a season only gates when the
+        -- items DROP, not when they exist. C_Item.GetItemSetInfo(setID) returns the
+        -- set's name (or nothing for an unused ID), which is enough to identify it.
+        local from = tonumber(msg:match("^sets%s+(%d+)")) or 1975
+        local to   = tonumber(msg:match("^sets%s+%d+%s+(%d+)")) or (from + 79)
+        if to - from > 400 then to = from + 400 end -- keep one command cheap
+        print(string.format("|cFF00FF00Details! iLvl Display:|r item sets %d-%d  (usage: /dilvl sets [from] [to])", from, to))
+        local found = 0
+        for id = from, to do
+            local ok, name = pcall(C_Item.GetItemSetInfo, id)
+            if ok and name and name ~= "" and not isSecretValue(name) then
+                found = found + 1
+                print(string.format("    [%d] %s%s", id, name,
+                    MIDNIGHT_TIER_SETS[id] and "  |cFF00FF00(in whitelist)|r" or "  |cFFFF8000(NOT in whitelist)|r"))
+            end
+        end
+        if found == 0 then
+            print("    (no sets in this range — try another, e.g. /dilvl sets 2000 2080)")
+        else
+            print(string.format("    %d set(s) found. Whitelist currently holds %d IDs.", found, (function()
+                local n = 0; for _ in pairs(MIDNIGHT_TIER_SETS) do n = n + 1 end; return n
+            end)()))
+        end
+
     elseif msg == "tier" then
         local slotNames = {[1]="Head",[3]="Shoulder",[5]="Chest",[7]="Legs",[10]="Hands"}
         print("|cFF00FF00Details! iLvl Display:|r Tier slot scan (player):")
@@ -2429,6 +2456,7 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl cache           — Show cached iLvl entries")
         print("  /dilvl map             — Show name→iLvl map")
         print("  /dilvl tier            — Scan own tier slots")
+        print("  /dilvl sets [from] [to] — List item-set IDs (find a new season's tier sets)")
         print("  /dilvl auras           — Show own auras (spellID debug)")
         print("  /dilvl taint           — BlizzDM taint-safety self-test (run in a restricted instance)")
     end
