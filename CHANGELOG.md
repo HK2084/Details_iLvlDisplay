@@ -1,29 +1,29 @@
 # Changelog
 
+## v1.5.5
+
+### New
+
+*   **Season 2 tier sets are recognised from day one.** All thirteen new set bonuses are in, so 2P/4P appears as soon as people start wearing the new gear.
+
 ## v1.5.4
 
 ### Fixed
 
-*   **Item level is back on Details! bars after patch 12.1.** Blizzard quietly changed how the game shortens a cross-realm name, so a player stored as "Name-Realm" no longer matched the "Name" that Details! prints on its bars — and the tag simply didn't appear. Blizzard's own damage meter kept working because it prints the full name, which is why this looked so random. Names are now shortened by the addon itself, so both spellings match again. _(found and reproduced in a live raid — thanks for the detailed reports!)_
-*   **Your own 2P/4P tier bonus shows up right after logging in.** Item data arrives asynchronously, and on a fresh login the tier pieces often weren't loaded yet when we first looked — so your set bonus stayed empty for the whole session unless you re-equipped something. It is now re-checked twice shortly after login.
-*   **A player who once failed to resolve on Blizzard's damage meter is no longer stuck that way.** The "give up" counter could be cleared under one spelling of the name while being stored under the other, so the player stayed untagged even after everything else recovered.
+*   **Item level is back on Details! bars.** Patch 12.1 changed how the game shortens cross-realm names, so anyone from another realm lost their tag. Blizzard's own damage meter kept working, which is why this looked random rather than broken.
+*   **Your own 2P/4P shows up right after logging in** instead of only after re-equipping something.
+*   **Players stay tagged on Blizzard's damage meter.** Someone who failed to resolve once could stay untagged for the rest of the session.
 
 ## v1.5.3
 
 ### Fixed
 
-*   **Item level reappears instantly when you resize the Details! window.** The refresh that runs on resize never actually ran — it watched for a window field that Details! spells differently, so it silently did nothing. Until now the display was repaired a second or two later by the periodic update, which is why it mostly went unnoticed. It is immediate again.
-*   **No more possible error while measuring text in restricted instances.** Two of the width measurements behind the Columns layout weren't secret-value safe yet — the other measurements around them already were. Brought in line, so nothing there can throw.
-
-### New
-
-*   **`/dilvl taint`** — a self-test that checks whether Blizzard's Damage Meter can currently be read safely, and reports exactly what is locked down. Handy when reporting a bug from inside a restricted instance.
+*   **Item level reappears instantly when you resize the Details! window** instead of a second or two later.
+*   **No more possible error while measuring text in restricted instances.** Two width measurements behind the Columns layout weren't secret-value safe yet.
 
 ### Under the hood
 
-*   `/dilvl debug` now reports resize-hook health (installed / fired / refreshed), so a silently missing hook can't hide again.
-*   The aura list in `/dilvl auras` is secret-value safe, ahead of patch 12.1 making aura data secret.
-*   Build-time guard that fails CI if a call into another addon's mixin is ever added without its safe wrapper — the class of bug behind the v1.5.2 crash.
+*   Hardened the `/dilvl debug` and `/dilvl auras` output against the 12.1 secret-value changes, and added a build-time guard against the class of bug behind the v1.5.2 crash.
 
 ## v1.5.2
 

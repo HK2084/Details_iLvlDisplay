@@ -84,6 +84,31 @@ U.MIDNIGHT_TIER_SETS = {
     [1988] = true, -- Shaman         (Mantle of the Primal Core) ← confirmed
     [1989] = true, -- Warlock        (Reign of the Abyssal Immolator)
     [1990] = true, -- Warrior        (Rage of the Night Ender)
+
+    -- Season 2 (patch 12.1). Read straight out of the live client with
+    -- /dilvl sets 2054 2454 on 2026-08-13, before the season opened: Blizzard
+    -- ships the item-set table with the patch, so the IDs exist as soon as the
+    -- patch does — a season gates when items DROP, not when they exist.
+    -- 2055-2067 is contiguous and 13 wide, mirroring season 1's 1978-1990, and
+    -- the names line up with the same alphabetical class order. The class
+    -- comments are therefore inferred from position + name, not from an
+    -- official list — they are documentation only. Detection matches on the ID,
+    -- so a mislabelled comment cannot cause a wrong tag.
+    -- Deliberately NOT included: 2070 ("Biss von Zul'jan"). The gap at
+    -- 2068-2069 puts it outside the tier run.
+    [2055] = true, -- Death Knight   (Tiegel des unheilvollen Grabritters)
+    [2056] = true, -- Demon Hunter   (Jagd des abyssischen Verdammnishundes)
+    [2057] = true, -- Druid          (Borke des geheimnisvollen Traumbehüters)
+    [2058] = true, -- Evoker         (Echo des Unheils)
+    [2059] = true, -- Hunter         (Hinterhalt der lauernden Viper)
+    [2060] = true, -- Mage           (Gewand des urweltlichen Leyhüters)
+    [2061] = true, -- Monk           (List des Affenkönigs)
+    [2062] = true, -- Paladin        (Strahlen der geweihten Flamme)
+    [2063] = true, -- Priest         (Gewandung des kosmischen Büßers)
+    [2064] = true, -- Rogue          (Hexgeflecht des auserkorenen Blutschlächters)
+    [2065] = true, -- Shaman         (Prophezeiung des Schlangenorakels)
+    [2066] = true, -- Warlock        (Gesprengte Fesseln des verdammten Nekrolythen)
+    [2067] = true, -- Warrior        (Herrschaft des Jadekriegsfürsten)
 }
 
 ----------------------------------------------------------------
