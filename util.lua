@@ -11,6 +11,35 @@ local _, ns = ...
 local U = ns.util
 
 ----------------------------------------------------------------
+-- Strip a realm suffix: "Fhina-Thrall" -> "Fhina".
+--
+-- WHY THIS EXISTS: we used to call Ambiguate(name, "none") directly and
+-- rely on it stripping the realm. In 12.1 it returns the string UNCHANGED.
+-- Proven in-game 2026-08-13: /dilvl map held 51 entries, every one a full
+-- "Name-Realm" string and not a single short name, because the usual guard
+--     local short = Ambiguate(name, "none"); if short ~= name then ...
+-- never fired. Details! bars show only "Fhina", so nothing matched and no
+-- item level appeared — while Blizzard's meter (which shows "Fhina-Thrall")
+-- kept working. Nothing in Blizzard_APIDocumentationGenerated changed for
+-- Ambiguate between 12.0.7 and 12.1; only the behaviour did.
+--
+-- Ambiguate is still TRIED FIRST on purpose: it is the sanctioned API, it
+-- handles cases a plain match may not, and if Blizzard restores the old
+-- behaviour this silently goes back to using it. The match is the fallback.
+-- Realm names cannot contain "-", so the first segment is the character name.
+----------------------------------------------------------------
+function U.StripRealm(name)
+    if not name or type(name) ~= "string" then return name end
+    if Ambiguate then
+        local short = Ambiguate(name, "none")
+        if short and type(short) == "string" and short ~= name then
+            return short
+        end
+    end
+    return name:match("^([^%-]+)") or name
+end
+
+----------------------------------------------------------------
 -- iLvl color by gear tier (legendary / epic / rare / uncommon / poor).
 -- Returns a WoW color escape (no |r — caller appends).
 ----------------------------------------------------------------

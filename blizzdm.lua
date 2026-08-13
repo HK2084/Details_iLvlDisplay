@@ -38,6 +38,14 @@ local _hasanysecretvalues  = API.hasanysecretvalues
 local SafeUnitName         = API.SafeUnitName
                             or function() return nil end
 local SafeUnitGUID         = API.SafeUnitGUID  or function() return nil end
+-- Realm stripper. NOT raw Ambiguate: it stopped stripping the realm in 12.1
+-- (evidence in util.StripRealm). The fallback keeps this file working even if
+-- core.lua is older than this one.
+local StripRealm           = API.StripRealm
+                            or function(n)
+                                   if type(n) ~= "string" then return n end
+                                   return n:match("^([^%-]+)") or n
+                               end
 -- Combat-state wrappers from secrets.lua (via the API). IsInCombatSafe treats a
 -- secret/unknown InCombatLockdown as OUT of combat — exactly this file's
 -- long-standing rule that "only an explicit true counts as in combat", so the
@@ -594,7 +602,7 @@ local function ClearOverlay(frame)
                 if guid then
                     local cached = API.GetCacheData(guid)
                     if cached and cached.name and not isSecret(cached.name) then
-                        restoreText = Ambiguate(cached.name, "none")
+                        restoreText = StripRealm(cached.name)
                     end
                 end
             end
@@ -642,14 +650,15 @@ local function ResetFailCounter(name, reason)
         cleared = true
     end
     -- Cross-realm symmetry: BlizzDM may show a truncated form (FontString
-    -- width). Clear the Ambiguate("short") variant too so whichever form
-    -- the counter is keyed under gets reset.
-    if Ambiguate then
-        local short = Ambiguate(name, "short")
-        if short and short ~= name and nameResolveFails[short] then
-            nameResolveFails[short] = nil
-            cleared = true
-        end
+    -- width). Clear the realm-less variant too so whichever form the counter
+    -- is keyed under gets reset. StripRealm, not Ambiguate("short"): since
+    -- 12.1 Ambiguate returns the name unchanged, so this branch never cleared
+    -- anything and a GAVE-UP could stick for the whole session even after the
+    -- player resolved fine under the other spelling.
+    local short = StripRealm(name)
+    if short and short ~= name and nameResolveFails[short] then
+        nameResolveFails[short] = nil
+        cleared = true
     end
     if cleared then
         blizzDMState.resetCount = blizzDMState.resetCount + 1
@@ -794,7 +803,7 @@ local function InjectIlvl(frame)
             if not name or isSecret(name) then
                 local cached = API.GetCacheData(guid)
                 if cached and cached.name and not isSecret(cached.name) then
-                    name = Ambiguate(cached.name, "none")
+                    name = StripRealm(cached.name)
                     nameSource = "cache"
                 end
             end
@@ -1269,7 +1278,7 @@ RegisterHandler("GROUP_ROSTER_UPDATE", function()
     local rosterNames = BuildRosterNameSet()
     local purged = 0
     for nm in pairs(nameResolveFails) do
-        local short = Ambiguate and Ambiguate(nm, "short") or nm
+        local short = StripRealm(nm)
         if not rosterNames[nm] and not rosterNames[short] then
             nameResolveFails[nm] = nil
             purged = purged + 1

@@ -200,6 +200,9 @@ local GetIlvlColor       = util.GetIlvlColor
 local GetSetBonusForUnit = util.GetSetBonusForUnit
 local TIER_SLOTS         = util.TIER_SLOTS
 local MIDNIGHT_TIER_SETS = util.MIDNIGHT_TIER_SETS
+-- Realm stripper. Do NOT call Ambiguate directly for this: it stopped
+-- stripping the realm in 12.1 (see util.StripRealm for the evidence).
+local StripRealm         = util.StripRealm
 
 ---------------------------------------------------------------
 -- iLvl lookup by GUID
@@ -266,9 +269,10 @@ end
 local function StoreNameIlvl(name, ilvl)
     if not name or not ilvl then return end
     nameToIlvl[name] = ilvl
-    -- "none" always strips realm; "short" only strips connected realms
-    -- which missed non-connected cross-realm players (#21).
-    local shortName = Ambiguate(name, "none")
+    -- Store the realm-less form too, because Details! bars show only "Name".
+    -- StripRealm, not raw Ambiguate: Ambiguate stopped stripping in 12.1 and
+    -- this entry silently vanished from the map (see util.StripRealm).
+    local shortName = StripRealm(name)
     if shortName ~= name then
         nameToIlvl[shortName] = ilvl
     end
@@ -278,7 +282,7 @@ end
 local function StoreNameBonus(name, sb)
     if not name then return end
     nameToSetBonus[name] = sb
-    local shortName = Ambiguate(name, "none")
+    local shortName = StripRealm(name)
     if shortName ~= name then
         nameToSetBonus[shortName] = sb
     end
@@ -327,9 +331,8 @@ local function RebuildNameIlvlMap()
                 StoreNameBonus(cached.name, setBonusCache[guid])
                 -- Cross-realm: cached.name may be "Name-Realm". Also store short
                 -- name so Details! bars (which show only "Name") still match.
-                -- "none" always strips realm; "short" only strips connected realms
-                -- which missed non-connected cross-realm players (#21).
-                local shortName = Ambiguate(cached.name, "none")
+                -- StripRealm, not raw Ambiguate — see util.StripRealm (12.1).
+                local shortName = StripRealm(cached.name)
                 if shortName ~= cached.name then
                     StoreNameIlvl(shortName, cached.ilvl)
                     StoreNameBonus(shortName, setBonusCache[guid])
@@ -1231,6 +1234,20 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 -- Retry at 15s and 30s to catch late-appearing group members.
                 C_Timer.After(15, QueueGroupInspect)
                 C_Timer.After(30, QueueGroupInspect)
+
+                -- Re-read our OWN tier set once the item cache is warm.
+                -- C_Item.GetItemInfo is async: on a fresh login the tier slot
+                -- items are usually not cached yet, so GetSetBonusForUnit
+                -- undercounts and we store `false` for the whole session. The
+                -- GET_ITEM_INFO_RECEIVED retry above is meant to repair that,
+                -- but it never fired in practice (reported 2026-08-13: four
+                -- equipped tier pieces, /dilvl tier showed all four as
+                -- whitelist=YES, yet the player had no [4P] until an item was
+                -- re-equipped, which forced PLAYER_EQUIPMENT_CHANGED).
+                -- These two cheap re-reads close that hole regardless of why
+                -- the event path misses; UpdatePlayerCache is idempotent.
+                C_Timer.After(5, UpdatePlayerCache)
+                C_Timer.After(20, UpdatePlayerCache)
             end)
         end
 
@@ -2437,9 +2454,10 @@ Details_iLvlDisplayAPI = {
     -- so Blizz DM can still show iLvl for past sessions.
     ResolveGUIDByName = function(name)
         if not name then return nil end
-        -- "none" always strips realm. "short" only strips connected realms,
-        -- which missed non-connected cross-realm players.
-        local cleanName = Ambiguate(name, "none")
+        -- StripRealm, not raw Ambiguate: Ambiguate stopped stripping the realm
+        -- in 12.1, which left cleanName as "Name-Realm" and broke every
+        -- comparison below (see util.StripRealm).
+        local cleanName = StripRealm(name)
         local pName = SafeUnitName("player")
         if pName == cleanName then return SafeUnitGUID("player") end
         -- Try roster first
@@ -2468,7 +2486,7 @@ Details_iLvlDisplayAPI = {
         -- Fallback: reverse lookup from ilvlCache (players who left group)
         if ilvlCache then
             for guid, cached in pairs(ilvlCache) do
-                if cached.name and Ambiguate(cached.name, "none") == cleanName then
+                if cached.name and StripRealm(cached.name) == cleanName then
                     return guid
                 end
             end
@@ -2484,7 +2502,7 @@ Details_iLvlDisplayAPI = {
             if inputBare and inputBare ~= cleanName then
                 for guid, cached in pairs(ilvlCache) do
                     if cached.name then
-                        local cachedBare = Ambiguate(cached.name, "none"):match("^([^%-]+)")
+                        local cachedBare = StripRealm(cached.name)
                         if cachedBare == inputBare then
                             return guid
                         end
@@ -2496,6 +2514,10 @@ Details_iLvlDisplayAPI = {
     end,
     -- Shared color function so ElvUI tag uses the same tier colors.
     GetIlvlColor = GetIlvlColor,
+    -- Shared realm stripper. Every channel must use this instead of calling
+    -- Ambiguate itself — Ambiguate stopped stripping the realm in 12.1
+    -- (evidence in util.StripRealm), which silently broke name matching.
+    StripRealm = StripRealm,
     -- Live db reference — elvui_tags.lua checks db.elvuiTag at call time.
     GetDb = function() return db end,
     -- Callback registry — multiple consumers (elvui_tags, blizzdm) register here.

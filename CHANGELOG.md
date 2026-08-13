@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5.4
+
+### Fixed
+
+*   **Item level is back on Details! bars after patch 12.1.** Blizzard quietly changed how the game shortens a cross-realm name, so a player stored as "Name-Realm" no longer matched the "Name" that Details! prints on its bars — and the tag simply didn't appear. Blizzard's own damage meter kept working because it prints the full name, which is why this looked so random. Names are now shortened by the addon itself, so both spellings match again. _(found and reproduced in a live raid — thanks for the detailed reports!)_
+*   **Your own 2P/4P tier bonus shows up right after logging in.** Item data arrives asynchronously, and on a fresh login the tier pieces often weren't loaded yet when we first looked — so your set bonus stayed empty for the whole session unless you re-equipped something. It is now re-checked twice shortly after login.
+*   **A player who once failed to resolve on Blizzard's damage meter is no longer stuck that way.** The "give up" counter could be cleared under one spelling of the name while being stored under the other, so the player stayed untagged even after everything else recovered.
+
 ## v1.5.3
 
 ### Fixed
