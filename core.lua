@@ -1939,7 +1939,14 @@ SlashCmdList["DILVL"] = function(msg)
         -- Last completed inspect
         if lastInspectInfo then
             local ago = string.format("%.0fs ago", GetTime() - lastInspectInfo.time)
-            print(string.format("  Last inspect: %s → %d iLvl (%s)", lastInspectInfo.name, lastInspectInfo.ilvl, ago))
+            -- tostring() on the name: it is built as `fullName or name or cachedName`
+            -- and 12.1 can make SafeUnitName return nil for every one of those, so a
+            -- bare %s on a nil throws. Every other value in this dump is already
+            -- tostring-wrapped; this line was the outlier, and it sat inside the
+            -- block that swaps the global print -- which is what turned a cosmetic
+            -- nil into a session-wide breakage for every other addon.
+            print(string.format("  Last inspect: %s → %d iLvl (%s)",
+                tostring(lastInspectInfo.name), lastInspectInfo.ilvl or 0, ago))
         end
         print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  Details!-HookErrors: %d/%d",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
@@ -2243,7 +2250,16 @@ SlashCmdList["DILVL"] = function(msg)
         print("|cFF00FF00Details! iLvl Display:|r Player auras (looking for tier bonus):")
         local found = 0
         for i = 1, 60 do
-            local aura = C_UnitAuras.GetBuffDataByIndex("player", i)
+            -- pcall, not just a result guard: 12.1 gave the aura APIs
+            -- RequiresUnitAuraAccess with FailureMode "Error", so in restricted
+            -- content this THROWS INSIDE THE CALL -- before any value comes back
+            -- for isSecretValue() to inspect. Same shape as the v1.5.2 mixin
+            -- crash: the only thing that helps is wrapping the call itself.
+            local ok, aura = pcall(C_UnitAuras.GetBuffDataByIndex, "player", i)
+            if not ok then
+                print("  (aura data is restricted here — nothing readable)")
+                break
+            end
             if not aura then break end
             local sid = aura.spellId
             local name = aura.name or "?"
