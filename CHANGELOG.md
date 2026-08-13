@@ -12,18 +12,12 @@
 
 *   **Item level is back on Details! bars.** Patch 12.1 changed how the game shortens cross-realm names, so anyone from another realm lost their tag. Blizzard's own damage meter kept working, which is why this looked random rather than broken.
 *   **Your own 2P/4P shows up right after logging in** instead of only after re-equipping something.
-*   **Players stay tagged on Blizzard's damage meter.** Someone who failed to resolve once could stay untagged for the rest of the session.
-
-## v1.5.3
-
-### Fixed
-
 *   **Item level reappears instantly when you resize the Details! window** instead of a second or two later.
-*   **No more possible error while measuring text in restricted instances.** Two width measurements behind the Columns layout weren't secret-value safe yet.
+*   **Players stay tagged on Blizzard's damage meter.** Someone who failed to resolve once could stay untagged for the rest of the session.
 
 ### Under the hood
 
-*   Hardened the `/dilvl debug` and `/dilvl auras` output against the 12.1 secret-value changes, and added a build-time guard against the class of bug behind the v1.5.2 crash.
+*   Hardened the remaining text measurements and the `/dilvl debug` and `/dilvl auras` output against the 12.1 secret-value changes, and added a build-time guard against the class of bug behind the v1.5.2 crash.
 
 ## v1.5.2
 
