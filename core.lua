@@ -346,9 +346,18 @@ local function ClaimShortName(short, guid)
     return false
 end
 
+-- Both maps and both ownership tables are keyed by the NAME. Using a secret
+-- value as a table key throws — the crash class behind v1.5.1 and v1.5.2 — and
+-- StripRealm deliberately returns a secret unchanged (util.lua:42), so the
+-- short form inherits it. The callers are believed to pass only readable names
+-- (SafeUnitName returns nil for a secret, cached names were stored through it),
+-- but "believed" is not a guard for something that hard-errors, and the write
+-- path is cheap. A secret name simply carries no data we could use anyway.
 local function StoreNameIlvl(name, ilvl, guid)
     if not name or not ilvl then return end
+    if isSecretValue(name) then return end
     local shortName = StripRealm(name)
+    if isSecretValue(shortName) then return end
     -- The full "Name-Realm" key is always exact and always safe to write.
     if shortName ~= name then
         nameToIlvl[name] = ilvl
@@ -361,7 +370,9 @@ end
 -- Mirror of StoreNameIlvl for set bonus. sb may be nil (clears entry).
 local function StoreNameBonus(name, sb, guid)
     if not name then return end
+    if isSecretValue(name) then return end
     local shortName = StripRealm(name)
+    if isSecretValue(shortName) then return end
     if shortName ~= name then
         nameToSetBonus[name] = sb
     end
