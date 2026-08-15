@@ -445,7 +445,50 @@ Der heutige Code zeigt nur `best` — das Maximum über alle setIDs — und dami
 ein einzelnes `[2P]`, das nicht verrät, aus welchem Set es stammt oder dass daneben ein
 zweites halbes Set liegt. Genau die Übergangsphase wird also unsichtbar.
 
-**Ziel-Anzeige:** `[2P]` grau + `[2P]` grün = halb umgestiegen · nur `[4P]` grün = fertig.
+**Ziel-Anzeige (Erstentwurf 15.08.):** `[2P]` grau + `[2P]` grün = halb umgestiegen ·
+nur `[4P]` grün = fertig.
+
+### Revision 2026-08-16: EIN Tag, gefärbt — zwei Tags verworfen
+
+Beim Ausarbeiten fiel zweierlei auf.
+
+**1. Die Zählung ist bereits korrekt, es fehlt nur die Herkunft.** `setPieces` ist pro
+`setID` gezählt (`util.lua:207`), und `best` nimmt das stärkste **einzelne** Set
+(`:227-234`). 2 alt + 2 neu ergibt also korrekt `2P` und nicht fälschlich `4P`. Es gibt
+hier keinen Rechenfehler zu beheben — nur eine fehlende Information.
+
+**2. „Immer die aktuelle Saison zeigen" wäre falsch.** Gegenbeispiel: 4 alte + 2 neue
+Teile. Der Spieler hat einen echten 4er-Bonus; ihn auf `[2P]` herunterzustufen, weil
+zwei neue Teile dabei sind, stellt ihn schlechter dar als er ist.
+
+**Regel:** weiterhin den **stärksten aktiven Bonus** zeigen — also genau das, was `best`
+schon liefert — und ihn nach der Saison des **gewinnenden Sets** einfärben. Bei
+Gleichstand gewinnt die aktuelle Saison (stärker und wachsend).
+
+| Ausrüstung | Anzeige |
+|---|---|
+| 4 neu | `[4P]` grün |
+| 2 alt + 2 neu | `[2P]` **grün** |
+| 4 alt + 2 neu | `[4P]` **grau** |
+| 4 alt, nichts neu | `[4P]` grau |
+
+**Warum kein zweiter Tag:** Die Auswertung aller 34 CurseForge-Kommentare weiter oben in
+diesem Dokument zeigt, dass von sechs Nutzerwünschen aus fünf Jahren **keiner** nach mehr
+Daten fragte — alle nach Lesbarkeit und Platzierung. Dazu werden Namen im BlizzDM schon
+heute abgeschnitten (`Prügelk`, `Dâedalû`, live 16.08.). Vier Zeichen mehr pro Zeile
+werden mit Namen bezahlt.
+
+**Bewusst in Kauf genommen:** Bei 2 alt + 2 neu ist nicht sichtbar, dass ein zweiter
+Bonus mitläuft. Die Übergangsphase dauert wenige Wochen pro Saison.
+
+**Datenschicht bleibt damit einfacher als im Erstentwurf:** `GetSetBonusForUnit` gibt
+weiter einen String, zusätzlich aber die Saison des gewinnenden Sets
+(`bonus, complete, season`). Kein Umbau auf eine Zählung pro Saison nötig.
+
+⚠ **Vor der Umsetzung zu klären:** Sind alte Season-Boni im aktuellen Content überhaupt
+noch aktiv? Falls Blizzard sie abschaltet, bedeutet Grau nicht „ältere Saison", sondern
+„wirkt gerade nicht" — dieselbe Farbe, aber eine andere Aussage im Hilfetext. Nicht
+geprüft, nicht annehmen.
 
 **Folge für die Datenschicht:** `GetSetBonusForUnit` darf nicht länger einen einzelnen
 String liefern, sondern die Zählung **pro Saison** (z.B. `{[1]=2, [2]=2}`). Der
