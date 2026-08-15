@@ -1028,20 +1028,38 @@ local ScheduleRefresh, StartPostCombatRefresh
 ---------------------------------------------------------------
 local identityBackfills = 0
 
+-- Why a backfill attempt gave up. Every early return below bumps exactly one of
+-- these, so a single debug line says where the chain breaks instead of leaving
+-- us to guess which of six preconditions failed.
+local bfWhy = {
+    combat = 0, noApi = 0, noSession = 0, secretSession = 0, noSources = 0,
+    noIndex = 0, noSrc = 0, totalSecret = 0, totalDiff = 0,
+    classSecret = 0, classDiff = 0, guidNil = 0, guidSecret = 0,
+}
+
 local function BackfillIdentity()
-    if IsGroupInCombat() then return end
+    if IsGroupInCombat() then bfWhy.combat = bfWhy.combat + 1 return end
     if not DamageMeter.ForEachSessionWindow then return end
 
     SafeBlizzCall("BackfillIdentity", DamageMeter.ForEachSessionWindow, DamageMeter,
         function(sw)
-            if not sw.ForEachEntryFrame or not sw.GetCombatSession then return end
+            if not sw.ForEachEntryFrame or not sw.GetCombatSession then
+                bfWhy.noApi = bfWhy.noApi + 1 return
+            end
             -- Edit mode hands back a mock session (DamageMeterSessionWindow.lua:564).
             if sw.IsEditing and sw:IsEditing() then return end
 
             local okSession, session = pcall(sw.GetCombatSession, sw)
-            if not okSession or not session or isSecret(session) then return end
+            if not okSession or not session then
+                bfWhy.noSession = bfWhy.noSession + 1 return
+            end
+            if isSecret(session) then
+                bfWhy.secretSession = bfWhy.secretSession + 1 return
+            end
             local sources = session.combatSources
-            if not sources or isSecret(sources) then return end
+            if not sources or isSecret(sources) then
+                bfWhy.noSources = bfWhy.noSources + 1 return
+            end
 
             SafeBlizzCall("BackfillEntryFrames", sw.ForEachEntryFrame, sw,
                 function(frame)
@@ -1049,22 +1067,35 @@ local function BackfillIdentity()
                     if frame._dilvlGUIDFromAPI then return end
 
                     local idx = frame.index
-                    if not idx or isSecret(idx) then return end
+                    if not idx or isSecret(idx) then
+                        bfWhy.noIndex = bfWhy.noIndex + 1 return
+                    end
                     local src = sources[idx]
-                    if not src or isSecret(src) then return end
+                    if not src or isSecret(src) then
+                        bfWhy.noSrc = bfWhy.noSrc + 1 return
+                    end
 
                     -- Confirmation 1: the damage total the row is displaying.
                     local total, fTotal = src.totalAmount, frame.value
-                    if total == nil or fTotal == nil then return end
-                    if isSecret(total) or isSecret(fTotal) or total ~= fTotal then return end
+                    if total == nil or fTotal == nil or isSecret(total) or isSecret(fTotal) then
+                        bfWhy.totalSecret = bfWhy.totalSecret + 1 return
+                    end
+                    if total ~= fTotal then
+                        bfWhy.totalDiff = bfWhy.totalDiff + 1 return
+                    end
 
                     -- Confirmation 2: the class Blizzard drew the icon from.
                     local class, fClass = src.classFilename, frame.classFilename
-                    if class == nil or fClass == nil then return end
-                    if isSecret(class) or isSecret(fClass) or class ~= fClass then return end
+                    if class == nil or fClass == nil or isSecret(class) or isSecret(fClass) then
+                        bfWhy.classSecret = bfWhy.classSecret + 1 return
+                    end
+                    if class ~= fClass then
+                        bfWhy.classDiff = bfWhy.classDiff + 1 return
+                    end
 
                     local guid = src.sourceGUID
-                    if not guid or isSecret(guid) then return end
+                    if not guid then bfWhy.guidNil = bfWhy.guidNil + 1 return end
+                    if isSecret(guid) then bfWhy.guidSecret = bfWhy.guidSecret + 1 return end
 
                     local owner = src.name
                     if owner ~= nil and isSecret(owner) then owner = nil end
@@ -1827,7 +1858,19 @@ API.GetBlizzDMDebug = function()
         resolveFails[#resolveFails + 1] = { name = name, fails = count, gaveUp = count >= MAX_RESOLVE_FAILS }
     end
 
-    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails, MAX_RESOLVE_FAILS, apiGuid, unverifiedNameSkips, identityBackfills
+    -- Only the reasons that actually fired, in the order the chain checks them,
+    -- so the first non-zero entry IS the place it breaks.
+    local bfOrder = {"combat", "noApi", "noSession", "secretSession", "noSources",
+        "noIndex", "noSrc", "totalSecret", "totalDiff", "classSecret", "classDiff",
+        "guidNil", "guidSecret"}
+    local bfReason = ""
+    for _, k in ipairs(bfOrder) do
+        if (bfWhy[k] or 0) > 0 then
+            bfReason = bfReason .. format("%s%s=%d", bfReason == "" and "" or "  ", k, bfWhy[k])
+        end
+    end
+
+    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails, MAX_RESOLVE_FAILS, apiGuid, unverifiedNameSkips, identityBackfills, bfReason
 end
 
 ---------------------------------------------------------------
