@@ -47,8 +47,8 @@ local function setKey(k, v)
     -- layout mode, re-notify ElvUI/Grid2 callbacks, etc.) via the single
     -- source of truth in core.lua. Without this, the real Details! bars
     -- would render BOTH old + new state simultaneously when layout flips.
-    if ns.ApplySettingChange then
-        pcall(ns.ApplySettingChange, k)
+    if ns.ApplySettingChangeSafe then
+        ns.ApplySettingChangeSafe(k)
     end
     -- Update the embedded live-preview pane (throttled 10Hz).
     if ns.ui and ns.ui.preview and ns.ui.preview.MarkDirty then

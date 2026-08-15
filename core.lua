@@ -1752,9 +1752,9 @@ ns.ResetToDefaults = function()
     -- Re-render: broadcast every settings key so all surfaces refresh
     -- (was: only enabled+layout, which left 10 other settings stale-visible
     -- until next sort event or tab switch — final review finding).
-    if ns.ApplySettingChange then
+    if ns.ApplySettingChangeSafe then
         for k in pairs(defaults) do
-            pcall(ns.ApplySettingChange, k)
+            ns.ApplySettingChangeSafe(k)
         end
     end
     if ns.ui and ns.ui.preview and ns.ui.preview.MarkDirty then
@@ -1773,6 +1773,25 @@ end
 -- side-effects (re-render Details! bars, switch layout mode, etc.) happen
 -- consistently regardless of which entry point changed the setting.
 ---------------------------------------------------------------
+-- Every caller must go through ApplySettingChangeSafe, never the raw function.
+-- All three call sites used a bare `pcall(ns.ApplySettingChange, k)` and threw
+-- the error away, so a setting that failed to apply looked exactly like one
+-- that worked: the checkbox flipped, the value landed in db, and the world
+-- never changed. Nothing reached BugSack either, so it could not be reported.
+-- Logged once per key — core.lua's own reset loops over every default, and a
+-- single broken key would otherwise spam the error frame on each pass.
+local _applyErrorLogged = {}
+ns.ApplySettingChangeSafe = function(key)
+    if not ns.ApplySettingChange then return false end
+    local ok, err = pcall(ns.ApplySettingChange, key)
+    if not ok and not _applyErrorLogged[key] then
+        _applyErrorLogged[key] = true
+        geterrorhandler()("Details! iLvl Display: applying setting ["
+            .. tostring(key) .. "] failed: " .. tostring(err))
+    end
+    return ok
+end
+
 ns.ApplySettingChange = function(key)
     if not db then return end
     if key == "enabled" then
