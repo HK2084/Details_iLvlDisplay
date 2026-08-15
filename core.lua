@@ -81,6 +81,7 @@ local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- true only once C_Timer.NewTicker actually returned (what /dilvl debug reports)
 local bootstrapArmed = false -- guard against scheduling the 3s login setup twice on rapid zoning
+local selfBonusRetries = 0 -- bounded re-reads when our own tier items are not in the item cache yet
 local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI is built
 -- Defaults-merge / schema-migration / validators are defined further down
 -- but referenced inside the ADDON_LOADED OnEvent closure, so they need
@@ -1187,10 +1188,33 @@ local function UpdatePlayerCache()
     if not guid then return end
     local pname = SafeUnitName("player")
     if not pname then return end
-    local sb = GetSetBonusForUnit("player")
+    -- Only let a COMPLETE read touch the set bonus. An incomplete one means
+    -- the item cache was still cold (async C_Item.GetItemInfo) — writing its
+    -- nil would erase a correct 4P, and nothing on this path ever put it back:
+    -- the delayed re-reads exist only in the login bootstrap, not on zoning.
+    -- Reported live 2026-08-15: own [4P] vanished on entering a raid and came
+    -- back only after re-equipping a piece.
+    local sb, complete = GetSetBonusForUnit("player")
     local ilvl = math.floor(equipped)
     ilvlCache[guid] = {ilvl = ilvl, time = time(), name = pname, source = "self"}
-    setBonusCache[guid] = sb or false
+    if complete then
+        setBonusCache[guid] = sb or false
+        selfBonusRetries = 0
+    else
+        if setBonusCache[guid] == nil then
+            setBonusCache[guid] = false -- first ever read: record "known nothing"
+        end
+        -- Keep whatever we had; do NOT let an unreadable slot erase it.
+        sb = setBonusCache[guid] or nil
+        -- Bounded retry: GET_ITEM_INFO_RECEIVED usually beats us to it, but it
+        -- only fires for items the client actually requests. Three tries at 3s
+        -- cover a loading screen without spinning forever if the data never
+        -- shows up.
+        if selfBonusRetries < 3 then
+            selfBonusRetries = selfBonusRetries + 1
+            C_Timer.After(3, UpdatePlayerCache)
+        end
+    end
     if pname then
         StoreNameIlvl(pname, ilvl)
         StoreNameBonus(pname, sb)
@@ -1374,6 +1398,9 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
+        -- Fresh retry budget per zone: a loading screen is exactly when the
+        -- item cache is cold, and the previous zone may have used it up.
+        selfBonusRetries = 0
         UpdatePlayerCache()
 
     elseif event == "INSPECT_READY" then
@@ -1392,10 +1419,17 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     local name, realm = SafeUnitName(u)
                     local ilvlFloor = math.floor(ilvl)
                     local fullName = name and (realm and realm ~= "") and (name .. "-" .. realm) or name
-                    local setBonus = GetSetBonusForUnit(u)
+                    local setBonus, sbComplete = GetSetBonusForUnit(u)
                     -- Store false (not nil) for "inspected, no bonus" so persistence
                     -- can distinguish from "never inspected" (nil = not in table).
-                    setBonusCache[guid] = setBonus or false
+                    -- Same rule as UpdatePlayerCache: an INCOMPLETE read (item
+                    -- data not cached yet) must never overwrite a known bonus.
+                    -- The re-inspect after the next boss kill will fill it in.
+                    if sbComplete or setBonusCache[guid] == nil then
+                        setBonusCache[guid] = setBonus or false
+                    else
+                        setBonus = setBonusCache[guid] or nil
+                    end
                     -- Fallback to existing cached name if UnitName() returned nil
                     -- (unit token can go stale between queue and INSPECT_READY)
                     local cachedName = ilvlCache[guid] and ilvlCache[guid].name

@@ -128,8 +128,21 @@ U.MIDNIGHT_TIER_SETS = {
 -- Returns "4P", "2P", or nil.
 -- Must be called synchronously during INSPECT_READY while data is loaded.
 ----------------------------------------------------------------
+-- Returns: bonus ("4P" / "2P" / nil), complete (boolean)
+--
+-- `complete` is the important half. C_Item.GetItemInfo is ASYNCHRONOUS: for an
+-- item the client has not cached yet it returns nothing at all, and then this
+-- function cannot tell "wears no tier" apart from "could not read it yet".
+-- Both used to come back as a bare nil, and every caller wrote that straight
+-- into the cache — so one unlucky read right after a loading screen erased a
+-- correct 4P and nothing ever put it back (reported live 2026-08-15: own [4P]
+-- gone after zoning into a raid, restored only by re-equipping a piece).
+--
+-- complete = false means "at least one occupied tier slot did not resolve".
+-- Callers must keep whatever they already had and try again later.
 function U.GetSetBonusForUnit(unit)
     local setPieces = {} -- setID -> count
+    local complete = true
 
     for _, slotID in ipairs(U.TIER_SLOTS) do
         -- GetInventoryItemID returns itemID directly as a number — no link
@@ -137,8 +150,11 @@ function U.GetSetBonusForUnit(unit)
         local itemID = GetInventoryItemID(unit, slotID)
         if itemID and itemID > 0 then
             -- C_Item.GetItemInfo returns 18 values; setID is at position 16.
-            local ok, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
-            if ok and setID and U.MIDNIGHT_TIER_SETS[setID] then
+            local ok, name, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
+            if not ok or name == nil then
+                -- Item data not in the client cache yet. Not "no set bonus".
+                complete = false
+            elseif setID and U.MIDNIGHT_TIER_SETS[setID] then
                 setPieces[setID] = (setPieces[setID] or 0) + 1
             end
         end
@@ -149,10 +165,10 @@ function U.GetSetBonusForUnit(unit)
         if count > best then best = count end
     end
 
-    if best >= 4 then return "4P"
-    elseif best >= 2 then return "2P"
+    if best >= 4 then return "4P", complete
+    elseif best >= 2 then return "2P", complete
     end
-    return nil
+    return nil, complete
 end
 
 ----------------------------------------------------------------

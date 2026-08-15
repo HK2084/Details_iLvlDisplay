@@ -8,6 +8,7 @@
 
 ### Fixed
 
+*   **Item level no longer disappears from Details! bars after a boss fight.** A single protected value written during combat could drop a player from the display for the rest of the session — a `/reload` was the only way back.
 *   **Item levels fill in far quicker in raids.** When another addon inspected someone, we mistook it for you opening the inspect window and paused for a minute — in a raid that kept repeating, leaving people untagged.
 *   **Tags no longer blink out when someone joins or leaves the group.** Every roster change cleared all item levels until the next update; in a group that is still filling up, that was most of the time.
 *   **ElvUI's `[dilvl:plain]` tag now refreshes** with the rest instead of waiting for a gear change — and if you never switched the ElvUI tag on, it costs you nothing at all now.
