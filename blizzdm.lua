@@ -95,6 +95,11 @@ local BLIZZDM_ERROR_LIMIT = 5
 local blizzDMState = { errors = 0, lastError = nil, disabled = false, priorDb = nil,
                        resetCount = 0, lastResetReason = nil }
 
+-- Rows we deliberately left alone because the identity was only guessed and the
+-- name was unreadable. Shown in /dilvl debug: a number here is the feature
+-- working as intended (no invented names), not a fault.
+local unverifiedNameSkips = 0
+
 local function disableBlizzDMSelf(reason)
     if blizzDMState.disabled then return end
     blizzDMState.disabled = true
@@ -402,9 +407,17 @@ local function ResolveFrameGUID(frame)
     local name = frame.sourceName
     local nameReadable = name and not isSecret(name)
 
-    -- Validate cached GUID against current sourceName.
-    -- ScrollBox recycles frames — cached GUID can belong to a different player.
-    -- Ambiguate API resolves the authoritative GUID from the roster.
+    -- An API-sourced GUID is a FACT and is re-set on every recycle by the Init
+    -- hook. Never second-guess it. The previous version re-resolved it from the
+    -- name and overwrote it on mismatch — which meant our roster/cache lookup
+    -- could replace Blizzard's own answer with a wrong one and stick that onto
+    -- the frame for good.
+    if cachedGUID and not isSecret(cachedGUID) and frame._dilvlGUIDFromAPI then
+        return cachedGUID
+    end
+
+    -- No API GUID: fall back to the name, and prefer a FRESH name lookup over a
+    -- previously guessed value, since the frame may have been recycled since.
     if cachedGUID and not isSecret(cachedGUID) then
         if nameReadable then
             local freshGUID = API.ResolveGUIDByName(name)
@@ -487,12 +500,28 @@ end
 -- sourceGUID has no Secret annotation in the Blizzard API docs
 -- (unlike sourceName which is ConditionalSecret).
 ---------------------------------------------------------------
+-- This is the ONLY trustworthy source of a row's identity, and it is current
+-- on every recycle: Blizzard's ScrollBox element initializer calls
+-- InitEntry -> frame:Init(elementData) on every frame assignment
+-- (Blizzard_DamageMeter/DamageMeterSessionWindow.lua:318 and :337). An older
+-- comment in this file claimed "Init misses ScrollBox-recycled frames" and two
+-- code paths were built on that belief, overwriting this GUID with our own
+-- name lookup. The claim is wrong — verified against the Blizzard source.
+--
+-- _dilvlGUIDFromAPI marks the value as coming from Blizzard rather than from
+-- our name resolution. Only an API-sourced GUID may be used to put a NAME on
+-- screen; a guessed one may not (see InjectIlvl).
 if DamageMeterSourceEntryMixin then
     hooksecurefunc(DamageMeterSourceEntryMixin, "Init", function(self, combatSource)
+        -- A recycled frame must never keep the previous player's identity, so
+        -- clear first and only set again on success.
+        self._dilvlGUID = nil
+        self._dilvlGUIDFromAPI = nil
         if not combatSource or isSecret(combatSource) then return end
         local guid = combatSource.sourceGUID
         if guid and not isSecret(guid) then
             self._dilvlGUID = guid
+            self._dilvlGUIDFromAPI = true
         end
     end)
 end
@@ -805,11 +834,24 @@ local function InjectIlvl(frame)
             else
                 nameSource = "sourceName"
             end
+            -- Substituting a name from OUR cache means putting a name on screen
+            -- that we chose, into a row whose real content we cannot read. That
+            -- is only defensible when the row's identity is a FACT: either
+            -- Blizzard handed us the GUID (Init hook) or Blizzard told us this
+            -- row is the local player. With a name-guessed GUID it is not — a
+            -- wrong lookup would label another player, and the class icon next
+            -- to it still comes from Blizzard, so the row would contradict
+            -- itself. Rule from the addon author, 2026-08-15: a missing tag is
+            -- fine, a wrong name is not.
             if not name or isSecret(name) then
-                local cached = API.GetCacheData(guid)
-                if cached and cached.name and not isSecret(cached.name) then
-                    name = StripRealm(cached.name)
-                    nameSource = "cache"
+                if frame._dilvlGUIDFromAPI or frame.isLocalPlayer == true then
+                    local cached = API.GetCacheData(guid)
+                    if cached and cached.name and not isSecret(cached.name) then
+                        name = StripRealm(cached.name)
+                        nameSource = "cache"
+                    end
+                else
+                    unverifiedNameSkips = unverifiedNameSkips + 1
                 end
             end
             if not name or isSecret(name) then
@@ -983,12 +1025,21 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
     -- Full group combat check (inCombat + IsEncounterInProgress + UnitAffectingCombat).
     if IsGroupInCombat() then return end
 
-    -- Capture GUID from sourceName when readable (OOC).
-    -- Init hook misses ScrollBox-recycled frames, this catches them.
-    local name = self.sourceName
-    if name and not isSecret(name) then
-        local guid = API.ResolveGUIDByName(name)
-        if guid then self._dilvlGUID = guid end
+    -- Name-based resolution is a FALLBACK, never a correction. It used to run
+    -- unconditionally and overwrite the GUID that Init took straight from
+    -- Blizzard's combatSource — replacing a fact with a guess. ResolveGUIDByName
+    -- matches against the roster and our own cache, so a short-name collision or
+    -- a stale entry silently produced the wrong player, and from then on the row
+    -- showed someone else's item level and (via the cache-name path) their name.
+    if not self._dilvlGUIDFromAPI then
+        local name = self.sourceName
+        if name and not isSecret(name) then
+            local guid = API.ResolveGUIDByName(name)
+            if guid then
+                self._dilvlGUID = guid
+                self._dilvlGUIDFromAPI = nil -- explicit: this one is a guess
+            end
+        end
     end
 
     -- Cache class color from native FontString while readable (OOC).
@@ -1362,11 +1413,13 @@ end
 
 ---------------------------------------------------------------
 -- Debug diagnostics — called by core.lua's /dilvl debug
--- Returns: windows, frames, hasGuid, hasTag, secretName, entries[], combatInfo
+-- Returns: windows, frames, hasGuid, hasTag, secretName, entries[], combatInfo,
+--          resolveFails, maxResolveFails, apiGuid, unverifiedNameSkips
 -- combatInfo = { groupCombat, inCombat, encounter, unitFlags }
 ---------------------------------------------------------------
 API.GetBlizzDMDebug = function()
     local windows, frames, hasGuid, hasTag, secretName = 0, 0, 0, 0, 0
+    local apiGuid = 0 -- of hasGuid: how many came straight from Blizzard's combatSource
     local entries = {}
 
     -- Detailed combat state for debug output
@@ -1420,6 +1473,10 @@ API.GetBlizzDMDebug = function()
             local cacheName = nil
             if guid then
                 hasGuid = hasGuid + 1
+                -- Split by TRUST, not just presence: an API-sourced GUID is a
+                -- fact from Blizzard, a name-resolved one is our guess. Only the
+                -- first may put a name on screen, so the ratio matters.
+                if frame._dilvlGUIDFromAPI then apiGuid = apiGuid + 1 end
                 local cached = API.GetCacheData(guid)
                 hasCached = cached and cached.ilvl ~= nil
                 if cached and cached.name then
@@ -1549,7 +1606,7 @@ API.GetBlizzDMDebug = function()
         resolveFails[#resolveFails + 1] = { name = name, fails = count, gaveUp = count >= MAX_RESOLVE_FAILS }
     end
 
-    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails, MAX_RESOLVE_FAILS
+    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails, MAX_RESOLVE_FAILS, apiGuid, unverifiedNameSkips
 end
 
 ---------------------------------------------------------------

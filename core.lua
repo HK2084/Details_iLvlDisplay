@@ -2211,7 +2211,7 @@ SlashCmdList["DILVL"] = function(msg)
 
         -- BlizzDM diagnostics
         if Details_iLvlDisplayAPI.GetBlizzDMDebug then
-            local windows, frames, hasGuid, hasTag, secretName, entries, ci, resolveFails, maxResolveFails = Details_iLvlDisplayAPI.GetBlizzDMDebug()
+            local windows, frames, hasGuid, hasTag, secretName, entries, ci, resolveFails, maxResolveFails, apiGuid, nameSkips = Details_iLvlDisplayAPI.GetBlizzDMDebug()
             maxResolveFails = maxResolveFails or 3
             print("  --- Blizzard Damage Meter ---")
             -- BlizzDM auto-disable counter (separate from Details!-HookErrors).
@@ -2232,8 +2232,13 @@ SlashCmdList["DILVL"] = function(msg)
                 end
             end
             if type(ci) == "table" then
-                print(string.format("    windows: %d  frames: %d  GUID: %d  tagged: %d  secret: %d",
-                    windows, frames, hasGuid, hasTag, secretName))
+                -- GUID is split by trust: "api" came from Blizzard's own
+                -- combatSource and may carry a name on screen; the remainder is
+                -- our name lookup and may not. nameSkip counts rows we left
+                -- alone for exactly that reason — a number there is the safety
+                -- rule working, not a fault.
+                print(string.format("    windows: %d  frames: %d  GUID: %d (%d api)  tagged: %d  secret: %d  nameSkip: %d",
+                    windows, frames, hasGuid, apiGuid or 0, hasTag, secretName, nameSkips or 0))
                 print(string.format("    combat: group=%s  self=%s  ICL=%s  encounter=%s%s  unitFlags=%s  members=%d",
                     ci.groupCombat and "YES" or "no",
                     ci.inCombat and "YES" or "no",
