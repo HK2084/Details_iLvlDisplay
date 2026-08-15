@@ -508,29 +508,6 @@ end
 -- sourceGUID has no Secret annotation in the Blizzard API docs
 -- (unlike sourceName which is ConditionalSecret).
 ---------------------------------------------------------------
--- This is the ONLY trustworthy source of a row's identity, and it is current
--- on every recycle: Blizzard's ScrollBox element initializer calls
--- InitEntry -> frame:Init(elementData) on every frame assignment
--- (Blizzard_DamageMeter/DamageMeterSessionWindow.lua:318 and :337). An older
--- comment in this file claimed "Init misses ScrollBox-recycled frames" and two
--- code paths were built on that belief, overwriting this GUID with our own
--- name lookup. The claim is wrong — verified against the Blizzard source.
---
--- _dilvlGUIDFromAPI marks the value as coming from Blizzard rather than from
--- our name resolution. Only an API-sourced GUID may be used to put a NAME on
--- screen; a guessed one may not (see InjectIlvl).
-if DamageMeterSourceEntryMixin then
-    hooksecurefunc(DamageMeterSourceEntryMixin, "Init", function(self, combatSource)
-        -- A recycled frame must never keep the previous player's identity, so
-        -- clear first and only set again on success.
-        SetFrameGUID(self, nil, false)
-        if not combatSource or isSecret(combatSource) then return end
-        local guid = combatSource.sourceGUID
-        if guid and not isSecret(guid) then
-            SetFrameGUID(self, guid, true)
-        end
-    end)
-end
 
 ---------------------------------------------------------------
 -- Restore Blizzard's native Name FontString after SetToDefaults.
@@ -640,12 +617,23 @@ local function ClearOverlay(frame)
             if blizzText and not isSecret(blizzText) then
                 restoreText = blizzText
             else
-                local guid = ResolveFrameGUID(frame)
-                if guid then
-                    local cached = API.GetCacheData(guid)
-                    if cached and cached.name and not isSecret(cached.name) then
-                        restoreText = StripRealm(cached.name)
+                -- Same rule as InjectIlvl: a name from OUR cache may only be
+                -- written into a row whose identity is a FACT. This path had no
+                -- such check, and ResolveFrameGUID can reach it through the
+                -- name-parsing fallbacks — so a guessed GUID could put another
+                -- player's name on the row while merely "restoring" it.
+                if frame._dilvlGUIDFromAPI or frame.isLocalPlayer == true then
+                    local guid = ResolveFrameGUID(frame)
+                    if guid then
+                        local cached = API.GetCacheData(guid)
+                        if cached and cached.name and not isSecret(cached.name) then
+                            restoreText = StripRealm(cached.name)
+                        end
                     end
+                else
+                    unverifiedNameSkips = unverifiedNameSkips + 1
+                    -- restoreText stays nil: leave the FontString untouched and
+                    -- let Blizzard redraw it, rather than label it ourselves.
                 end
             end
             -- Only clear secret if we have text to put back
@@ -769,7 +757,13 @@ local function PropagateGUID(sourceName, guid, fromAPI)
                 -- value is at least as fresh as anything we could spread.
                 if f._dilvlGUIDFromAPI and not fromAPI then return end
                 local prev = f._dilvlGUID
-                SetFrameGUID(f, guid, fromAPI)
+                -- Always written as GUESSED, never as api-sourced, even when
+                -- the origin frame's GUID was. The receiving frame was picked
+                -- by NAME EQUALITY a few lines up, and a matching name is not
+                -- proof of identity — that is the whole reason this guard
+                -- exists. Costs nothing: a frame with a readable sourceName
+                -- never needs the cached name anyway.
+                SetFrameGUID(f, guid, false)
                 if traceEnabled then
                     trace(format("PropagateGUID: %s → frame (was %s)",
                         sourceName and tostring(sourceName):sub(1,15) or "?",
@@ -1029,6 +1023,51 @@ local function RefreshAllFrames()
     end
 end
 
+-- Take the row's identity straight from Blizzard's combatSource. sourceGUID
+-- carries no secret annotation (DamageMeterDocumentation.lua:199), unlike
+-- `name` which is ConditionalSecret — so identity stays readable exactly when
+-- the name does not.
+--
+-- WHICH function to hook is not a detail, it decides whether this works at all:
+--
+--   * DamageMeterSourceEntryMixin.Init is reached as frame:Init(...) from the
+--     ScrollBox initializer (DamageMeterSessionWindow.lua:318). But the frames
+--     are built with mixin="DamageMeterSourceEntryMixin" (DamageMeterEntry.xml:49),
+--     and `mixin=` COPIES the functions onto each frame at creation. Hooking the
+--     mixin table therefore only reaches frames created after we loaded. That is
+--     exactly why a live dump read "GUID: 25 (13 api)" — twelve older frames ran
+--     through their unhooked copies.
+--   * DamageMeterEntryMixin.Init is invoked as a TABLE call at
+--     DamageMeterEntry.lua:510, so it always resolves through the hooked table,
+--     no matter how old the frame is.
+--
+-- WHEN it runs matters just as much. UpdateName has exactly one caller in the
+-- whole Blizzard tree — DamageMeterEntry.lua:481, inside DamageMeterEntryMixin
+-- :Init itself. So during a recycle the order was:
+--     sourceName := new player  ->  UpdateName -> our hook -> we WRITE
+--       -> only then our old post-hook set the new GUID
+-- We wrote the tag while the identity still belonged to the previous occupant.
+-- Injecting from here instead puts the write AFTER the identity is correct.
+local function CaptureIdentityAndInject(frame, source)
+    -- Spell rows set spellID before calling the base Init (DamageMeterEntry.lua
+    -- :618). They show abilities, not players — nothing for us to do.
+    if frame.spellID ~= nil then return end
+
+    -- A recycled frame must never keep the previous player's identity.
+    SetFrameGUID(frame, nil, false)
+    if source and not isSecret(source) then
+        local guid = source.sourceGUID
+        if guid and not isSecret(guid) then
+            SetFrameGUID(frame, guid, true)
+        end
+    end
+    SafeBlizzCall("InjectIlvl", InjectIlvl, frame)
+end
+
+if DamageMeterEntryMixin then
+    hooksecurefunc(DamageMeterEntryMixin, "Init", CaptureIdentityAndInject)
+end
+
 ---------------------------------------------------------------
 -- Hook: DamageMeterEntryMixin:UpdateName()
 -- Fires EVERY time Blizzard sets/resets bar name text (on
@@ -1041,21 +1080,18 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
     -- Full group combat check (inCombat + IsEncounterInProgress + UnitAffectingCombat).
     if IsGroupInCombat() then return end
 
-    -- Name-based resolution is a FALLBACK, never a correction. It used to run
-    -- unconditionally and overwrite the GUID that Init took straight from
-    -- Blizzard's combatSource — replacing a fact with a guess. ResolveGUIDByName
-    -- matches against the roster and our own cache, so a short-name collision or
-    -- a stale entry silently produced the wrong player, and from then on the row
-    -- showed someone else's item level and (via the cache-name path) their name.
-    if not self._dilvlGUIDFromAPI then
-        local name = self.sourceName
-        if name and not isSecret(name) then
-            local guid = API.ResolveGUIDByName(name)
-            if guid then
-                SetFrameGUID(self, guid, false)
-            end
-        end
-    end
+    -- No identity work and no injection here any more. UpdateName's only caller
+    -- in the entire Blizzard tree is DamageMeterEntryMixin:Init itself
+    -- (DamageMeterEntry.lua:481), so this hook fires DURING a recycle — after
+    -- sourceName has been set to the new player but before anyone has told us
+    -- the new GUID. Writing from here meant writing with the previous
+    -- occupant's identity, which is precisely how another player's name and
+    -- item level ended up on a row. Both jobs moved to CaptureIdentityAndInject,
+    -- which runs on the same Init one level up, after the identity is correct.
+    --
+    -- What stays: the two things that are genuinely about "Blizzard just
+    -- redrew this name" rather than about identity.
+    local name = self.sourceName
 
     -- Cache class color from native FontString while readable (OOC).
     -- ClearSecretText resets color to default; we restore it in InjectIlvl.
@@ -1088,11 +1124,6 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
             name and not isSecret(name) and tostring(name) or "?", display))
     end
 
-    -- Structural backstop: route the only un-wrapped InjectIlvl entry through the
-    -- kill-switch wrapper too. If any FUTURE foreign-mixin call inside InjectIlvl
-    -- throws on a secret, it's counted toward the 5-error auto-disable instead of
-    -- crashing the UpdateName hook. (Per-site SafeGetNameText is the primary fix.)
-    SafeBlizzCall("InjectIlvl", InjectIlvl, self)
 end)
 
 ---------------------------------------------------------------
