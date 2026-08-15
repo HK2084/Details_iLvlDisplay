@@ -317,46 +317,55 @@ end
 --
 -- Same rule as the Blizzard-meter identity fix: rather no number than a number
 -- we cannot attribute.
-local shortNameOwner = {}     -- short -> the full name that owns it
-local shortNameAmbiguous = {} -- short -> true once two different names claimed it
+local shortNameOwner = {}     -- short -> GUID of the player that owns it
+local shortNameAmbiguous = {} -- short -> true once two different players claimed it
 
--- Returns true when `short` may carry data for `fullName`.
-local function ClaimShortName(short, fullName)
+-- Ownership is keyed by GUID, NOT by the name string. The same player reaches
+-- this function under both spellings — callers store "Torvi" and
+-- "Torvi-Onyxia" for one person — so comparing strings made every single
+-- player look like two claimants and blocked 105 of 118 short names on the
+-- first live test. The GUID is the identity; the spellings are just labels.
+--
+-- Without a GUID (Details! actor names, LibOpenRaid) we cannot prove identity,
+-- so we do not claim: the short form is served only if some GUID-backed caller
+-- already claimed it for that same player, and is never marked ambiguous from
+-- an unidentified source.
+local function ClaimShortName(short, guid)
     if shortNameAmbiguous[short] then return false end
+    if not guid then return shortNameOwner[short] ~= nil end
     local owner = shortNameOwner[short]
     if owner == nil then
-        shortNameOwner[short] = fullName
+        shortNameOwner[short] = guid
         return true
     end
-    if owner == fullName then return true end
-    -- Second claimant: drop what is there, refuse from now on.
+    if owner == guid then return true end
+    -- A second, genuinely different player: drop what is there, refuse from now on.
     shortNameAmbiguous[short] = true
     nameToIlvl[short] = nil
     nameToSetBonus[short] = nil
     return false
 end
 
-local function StoreNameIlvl(name, ilvl)
+local function StoreNameIlvl(name, ilvl, guid)
     if not name or not ilvl then return end
     local shortName = StripRealm(name)
-    -- The exact key is always safe: it carries the realm (or the player has
-    -- none, in which case it IS the short form and goes through the claim).
+    -- The full "Name-Realm" key is always exact and always safe to write.
     if shortName ~= name then
         nameToIlvl[name] = ilvl
     end
-    if ClaimShortName(shortName, name) then
+    if ClaimShortName(shortName, guid) then
         nameToIlvl[shortName] = ilvl
     end
 end
 
 -- Mirror of StoreNameIlvl for set bonus. sb may be nil (clears entry).
-local function StoreNameBonus(name, sb)
+local function StoreNameBonus(name, sb, guid)
     if not name then return end
     local shortName = StripRealm(name)
     if shortName ~= name then
         nameToSetBonus[name] = sb
     end
-    if ClaimShortName(shortName, name) then
+    if ClaimShortName(shortName, guid) then
         nameToSetBonus[shortName] = sb
     end
 end
@@ -391,11 +400,11 @@ local function RebuildNameIlvlMap()
                     local name, realm = SafeUnitName(unit)
                     if name then
                         local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
-                        StoreNameIlvl(name, cached.ilvl)
-                        StoreNameBonus(name, setBonusCache[guid])
+                        StoreNameIlvl(name, cached.ilvl, guid)
+                        StoreNameBonus(name, setBonusCache[guid], guid)
                         if fullName ~= name then
-                            StoreNameIlvl(fullName, cached.ilvl)
-                            StoreNameBonus(fullName, setBonusCache[guid])
+                            StoreNameIlvl(fullName, cached.ilvl, guid)
+                            StoreNameBonus(fullName, setBonusCache[guid], guid)
                         end
                     end
                 end
@@ -405,14 +414,14 @@ local function RebuildNameIlvlMap()
         -- Fallback: cache entries whose unit token is gone (left group, solo, etc.)
         for guid, cached in pairs(ilvlCache) do
             if not seenGuids[guid] and cached.ilvl and cached.name then
-                StoreNameIlvl(cached.name, cached.ilvl)
-                StoreNameBonus(cached.name, setBonusCache[guid])
+                StoreNameIlvl(cached.name, cached.ilvl, guid)
+                StoreNameBonus(cached.name, setBonusCache[guid], guid)
                 -- Cross-realm: cached.name may be "Name-Realm". Also store short
                 -- name so Details! bars (which show only "Name") still match.
                 local shortName = StripRealm(cached.name)
                 if shortName ~= cached.name then
-                    StoreNameIlvl(shortName, cached.ilvl)
-                    StoreNameBonus(shortName, setBonusCache[guid])
+                    StoreNameIlvl(shortName, cached.ilvl, guid)
+                    StoreNameBonus(shortName, setBonusCache[guid], guid)
                 end
             end
         end
@@ -423,8 +432,8 @@ local function RebuildNameIlvlMap()
         if pcached and pcached.ilvl then
             local pname = SafeUnitName("player")
             if pname then
-                StoreNameIlvl(pname, pcached.ilvl)
-                StoreNameBonus(pname, setBonusCache[pguid])
+                StoreNameIlvl(pname, pcached.ilvl, pguid)
+                StoreNameBonus(pname, setBonusCache[pguid], pguid)
             end
         end
     end
@@ -451,10 +460,11 @@ local function RebuildNameIlvlMap()
                                       or actor.displayName
                                       or actor.nome
                         end
-                        StoreNameIlvl(actor.displayName, ilvl)
-                        StoreNameIlvl(actor.nome, ilvl)
-                        StoreNameBonus(actor.displayName, setBonusCache[actor.serial])
-                        StoreNameBonus(actor.nome, setBonusCache[actor.serial])
+                        -- actor.serial IS the player GUID, so identity is provable here.
+                        StoreNameIlvl(actor.displayName, ilvl, actor.serial)
+                        StoreNameIlvl(actor.nome, ilvl, actor.serial)
+                        StoreNameBonus(actor.displayName, setBonusCache[actor.serial], actor.serial)
+                        StoreNameBonus(actor.nome, setBonusCache[actor.serial], actor.serial)
                     end
                 end
             end
@@ -1193,10 +1203,10 @@ local function QueueGroupInspect()
                     local name, realm = SafeUnitName(unit)
                     if name then
                         local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
-                        StoreNameIlvl(fullName, cached.ilvl)
-                        StoreNameIlvl(name, cached.ilvl)
-                        StoreNameBonus(fullName, setBonusCache[guid])
-                        StoreNameBonus(name, setBonusCache[guid])
+                        StoreNameIlvl(fullName, cached.ilvl, guid)
+                        StoreNameIlvl(name, cached.ilvl, guid)
+                        StoreNameBonus(fullName, setBonusCache[guid], guid)
+                        StoreNameBonus(name, setBonusCache[guid], guid)
                     end
                 end
                 -- Queue if we have nothing, if something explicitly marked the
@@ -1261,8 +1271,8 @@ local function UpdatePlayerCache()
         end
     end
     if pname then
-        StoreNameIlvl(pname, ilvl)
-        StoreNameBonus(pname, sb)
+        StoreNameIlvl(pname, ilvl, guid)
+        StoreNameBonus(pname, sb, guid)
     end
     mapDirty = true
     NotifyElvUI(pname)
@@ -1354,8 +1364,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                             if not name then return end
                             local storedName = (realm and realm ~= "") and (name.."-"..realm) or name
                             ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName, source = "lor"}
-                            StoreNameIlvl(storedName, ilvl)
-                            StoreNameIlvl(name, ilvl)
+                            StoreNameIlvl(storedName, ilvl, guid)
+                            StoreNameIlvl(name, ilvl, guid)
                             mapDirty = true
                             NotifyElvUI(storedName)
                         end
@@ -1483,11 +1493,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     -- Populate nameToIlvl directly — don't rely on Details! combat
                     -- actors (player may not have dealt damage/healed yet).
                     if name then
-                        StoreNameIlvl(name, ilvlFloor)
-                        StoreNameBonus(name, setBonus)
+                        StoreNameIlvl(name, ilvlFloor, guid)
+                        StoreNameBonus(name, setBonus, guid)
                         if fullName and fullName ~= name then
-                            StoreNameIlvl(fullName, ilvlFloor)
-                            StoreNameBonus(fullName, setBonus)
+                            StoreNameIlvl(fullName, ilvlFloor, guid)
+                            StoreNameBonus(fullName, setBonus, guid)
                         end
                     end
                 end
