@@ -9,6 +9,8 @@
 ### Fixed
 
 *   **Item level no longer disappears from Details! bars after a boss fight.** A single protected value written during combat could drop a player from the display for the rest of the session — a `/reload` was the only way back.
+*   **Your own 2P/4P survives a loading screen.** Entering a raid or dungeon could wipe your set bonus, and only re-equipping a piece brought it back. Item data that has not finished loading is no longer mistaken for "wears no tier set".
+*   **`/dilvl off` now really silences everything.** The ElvUI tag and the Grid2 text ignored the master switch and kept their numbers on screen.
 *   **Item levels fill in far quicker in raids.** When another addon inspected someone, we mistook it for you opening the inspect window and paused for a minute — in a raid that kept repeating, leaving people untagged.
 *   **Tags no longer blink out when someone joins or leaves the group.** Every roster change cleared all item levels until the next update; in a group that is still filling up, that was most of the time.
 *   **ElvUI's `[dilvl:plain]` tag now refreshes** with the rest instead of waiting for a gear change — and if you never switched the ElvUI tag on, it costs you nothing at all now.
