@@ -1206,13 +1206,18 @@ local function UpdatePlayerCache()
         end
         -- Keep whatever we had; do NOT let an unreadable slot erase it.
         sb = setBonusCache[guid] or nil
-        -- Bounded retry: GET_ITEM_INFO_RECEIVED usually beats us to it, but it
-        -- only fires for items the client actually requests. Three tries at 3s
-        -- cover a loading screen without spinning forever if the data never
-        -- shows up.
-        if selfBonusRetries < 3 then
-            selfBonusRetries = selfBonusRetries + 1
-            C_Timer.After(3, UpdatePlayerCache)
+        -- Bounded retry with a widening delay. GET_ITEM_INFO_RECEIVED usually
+        -- beats us to it, but it only fires for items the client actually
+        -- requests — if the data trickles in another way we would never look
+        -- again. A flat 3x3s proved too short: after a loading screen the item
+        -- cache can still be cold nine seconds later, and then the stale value
+        -- (already persisted in SavedVariables) survived until the next gear
+        -- change. This covers ~2 minutes and then stops.
+        local delays = {3, 5, 10, 20, 30, 60}
+        selfBonusRetries = selfBonusRetries + 1
+        local wait = delays[selfBonusRetries]
+        if wait then
+            C_Timer.After(wait, UpdatePlayerCache)
         end
     end
     if pname then
@@ -2403,8 +2408,20 @@ SlashCmdList["DILVL"] = function(msg)
             end
         end
 
-        -- Tier slots: own gear
-        print("  --- Own Tier Slots ---")
+        -- Tier slots: own gear.
+        -- The live return value goes FIRST and on its own line. The slot list
+        -- below shows the ingredients; this shows what the function actually
+        -- makes of them right now, next to what is stored. When those three
+        -- disagree the bug is located in one glance — without it, 2026-08-15
+        -- cost an evening of inference.
+        do
+            local liveSb, liveComplete = GetSetBonusForUnit("player")
+            local pg = SafeUnitGUID("player")
+            local storedSb = pg and setBonusCache[pg]
+            print(string.format("  --- Own Tier Slots ---  live: %s (complete=%s)  stored: %s",
+                tostring(liveSb), tostring(liveComplete),
+                storedSb == nil and "nil" or tostring(storedSb)))
+        end
         local slotNames = {[1]="Head",[3]="Shoulder",[5]="Chest",[7]="Legs",[10]="Hands"}
         for _, slotID in ipairs(TIER_SLOTS) do
             local itemID = GetInventoryItemID("player", slotID)
