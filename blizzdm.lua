@@ -1033,8 +1033,8 @@ local identityBackfills = 0
 -- us to guess which of six preconditions failed.
 local bfWhy = {
     combat = 0, noApi = 0, noSession = 0, secretSession = 0, noSources = 0,
-    noIndex = 0, noSrc = 0, totalSecret = 0, totalDiff = 0,
-    classSecret = 0, classDiff = 0, guidNil = 0, guidSecret = 0,
+    noIndex = 0, noSrc = 0, classSecret = 0, classDiff = 0, specDiff = 0,
+    ambiguous = 0, guidNil = 0, guidSecret = 0,
 }
 
 local function BackfillIdentity()
@@ -1061,6 +1061,27 @@ local function BackfillIdentity()
                 bfWhy.noSources = bfWhy.noSources + 1 return
             end
 
+            -- How often each class+spec occurs across the whole list. A pair that
+            -- occurs exactly ONCE identifies its source no matter how the list is
+            -- ordered — and order-independence is the whole point, because the
+            -- damage totals we used to confirm with stay secret for good once they
+            -- were recorded in restricted combat. Measured, not assumed: the
+            -- counter read totalSecret=489 during the fight and 621 AFTER it, with
+            -- every combat flag back to "no", so waiting does not help.
+            -- classFilename and specIconID are the two fields Blizzard marks
+            -- NeverSecret (DamageMeterDocumentation.lua:202-203), so they stay
+            -- readable exactly when everything else does not.
+            local comboCount = {}
+            for _, s in ipairs(sources) do
+                if s and not isSecret(s) then
+                    local c, sp = s.classFilename, s.specIconID
+                    if c ~= nil and sp ~= nil and not isSecret(c) and not isSecret(sp) then
+                        local key = tostring(c) .. "\0" .. tostring(sp)
+                        comboCount[key] = (comboCount[key] or 0) + 1
+                    end
+                end
+            end
+
             SafeBlizzCall("BackfillEntryFrames", sw.ForEachEntryFrame, sw,
                 function(frame)
                     if frame.spellID ~= nil then return end
@@ -1075,22 +1096,39 @@ local function BackfillIdentity()
                         bfWhy.noSrc = bfWhy.noSrc + 1 return
                     end
 
-                    -- Confirmation 1: the damage total the row is displaying.
-                    local total, fTotal = src.totalAmount, frame.value
-                    if total == nil or fTotal == nil or isSecret(total) or isSecret(fTotal) then
-                        bfWhy.totalSecret = bfWhy.totalSecret + 1 return
-                    end
-                    if total ~= fTotal then
-                        bfWhy.totalDiff = bfWhy.totalDiff + 1 return
-                    end
-
-                    -- Confirmation 2: the class Blizzard drew the icon from.
+                    -- The row and the source must agree on class AND spec before
+                    -- anything else is considered.
                     local class, fClass = src.classFilename, frame.classFilename
-                    if class == nil or fClass == nil or isSecret(class) or isSecret(fClass) then
+                    local spec, fSpec = src.specIconID, frame.specIconID
+                    if class == nil or fClass == nil or spec == nil or fSpec == nil
+                        or isSecret(class) or isSecret(fClass)
+                        or isSecret(spec) or isSecret(fSpec) then
                         bfWhy.classSecret = bfWhy.classSecret + 1 return
                     end
                     if class ~= fClass then
                         bfWhy.classDiff = bfWhy.classDiff + 1 return
+                    end
+                    if spec ~= fSpec then
+                        bfWhy.specDiff = bfWhy.specDiff + 1 return
+                    end
+
+                    -- Agreement at a position is not yet proof — the list may have
+                    -- been reordered since this frame was last filled, and another
+                    -- player of the same class and spec could now sit there. One of
+                    -- two things has to settle it:
+                    --   * the damage totals match, which pins the row exactly
+                    --     (only possible when they are readable), or
+                    --   * this class+spec occurs exactly once in the whole list, so
+                    --     no reordering could put anyone else here.
+                    -- Neither available means we cannot attribute the row, and an
+                    -- unattributed row stays untouched.
+                    local total, fTotal = src.totalAmount, frame.value
+                    local totalsAgree = total ~= nil and fTotal ~= nil
+                        and not isSecret(total) and not isSecret(fTotal)
+                        and total == fTotal
+                    local unique = comboCount[tostring(class) .. "\0" .. tostring(spec)] == 1
+                    if not (totalsAgree or unique) then
+                        bfWhy.ambiguous = bfWhy.ambiguous + 1 return
                     end
 
                     local guid = src.sourceGUID
@@ -1861,7 +1899,7 @@ API.GetBlizzDMDebug = function()
     -- Only the reasons that actually fired, in the order the chain checks them,
     -- so the first non-zero entry IS the place it breaks.
     local bfOrder = {"combat", "noApi", "noSession", "secretSession", "noSources",
-        "noIndex", "noSrc", "totalSecret", "totalDiff", "classSecret", "classDiff",
+        "noIndex", "noSrc", "classSecret", "classDiff", "specDiff", "ambiguous",
         "guidNil", "guidSecret"}
     local bfReason = ""
     for _, k in ipairs(bfOrder) do
