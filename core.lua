@@ -306,12 +306,45 @@ end
 ---------------------------------------------------------------
 -- Build name->ilvl map from combat actors
 ---------------------------------------------------------------
+-- Short names are NOT unique. "Torvi-Onyxia" and "Torvi-Draenor" both reduce to
+-- "Torvi", and Details! bars print only the short form — so a plain overwrite
+-- would show one player the other's item level, with no way to notice.
+--
+-- Ownership is therefore tracked: the first full name to claim a short form
+-- keeps it. A second, different claimant makes the short form AMBIGUOUS, and an
+-- ambiguous short form is removed and never served again for that map. The full
+-- "Name-Realm" key is unaffected and stays exact.
+--
+-- Same rule as the Blizzard-meter identity fix: rather no number than a number
+-- we cannot attribute.
+local shortNameOwner = {}     -- short -> the full name that owns it
+local shortNameAmbiguous = {} -- short -> true once two different names claimed it
+
+-- Returns true when `short` may carry data for `fullName`.
+local function ClaimShortName(short, fullName)
+    if shortNameAmbiguous[short] then return false end
+    local owner = shortNameOwner[short]
+    if owner == nil then
+        shortNameOwner[short] = fullName
+        return true
+    end
+    if owner == fullName then return true end
+    -- Second claimant: drop what is there, refuse from now on.
+    shortNameAmbiguous[short] = true
+    nameToIlvl[short] = nil
+    nameToSetBonus[short] = nil
+    return false
+end
+
 local function StoreNameIlvl(name, ilvl)
     if not name or not ilvl then return end
-    nameToIlvl[name] = ilvl
-    -- Store the realm-less form too, because Details! bars show only "Name".
     local shortName = StripRealm(name)
+    -- The exact key is always safe: it carries the realm (or the player has
+    -- none, in which case it IS the short form and goes through the claim).
     if shortName ~= name then
+        nameToIlvl[name] = ilvl
+    end
+    if ClaimShortName(shortName, name) then
         nameToIlvl[shortName] = ilvl
     end
 end
@@ -319,9 +352,11 @@ end
 -- Mirror of StoreNameIlvl for set bonus. sb may be nil (clears entry).
 local function StoreNameBonus(name, sb)
     if not name then return end
-    nameToSetBonus[name] = sb
     local shortName = StripRealm(name)
     if shortName ~= name then
+        nameToSetBonus[name] = sb
+    end
+    if ClaimShortName(shortName, name) then
         nameToSetBonus[shortName] = sb
     end
 end
@@ -329,6 +364,11 @@ end
 local function RebuildNameIlvlMap()
     wipe(nameToIlvl)
     wipe(nameToSetBonus)
+    -- Must be wiped together with the maps they describe. Keeping them would
+    -- make an ambiguity from an old group permanent: the short name would stay
+    -- blocked even after the second claimant is long gone.
+    wipe(shortNameOwner)
+    wipe(shortNameAmbiguous)
     if not Details then return end
 
     -- Populate from ilvlCache.
@@ -2140,8 +2180,21 @@ SlashCmdList["DILVL"] = function(msg)
                 shortForms = shortForms + 1
             end
         end
+        -- Ambiguous short names: two players from different realms sharing a
+        -- first name. Details! bars print only the short form, so we refuse to
+        -- serve it rather than show one of them the other's item level. A
+        -- number here means the guard fired, not that something broke.
+        local ambiguousShorts = 0
+        for _ in pairs(shortNameAmbiguous) do ambiguousShorts = ambiguousShorts + 1 end
+
         print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap (%d short-form)  %d bonusMap  %d hooks (%d w/ text)  %d columns",
             cacheCount, setBonusCount, mapCount, shortForms, bonusMapCount, hookCount, cleanTextCount, colCount))
+        if ambiguousShorts > 0 then
+            local names = {}
+            for short in pairs(shortNameAmbiguous) do names[#names + 1] = short end
+            print(string.format("  Ambiguous short names (no tag on Details! bars): %d — %s",
+                ambiguousShorts, table.concat(names, ", ")))
+        end
         if hookCount > cleanTextCount then
             print(string.format("  Bars without clean text: %d empty (reserve rows)  %d secret (Blizzard-protected)  %d already tagged (OUR bug)",
                 fsEmpty, fsSecret, fsTagged))
