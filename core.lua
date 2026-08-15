@@ -776,29 +776,49 @@ end
 -- Hook a bar's lineText1 SetText to inject iLvl
 -- This avoids reading GetText() which returns secret strings
 ---------------------------------------------------------------
-local function HookBarTextIfNeeded(bar)
-    if not bar or not bar.lineText1 then return end
-
-    local fontString = bar.lineText1
-    if hookedFontStrings[fontString] then return end
-    hookedFontStrings[fontString] = true
-    fsBar[fontString] = bar  -- remember owner for per-window gating in RefreshAllBarTexts
-
-    -- Create column FontStrings for this bar (no-op if already created)
-    CreateBarColumns(bar)
-
-    -- Seed barCleanText immediately with the current text — safe because we
-    -- haven't injected into this FontString yet, so GetText() is clean.
-    -- Without this, RefreshAllBarTexts has nothing to work with until Details!
-    -- calls SetText again (e.g. never, if the window was just resized).
-    -- GetText() can return a secret string (Details! Itemlevelfinder).
-    -- Per-field guard: check the value, skip if tainted. No pcall needed.
+-- Fill barCleanText from what is on screen right now, if we have nothing.
+--
+-- Three guards, and all three must stay: GetText() can hand back a secret
+-- string (Details! Itemlevelfinder), a non-string, or our OWN already-injected
+-- text. Capturing the last one would bake a tag into the "clean" text and
+-- double it on the next refresh.
+local function SeedCleanText(fontString)
+    if barCleanText[fontString] then return end
     local currentText = fontString:GetText()
     if not isSecretValue(currentText)
        and currentText and type(currentText) == "string"
        and not currentText:find("%[%d+%]") then
         barCleanText[fontString] = currentText
     end
+end
+
+local function HookBarTextIfNeeded(bar)
+    if not bar or not bar.lineText1 then return end
+
+    local fontString = bar.lineText1
+    if hookedFontStrings[fontString] then
+        -- Already hooked, but the clean text may have been WIPED since: the
+        -- SetText hook below clears it whenever Details! passes a secret
+        -- string. In a boss fight that happens, and afterwards the segment is
+        -- static — Details! never calls SetText for those rows again, so the
+        -- entry never came back and RefreshAllBarTexts skipped the bar for the
+        -- rest of the session. Re-hooking did not help either, because this
+        -- early return used to sit BEFORE the seeding below. Observed live
+        -- 2026-08-15: one Details! window fully tagged, the other tagged only
+        -- on the two rows that had been rewritten since.
+        SeedCleanText(fontString)
+        return
+    end
+    hookedFontStrings[fontString] = true
+    fsBar[fontString] = bar  -- remember owner for per-window gating in RefreshAllBarTexts
+
+    -- Create column FontStrings for this bar (no-op if already created)
+    CreateBarColumns(bar)
+
+    -- Seed immediately: without this, RefreshAllBarTexts has nothing to work
+    -- with until Details! calls SetText again (e.g. never, if the window was
+    -- just resized).
+    SeedCleanText(fontString)
     mapDirty = true
 
     hooksecurefunc(fontString, "SetText", function(self, text)
@@ -1964,6 +1984,12 @@ SlashCmdList["DILVL"] = function(msg)
         for _ in pairs(ilvlCache) do cacheCount = cacheCount + 1 end
         for _ in pairs(nameToIlvl) do mapCount = mapCount + 1 end
         for _ in pairs(hookedFontStrings) do hookCount = hookCount + 1 end
+        -- How many hooked bars actually have a usable clean text. A hook
+        -- without one renders nothing, and the gap between the two numbers is
+        -- the only visible symptom — chasing it from the outside cost an
+        -- evening on 2026-08-15.
+        local cleanTextCount = 0
+        for _ in pairs(barCleanText) do cleanTextCount = cleanTextCount + 1 end
         for _ in pairs(setBonusCache) do setBonusCount = setBonusCount + 1 end
         for _ in pairs(nameToSetBonus) do bonusMapCount = bonusMapCount + 1 end
         for _ in pairs(barColumns) do colCount = colCount + 1 end
@@ -2033,8 +2059,8 @@ SlashCmdList["DILVL"] = function(msg)
                 shortForms = shortForms + 1
             end
         end
-        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap (%d short-form)  %d bonusMap  %d hooks  %d columns",
-            cacheCount, setBonusCount, mapCount, shortForms, bonusMapCount, hookCount, colCount))
+        print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap (%d short-form)  %d bonusMap  %d hooks (%d w/ text)  %d columns",
+            cacheCount, setBonusCount, mapCount, shortForms, bonusMapCount, hookCount, cleanTextCount, colCount))
         -- Resize-hook health (v1.5.3). installed=0 with attempts>0 means the
         -- OnSizeChanged hook never attached — that was the pre-1.5.3 bug (we read
         -- instance.baseFrame, Details! spells it baseframe). Expect installed>=1 per
