@@ -165,12 +165,14 @@ U.MIDNIGHT_TIER_SETS = {
 function U.GetSetBonusForUnit(unit)
     local setPieces = {} -- setID -> count
     local complete = true
+    local slotsWithItem = 0
 
     for _, slotID in ipairs(U.TIER_SLOTS) do
         -- GetInventoryItemID returns itemID directly as a number — no link
         -- parsing needed, immune to item link format changes.
         local itemID = GetInventoryItemID(unit, slotID)
         if itemID and itemID > 0 then
+            slotsWithItem = slotsWithItem + 1
             -- Ask the client whether it HAS the data, instead of guessing from
             -- the result. Neither a nil setID nor a present name can answer it:
             -- an item genuinely without a set returns setID = nil legitimately
@@ -201,6 +203,21 @@ function U.GetSetBonusForUnit(unit)
                 setPieces[setID] = (setPieces[setID] or 0) + 1
             end
         end
+    end
+
+    -- Not a single tier slot reported an item. For a unit whose gear we are
+    -- reading at all this means the inventory is not populated yet, not that
+    -- the player is naked — GetInventoryItemID answers nil for both. Observed
+    -- live on 2026-08-15 when LEAVING an instance: every slot came back nil,
+    -- the loop found nothing, called itself complete and wrote false over a
+    -- correct 4P. Same confusion as the two attempts above, one level lower:
+    -- "no data" read as "no item".
+    --
+    -- Deliberately "none at all" rather than "any missing": unequipping a
+    -- single tier piece must still be detected and must still be able to move
+    -- 4P down to 2P. Only the all-nil case is unambiguous.
+    if slotsWithItem == 0 then
+        complete = false
     end
 
     local best = 0
