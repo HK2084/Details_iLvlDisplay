@@ -2048,6 +2048,29 @@ SlashCmdList["DILVL"] = function(msg)
         -- evening on 2026-08-15.
         local cleanTextCount = 0
         for _ in pairs(barCleanText) do cleanTextCount = cleanTextCount + 1 end
+
+        -- Break the "hooks minus text" gap down by CAUSE. Without this the
+        -- number says something is missing but not why, and the three causes
+        -- need completely different answers:
+        --   empty   = an unused reserve row Details! keeps around → harmless
+        --   secret  = the string is protected; the player sees the name, we may
+        --             not read it → Blizzard restriction, nothing we can fix
+        --   tagged  = the text already carries OUR tag, so the seed refuses it
+        --             (it must, or the tag gets baked into the "clean" copy) →
+        --             OUR bug, and the bar stays untagged until Details! rewrites it
+        local fsEmpty, fsSecret, fsTagged = 0, 0, 0
+        for fontString in pairs(hookedFontStrings) do
+            if not barCleanText[fontString] then
+                local t = fontString:GetText()
+                if isSecretValue(t) then
+                    fsSecret = fsSecret + 1
+                elseif t == nil or t == "" then
+                    fsEmpty = fsEmpty + 1
+                elseif type(t) == "string" and t:find("%[%d+%]") then
+                    fsTagged = fsTagged + 1
+                end
+            end
+        end
         for _ in pairs(setBonusCache) do setBonusCount = setBonusCount + 1 end
         for _ in pairs(nameToSetBonus) do bonusMapCount = bonusMapCount + 1 end
         for _ in pairs(barColumns) do colCount = colCount + 1 end
@@ -2119,6 +2142,10 @@ SlashCmdList["DILVL"] = function(msg)
         end
         print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap (%d short-form)  %d bonusMap  %d hooks (%d w/ text)  %d columns",
             cacheCount, setBonusCount, mapCount, shortForms, bonusMapCount, hookCount, cleanTextCount, colCount))
+        if hookCount > cleanTextCount then
+            print(string.format("  Bars without clean text: %d empty (reserve rows)  %d secret (Blizzard-protected)  %d already tagged (OUR bug)",
+                fsEmpty, fsSecret, fsTagged))
+        end
         -- Resize-hook health (v1.5.3). installed=0 with attempts>0 means the
         -- OnSizeChanged hook never attached — that was the pre-1.5.3 bug (we read
         -- instance.baseFrame, Details! spells it baseframe). Expect installed>=1 per
