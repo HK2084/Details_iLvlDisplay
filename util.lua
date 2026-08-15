@@ -42,8 +42,12 @@ function U.StripRealm(name)
     if issecretvalue and issecretvalue(name) then return name end
     if Ambiguate then
         local short = Ambiguate(name, "none")
-        if short and type(short) == "string" and short ~= name
-           and not (issecretvalue and issecretvalue(short)) then
+        -- Secret check BEFORE the comparison: Lua evaluates `and` left to
+        -- right, so `short ~= name` ran first and would have thrown on a
+        -- secret — the guard sat behind the operation it was meant to protect.
+        if short and type(short) == "string"
+           and not (issecretvalue and issecretvalue(short))
+           and short ~= name then
             return short
         end
     end
@@ -237,6 +241,11 @@ end
 ----------------------------------------------------------------
 function U.ExtractName(text)
     if not text or type(text) ~= "string" then return nil end
+    -- type() cannot detect a secret, and everything below is :match and :gsub,
+    -- both of which throw on one. Today every caller filters secrets before
+    -- getting here, but this is a public helper on the util table and the next
+    -- channel that uses it should not have to know that.
+    if issecretvalue and issecretvalue(text) then return nil end
     -- Strip rank prefix "1. " etc
     local name = text:match("^%d+%.%s*(.+)") or text
     -- Strip any existing ilvl tag

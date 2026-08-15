@@ -1374,7 +1374,14 @@ end)
 -- cleared BEFORE RefreshAllFrames so the next InjectIlvl pass picks up the
 -- fresh data instead of bouncing off the GAVE-UP early-return.
 local function OnCacheChange(playerName)
-    if playerName and type(playerName) == "string" then
+    -- type() is NOT a secret check. A secret string still reports "string"
+    -- (Blizzard_SharedXML/Dump.lua:98-113) — only issecretvalue can tell, and
+    -- this exact misconception was corrected in four comments on 2026-08-12.
+    -- It mattered here: playerName goes on to be used as a TABLE KEY in
+    -- ResetFailCounter (nameResolveFails[name]) and is passed to :sub() one
+    -- line below. Both throw on a secret, so the "guard" was handing a live
+    -- grenade to two operations that cannot survive it.
+    if playerName and not isSecret(playerName) and type(playerName) == "string" then
         ResetFailCounter(playerName, "cache:" .. playerName:sub(1, 20))
     end
     RefreshAllFrames()
