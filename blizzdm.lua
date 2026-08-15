@@ -997,6 +997,83 @@ local deferredRetryPending = false
 -- post-combat secret-unlock recovery would silently never fire (dead code).
 local ScheduleRefresh, StartPostCombatRefresh
 
+---------------------------------------------------------------
+-- Identity backfill: ask Blizzard for the row's owner instead of
+-- waiting to be handed it.
+--
+-- The Init hook is the only place Blizzard gives us a row's GUID, and it fires
+-- exactly when a row is (re)filled. That moment is wrong for us twice over:
+-- DURING a fight sourceGUID is not available, and once the fight ENDS nothing
+-- refills the rows — so they keep the empty identity the last in-combat Init
+-- left behind, read "[NO-GUID]" for the rest of the session, and stay untagged
+-- even though every player on them is sitting in our cache with a full item
+-- level. Switching the window mode by hand cures it, and only because that
+-- forces a rebuild. Reported live twice, 2026-08-16.
+--
+-- So we fetch the data ourselves. GetCombatSession (DamageMeterSessionWindow
+-- .lua:562) is a plain getter over C_DamageMeter.GetCombatSessionFromType /
+-- FromID, and frame.index points straight at the row's entry in that list:
+-- BuildDataProvider stamps combatSource.index = i (:640) and Init copies it
+-- (DamageMeterEntry.lua:477).
+--
+-- The index alone is NOT proof. The list can be reordered between a frame's
+-- last Init and now, and trusting it blindly would hand one player's identity
+-- to another player's row — the exact failure this addon refuses to produce.
+-- So every match is confirmed against two fields that Blizzard guarantees are
+-- never secret and that Init copied from that same source: the damage total
+-- (:473) and the class (:496). Both must agree, or we take nothing.
+--
+-- Out of combat only: GetCombatSessionFromType is SecretWhenInCombat
+-- (DamageMeterDocumentation.lua:39-41).
+---------------------------------------------------------------
+local identityBackfills = 0
+
+local function BackfillIdentity()
+    if IsGroupInCombat() then return end
+    if not DamageMeter.ForEachSessionWindow then return end
+
+    SafeBlizzCall("BackfillIdentity", DamageMeter.ForEachSessionWindow, DamageMeter,
+        function(sw)
+            if not sw.ForEachEntryFrame or not sw.GetCombatSession then return end
+            -- Edit mode hands back a mock session (DamageMeterSessionWindow.lua:564).
+            if sw.IsEditing and sw:IsEditing() then return end
+
+            local okSession, session = pcall(sw.GetCombatSession, sw)
+            if not okSession or not session or isSecret(session) then return end
+            local sources = session.combatSources
+            if not sources or isSecret(sources) then return end
+
+            SafeBlizzCall("BackfillEntryFrames", sw.ForEachEntryFrame, sw,
+                function(frame)
+                    if frame.spellID ~= nil then return end
+                    if frame._dilvlGUIDFromAPI then return end
+
+                    local idx = frame.index
+                    if not idx or isSecret(idx) then return end
+                    local src = sources[idx]
+                    if not src or isSecret(src) then return end
+
+                    -- Confirmation 1: the damage total the row is displaying.
+                    local total, fTotal = src.totalAmount, frame.value
+                    if total == nil or fTotal == nil then return end
+                    if isSecret(total) or isSecret(fTotal) or total ~= fTotal then return end
+
+                    -- Confirmation 2: the class Blizzard drew the icon from.
+                    local class, fClass = src.classFilename, frame.classFilename
+                    if class == nil or fClass == nil then return end
+                    if isSecret(class) or isSecret(fClass) or class ~= fClass then return end
+
+                    local guid = src.sourceGUID
+                    if not guid or isSecret(guid) then return end
+
+                    local owner = src.name
+                    if owner ~= nil and isSecret(owner) then owner = nil end
+                    SetFrameGUID(frame, guid, true, owner)
+                    identityBackfills = identityBackfills + 1
+                end)
+        end)
+end
+
 local function RefreshAllFrames()
     if blizzDMState.disabled then return end
     local db = API.GetDb()
@@ -1016,6 +1093,10 @@ local function RefreshAllFrames()
     end
 
     if not DamageMeter.ForEachSessionWindow then return end
+
+    -- Give rows an identity before trying to write to them. Without this the
+    -- pass below can only tag what Blizzard still lets us read by name.
+    BackfillIdentity()
 
     local hasRetriableSecret = false
     -- Wrapped iteration: a thrown error in Blizzard's iteration API or our
@@ -1544,7 +1625,8 @@ end
 ---------------------------------------------------------------
 -- Debug diagnostics — called by core.lua's /dilvl debug
 -- Returns: windows, frames, hasGuid, hasTag, secretName, entries[], combatInfo,
---          resolveFails, maxResolveFails, apiGuid, unverifiedNameSkips
+--          resolveFails, maxResolveFails, apiGuid, unverifiedNameSkips,
+--          identityBackfills
 -- combatInfo = { groupCombat, inCombat, encounter, unitFlags }
 ---------------------------------------------------------------
 API.GetBlizzDMDebug = function()
@@ -1745,7 +1827,7 @@ API.GetBlizzDMDebug = function()
         resolveFails[#resolveFails + 1] = { name = name, fails = count, gaveUp = count >= MAX_RESOLVE_FAILS }
     end
 
-    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails, MAX_RESOLVE_FAILS, apiGuid, unverifiedNameSkips
+    return windows, frames, hasGuid, hasTag, secretName, entries, combatInfo, resolveFails, MAX_RESOLVE_FAILS, apiGuid, unverifiedNameSkips, identityBackfills
 end
 
 ---------------------------------------------------------------
