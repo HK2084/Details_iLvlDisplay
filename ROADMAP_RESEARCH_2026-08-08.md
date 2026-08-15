@@ -434,3 +434,28 @@ bewusst hochgezählt wird — dieselbe Pflege wie die Whitelist selbst.
 **Mischfälle:** 2 Teile S1 + 2 Teile S2 ergeben heute korrekt „2P" (Boni stapeln nicht
 über Sets hinweg, `best` nimmt das Maximum pro setID). Mit Saison-Info sollte der Marker
 die Saison des Sets zeigen, das den Bonus liefert — nicht die des zuletzt gefundenen Teils.
+
+### Entscheidung Hasan 2026-08-15: Farbe statt Suffix, und BEIDE Sets zeigen
+
+Grau = altes Season-Set, Grün = aktuelles. Begründung von Hasan, und sie schlägt den
+ursprünglichen Entwurf: Spieler steigen **stufenweise** um (2 alte + 2 neue Teile, dann
+4 neue). In dieser Phase trägt man **zwei unvollständige Sets gleichzeitig**.
+
+Der heutige Code zeigt nur `best` — das Maximum über alle setIDs — und damit erscheint
+ein einzelnes `[2P]`, das nicht verrät, aus welchem Set es stammt oder dass daneben ein
+zweites halbes Set liegt. Genau die Übergangsphase wird also unsichtbar.
+
+**Ziel-Anzeige:** `[2P]` grau + `[2P]` grün = halb umgestiegen · nur `[4P]` grün = fertig.
+
+**Folge für die Datenschicht:** `GetSetBonusForUnit` darf nicht länger einen einzelnen
+String liefern, sondern die Zählung **pro Saison** (z.B. `{[1]=2, [2]=2}`). Der
+`best`-Kollaps in util.lua entfällt bzw. wandert in die Anzeige.
+
+**Palette passt bereits:** `9D9D9D` ist die unterste Stufe unserer iLvl-Farbskala und
+liest sich schon als „veraltet". Keine Kollision, weil iLvl-Zahl und Set-Marker
+getrennte Elemente sind.
+
+**Offene Frage — Platz:** zwei Marker statt einem kosten Breite. Auf Details!-Zeilen ist
+sie knapp, und der kommende Row-Text-Rework kürzt zusätzlich per `FitNameText`.
+Kandidat für eine Regel: das alte Set nur zeigen, solange das aktuelle noch **kein** 4P
+hat — dann kostet es nur während des Übergangs Platz und verschwindet, sobald man durch ist.
