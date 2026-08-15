@@ -403,9 +403,14 @@ end
 -- set or cleared the GUID while leaving _dilvlGUIDFromAPI untouched, so a
 -- guessed GUID could inherit a stale "authoritative" mark and then be allowed
 -- to write a player name.
-local function SetFrameGUID(frame, guid, fromAPI)
+-- ownerName is the name Blizzard handed us together with an API GUID. It is the
+-- only way to tell later whether the row still belongs to that player: UpdateName
+-- fires from inside Init, so it sees the NEW sourceName while the stored GUID is
+-- still the previous occupant's.
+local function SetFrameGUID(frame, guid, fromAPI, ownerName)
     frame._dilvlGUID = guid
     frame._dilvlGUIDFromAPI = (guid and fromAPI) or nil
+    frame._dilvlGUIDOwner = (guid and ownerName) or nil
     return guid
 end
 
@@ -433,7 +438,11 @@ local function ResolveFrameGUID(frame)
     if cachedGUID and not isSecret(cachedGUID) then
         if nameReadable then
             local freshGUID = API.ResolveGUIDByName(name)
-            if freshGUID and freshGUID ~= cachedGUID then
+            -- A guessed GUID is not evidence. If the name we can read RIGHT NOW
+            -- resolves to somebody else — or to nobody, because it is ambiguous —
+            -- then the stored guess belongs to this row's previous occupant.
+            -- Keeping it would put that player's item level under this name.
+            if freshGUID ~= cachedGUID then
                 return SetFrameGUID(frame, freshGUID, false)
             end
         end
@@ -871,6 +880,19 @@ local function InjectIlvl(frame)
                     frame.sourceName and (isSecret(frame.sourceName) and "SEC" or "ok") or "nil"))
                 ClearOverlay(frame) return
             end
+            -- Priorities 1 and 2 come from Blizzard's own formatter, which puts
+            -- the rank in front (DamageMeterEntry.lua:568). Priority 3 is a bare
+            -- name, so writing it as-is silently drops the row's number — a list
+            -- where exactly the tagged rows have lost their rank. Rebuild it the
+            -- way Blizzard does: same frame field, same global format string, so
+            -- it matches in every locale instead of us inventing "%d. ".
+            -- Death-recap rows carry no rank there either (:563), none here.
+            local idx = frame.index
+            if idx and not isSecret(idx) and DAMAGE_METER_SOURCE_NAME
+                and (not frame.deathRecapID or frame.deathRecapID == 0) then
+                local okFmt, ranked = pcall(format, DAMAGE_METER_SOURCE_NAME, idx, name)
+                if okFmt and ranked and not isSecret(ranked) then name = ranked end
+            end
             baseName = name
         end
     end
@@ -1054,11 +1076,16 @@ local function CaptureIdentityAndInject(frame, source)
     if frame.spellID ~= nil then return end
 
     -- A recycled frame must never keep the previous player's identity.
-    SetFrameGUID(frame, nil, false)
+    SetFrameGUID(frame, nil, false, nil)
     if source and not isSecret(source) then
         local guid = source.sourceGUID
         if guid and not isSecret(guid) then
-            SetFrameGUID(frame, guid, true)
+            -- Record WHO this GUID belongs to while the name is readable. The
+            -- UpdateName hook needs it to tell "Blizzard redrew this row" apart
+            -- from "this row was handed to a different player".
+            local owner = source.name
+            if owner ~= nil and isSecret(owner) then owner = nil end
+            SetFrameGUID(frame, guid, true, owner)
         end
     end
     SafeBlizzCall("InjectIlvl", InjectIlvl, frame)
@@ -1104,6 +1131,38 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
                 trace(format("UpdateName: cached color r=%.2f g=%.2f b=%.2f for %s",
                     r, g, b, name and not isSecret(name) and tostring(name) or "?"))
             end
+        end
+    end
+
+    -- Inject here too, but only when it cannot write someone else's data.
+    --
+    -- Why it must happen here at all: when a fight ends Blizzard un-secrets the
+    -- names and calls UpdateName, but the ScrollBox does NOT rebuild its rows,
+    -- so Init never runs. With injection living only in the Init hook the whole
+    -- meter stayed untagged after every pull until something forced a rebuild —
+    -- switching the window mode, for instance. Reported live, 2026-08-15.
+    --
+    -- Why it is gated: UpdateName's only caller is Init itself
+    -- (DamageMeterEntry.lua:481), so it also fires mid-recycle, when sourceName
+    -- is already the NEW player while _dilvlGUID still holds the previous one —
+    -- and ResolveFrameGUID hands back an API GUID unconditionally. Writing then
+    -- put one player's item level under another's name (fixed in 62544d4).
+    -- Two cases are provably safe:
+    --   * no API identity stored — ResolveFrameGUID then resolves fresh from the
+    --     name Blizzard just drew, which is by definition the current occupant.
+    --     This is the post-combat case above: the in-combat Init cleared the
+    --     identity because the GUID was unreadable.
+    --   * an API identity whose recorded owner still matches sourceName — the
+    --     row was redrawn, not reassigned.
+    -- Everything else is a recycle: skip it, CaptureIdentityAndInject injects a
+    -- moment later with the correct identity. A tag one frame late beats a wrong
+    -- tag now.
+    if self.spellID == nil then
+        local owner = self._dilvlGUIDOwner
+        local readable = (name ~= nil and not isSecret(name)) and name or nil
+        if self._dilvlGUIDFromAPI == nil
+            or (owner ~= nil and readable ~= nil and owner == readable) then
+            SafeBlizzCall("InjectIlvl", InjectIlvl, self)
         end
     end
 
