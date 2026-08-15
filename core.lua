@@ -330,7 +330,15 @@ local shortNameAmbiguous = {} -- short -> true once two different players claime
 -- so we do not claim: the short form is served only if some GUID-backed caller
 -- already claimed it for that same player, and is never marked ambiguous from
 -- an unidentified source.
-local function ClaimShortName(short, guid)
+-- mayInvalidate: may this claimant DECLARE the short form ambiguous, i.e. take
+-- it away from whoever holds it? Only subjects that can actually appear on a
+-- bar right now may. The persisted cache keeps everyone inspected in the last
+-- seven days (CACHE_DISCARD), and RebuildNameIlvlMap walks it AFTER the live
+-- roster — so without this a "Torvi-Draenor" you pugged three days ago, who is
+-- in no group and on no bar, would strike the tag off the "Torvi" standing next
+-- to you, and every later rebuild would reproduce it. Those claimants may still
+-- FILL an unclaimed short form; they just may not take one away.
+local function ClaimShortName(short, guid, mayInvalidate)
     if shortNameAmbiguous[short] then return false end
     if not guid then return shortNameOwner[short] ~= nil end
     local owner = shortNameOwner[short]
@@ -339,7 +347,13 @@ local function ClaimShortName(short, guid)
         return true
     end
     if owner == guid then return true end
-    -- A second, genuinely different player: drop what is there, refuse from now on.
+    if not mayInvalidate then
+        -- Someone else owns it and we are not on screen: leave their entry
+        -- alone and keep only our exact "Name-Realm" key.
+        return false
+    end
+    -- A second, genuinely different player that IS on screen: drop what is
+    -- there, refuse from now on.
     shortNameAmbiguous[short] = true
     nameToIlvl[short] = nil
     nameToSetBonus[short] = nil
@@ -353,7 +367,7 @@ end
 -- (SafeUnitName returns nil for a secret, cached names were stored through it),
 -- but "believed" is not a guard for something that hard-errors, and the write
 -- path is cheap. A secret name simply carries no data we could use anyway.
-local function StoreNameIlvl(name, ilvl, guid)
+local function StoreNameIlvl(name, ilvl, guid, mayInvalidate)
     if not name or not ilvl then return end
     if isSecretValue(name) then return end
     local shortName = StripRealm(name)
@@ -362,13 +376,13 @@ local function StoreNameIlvl(name, ilvl, guid)
     if shortName ~= name then
         nameToIlvl[name] = ilvl
     end
-    if ClaimShortName(shortName, guid) then
+    if ClaimShortName(shortName, guid, mayInvalidate ~= false) then
         nameToIlvl[shortName] = ilvl
     end
 end
 
 -- Mirror of StoreNameIlvl for set bonus. sb may be nil (clears entry).
-local function StoreNameBonus(name, sb, guid)
+local function StoreNameBonus(name, sb, guid, mayInvalidate)
     if not name then return end
     if isSecretValue(name) then return end
     local shortName = StripRealm(name)
@@ -376,7 +390,7 @@ local function StoreNameBonus(name, sb, guid)
     if shortName ~= name then
         nameToSetBonus[name] = sb
     end
-    if ClaimShortName(shortName, guid) then
+    if ClaimShortName(shortName, guid, mayInvalidate ~= false) then
         nameToSetBonus[shortName] = sb
     end
 end
@@ -425,14 +439,17 @@ local function RebuildNameIlvlMap()
         -- Fallback: cache entries whose unit token is gone (left group, solo, etc.)
         for guid, cached in pairs(ilvlCache) do
             if not seenGuids[guid] and cached.ilvl and cached.name then
-                StoreNameIlvl(cached.name, cached.ilvl, guid)
-                StoreNameBonus(cached.name, setBonusCache[guid], guid)
+                -- false: this player is not in the group and not on any bar
+                -- right now, so they may fill an unclaimed short name but never
+                -- take one away from someone who is.
+                StoreNameIlvl(cached.name, cached.ilvl, guid, false)
+                StoreNameBonus(cached.name, setBonusCache[guid], guid, false)
                 -- Cross-realm: cached.name may be "Name-Realm". Also store short
                 -- name so Details! bars (which show only "Name") still match.
                 local shortName = StripRealm(cached.name)
                 if shortName ~= cached.name then
-                    StoreNameIlvl(shortName, cached.ilvl, guid)
-                    StoreNameBonus(shortName, setBonusCache[guid], guid)
+                    StoreNameIlvl(shortName, cached.ilvl, guid, false)
+                    StoreNameBonus(shortName, setBonusCache[guid], guid, false)
                 end
             end
         end
@@ -2311,7 +2328,7 @@ SlashCmdList["DILVL"] = function(msg)
                 -- our name lookup and may not. nameSkip counts rows we left
                 -- alone for exactly that reason — a number there is the safety
                 -- rule working, not a fault.
-                print(string.format("    windows: %d  frames: %d  GUID: %d (%d api)  tagged: %d  secret: %d  nameSkip: %d",
+                print(string.format("    windows: %d  frames: %d  GUID: %d (%d api)  tagged: %d  secret: %d  nameSkip: %d(session)",
                     windows, frames, hasGuid, apiGuid or 0, hasTag, secretName, nameSkips or 0))
                 print(string.format("    combat: group=%s  self=%s  ICL=%s  encounter=%s%s  unitFlags=%s  members=%d",
                     ci.groupCombat and "YES" or "no",
@@ -2883,46 +2900,100 @@ Details_iLvlDisplayAPI = {
             prefix, count = "party", GetNumGroupMembers() - 1
         end
         if prefix then
+            -- Collect ALL matches instead of taking the first. Two players from
+            -- different realms share a short name ("Torvi-Onyxia" and
+            -- "Torvi-Draenor" both answer to "Torvi"), and returning whichever
+            -- unit index came first was a silent coin flip: the caller then
+            -- painted one player's item level under the other's name — a wrong
+            -- number under a right name, the hardest kind to notice.
+            --
+            -- StoreNameIlvl already refuses exactly this ambiguity for the
+            -- Details! bars; without this the two surfaces answered the same
+            -- collision differently.
+            local found, ambiguous = nil, false
             for i = 1, count do
                 local unit = prefix .. i
-                local uName = SafeUnitName(unit)
-                if uName == cleanName then
-                    -- UnitGUID(unit) can be SECRET for a restricted group member;
-                    -- SafeUnitGUID returns nil there. Never hand back a secret —
-                    -- every caller (BlizzDM, Danders) compares it or uses it as a
-                    -- table key and would throw. Fall through to the ilvlCache
-                    -- reverse-lookup, which may still hold a usable plain GUID.
-                    local g = SafeUnitGUID(unit)
-                    if g then return g end
-                    break
+                local uName, uRealm = SafeUnitName(unit)
+                if uName then
+                    -- Prefer an EXACT match including the realm. BlizzDM usually
+                    -- hands us "Name-Realm", and that form cannot collide — so
+                    -- only fall back to short matching when the caller gave us
+                    -- no realm to work with.
+                    local uFull = (uRealm and uRealm ~= "") and (uName .. "-" .. uRealm) or uName
+                    if uFull == name then
+                        local g = SafeUnitGUID(unit)
+                        if g then return g end
+                        break
+                    end
+                    if uName == cleanName then
+                        -- UnitGUID(unit) can be SECRET for a restricted group
+                        -- member; SafeUnitGUID returns nil there. Never hand back
+                        -- a secret — every caller compares it or uses it as a
+                        -- table key and would throw.
+                        local g = SafeUnitGUID(unit)
+                        if g then
+                            if found and found ~= g then
+                                ambiguous = true
+                                break
+                            end
+                            found = found or g
+                        end
+                    end
                 end
             end
+            if ambiguous then return nil end
+            if found then return found end
         end
         -- Fallback: reverse lookup from ilvlCache (players who left group)
         if ilvlCache then
+            -- Exact full-name match first: it carries the realm and cannot
+            -- collide, so it is always safe to trust.
             for guid, cached in pairs(ilvlCache) do
-                if cached.name and StripRealm(cached.name) == cleanName then
+                if cached.name == name then
                     return guid
                 end
             end
+            -- Then short form, with the same ambiguity rule as the roster loop
+            -- above. The old comment here said we "accept this fuzzy match,
+            -- better a tag than no tag" — but the tag it produced could belong
+            -- to the wrong player, and a wrong number under a right name is
+            -- worse than no number at all.
+            local cFound, cAmbiguous = nil, false
+            for guid, cached in pairs(ilvlCache) do
+                if cached.name and StripRealm(cached.name) == cleanName then
+                    if cFound and cFound ~= guid then
+                        cAmbiguous = true
+                        break
+                    end
+                    cFound = cFound or guid
+                end
+            end
+            if cAmbiguous then return nil end
+            if cFound then return cFound end
+
             -- Cross-realm asymmetry: input is "Name-Realm" but cached.name
             -- may be bare "Name" (legacy [DETAILS]-source entries written
             -- before the realm-enrichment fix, or post-disband entries we
             -- couldn't enrich because the player was not in the roster at
-            -- write time). Strip realm from input, retry as last resort.
-            -- Same-name on different realms collides — for historical
-            -- BlizzDM view we accept this fuzzy match (better a tag than
-            -- no tag for a frame that is no longer in the live roster).
+            -- write time). Strip realm from input, retry as last resort —
+            -- with the same ambiguity rule, for the same reason.
             local inputBare = cleanName:match("^([^%-]+)")
             if inputBare and inputBare ~= cleanName then
+                local bFound, bAmbiguous = nil, false
                 for guid, cached in pairs(ilvlCache) do
                     if cached.name then
                         local cachedBare = StripRealm(cached.name)
                         if cachedBare == inputBare then
-                            return guid
+                            if bFound and bFound ~= guid then
+                                bAmbiguous = true
+                                break
+                            end
+                            bFound = bFound or guid
                         end
                     end
                 end
+                if bAmbiguous then return nil end
+                if bFound then return bFound end
             end
         end
         return nil

@@ -1594,8 +1594,17 @@ API.GetBlizzDMDebug = function()
                     elseif isLocal then
                         resolved = true
                     elseif cacheName then
-                        resolved = true
-                        path = "CACHE-NAME"
+                        -- Mirror InjectIlvl's trust rule exactly. Without this
+                        -- the dump reported CACHE-NAME for rows the real code
+                        -- now refuses to touch — a report that describes
+                        -- behaviour the addon no longer has is worse than no
+                        -- report, because it is what we reason from.
+                        if frame._dilvlGUIDFromAPI or isLocal then
+                            resolved = true
+                            path = "CACHE-NAME"
+                        else
+                            path = "NAME-SKIP"
+                        end
                     end
                     if resolved and path ~= "CACHE-NAME" then
                         -- Check FontString path
