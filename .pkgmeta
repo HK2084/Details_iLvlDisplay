@@ -4,6 +4,14 @@ manual-changelog:
   filename: CHANGELOG.md
   markup-type: markdown
 
+# What the user downloads is guarded by tools/lint-package-contents.sh, which
+# runs in CI before the packager. It works from an ALLOWLIST (.lua/.toc/.xml,
+# media, CHANGELOG/README/LICENSE) and fails the release on anything else, so a
+# new file cannot ship by accident. Internal analysis belongs under docs/.
+#
+# Why the guard exists: v1.5.5 shipped 217 KB of German-language internal review
+# documents. The download was 234 KB where 144 KB was the addon — 38 % of what
+# every user pulled was working notes they will never read.
 ignore:
   - .github
   - .gitignore
@@ -11,6 +19,7 @@ ignore:
   - .pkgmeta
   - .release
   - tools
+  - docs
   - logo.png
   - icon_source.png
   - claude_prompt.txt

@@ -42,6 +42,15 @@ jobs:
       - name: Secret-mixin invariant (taint guard)
         run: bash tools/lint-secret-mixin.sh
 
+      # Layer-2 package-contents invariant. The two gates above protect the user
+      # from crashes; this one protects them from the download. v1.5.5 shipped
+      # 217 KB of internal review documents because nobody added them to the
+      # ignore list — 38 % of the zip. An allowlist cannot be forgotten the way a
+      # denylist can: anything that is not addon content fails the release until
+      # it is moved under docs/ or deliberately declared.
+      - name: Package-contents invariant (no internal files in the zip)
+        run: bash tools/lint-package-contents.sh
+
       - uses: BigWigsMods/packager@v2
         with:
           args: -p 1501917 -n "{package-name}-{project-version}{nolib}{classic}:{package-name}-{project-version}{nolib}{classic}"
