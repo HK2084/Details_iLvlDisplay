@@ -1061,85 +1061,150 @@ local function BackfillIdentity()
                 bfWhy.noSources = bfWhy.noSources + 1 return
             end
 
-            -- How often each class+spec occurs across the whole list. A pair that
-            -- occurs exactly ONCE identifies its source no matter how the list is
-            -- ordered — and order-independence is the whole point, because the
-            -- damage totals we used to confirm with stay secret for good once they
-            -- were recorded in restricted combat. Measured, not assumed: the
-            -- counter read totalSecret=489 during the fight and 621 AFTER it, with
-            -- every combat flag back to "no", so waiting does not help.
-            -- classFilename and specIconID are the two fields Blizzard marks
-            -- NeverSecret (DamageMeterDocumentation.lua:202-203), so they stay
-            -- readable exactly when everything else does not.
-            local comboCount = {}
-            for _, s in ipairs(sources) do
+            -- Group the sources by the two fields Blizzard marks NeverSecret
+            -- (DamageMeterDocumentation.lua:202-203). They stay readable exactly
+            -- when everything else does not — the damage totals we used to confirm
+            -- with stay secret for good once they were recorded in restricted
+            -- combat. Measured, not assumed: the counter read totalSecret=489
+            -- during the fight and 621 AFTER it, every combat flag back to "no".
+            --
+            -- n counts ALL members of a group, guids only the ones we can name.
+            -- Both are needed: n decides uniqueness, guids decide elimination, and
+            -- a group holding a member we cannot name (blind) can do neither.
+            local groups, srcKey = {}, {}
+            for i, s in ipairs(sources) do
                 if s and not isSecret(s) then
                     local c, sp = s.classFilename, s.specIconID
                     if c ~= nil and sp ~= nil and not isSecret(c) and not isSecret(sp) then
                         local key = tostring(c) .. "\0" .. tostring(sp)
-                        comboCount[key] = (comboCount[key] or 0) + 1
+                        srcKey[i] = key
+                        local g = groups[key]
+                        if not g then g = {guids = {}, n = 0, blind = false} groups[key] = g end
+                        g.n = g.n + 1
+                        local sg = s.sourceGUID
+                        if sg and not isSecret(sg) then
+                            g.guids[#g.guids + 1] = sg
+                        else
+                            g.blind = true
+                        end
                     end
                 end
             end
 
+            -- Identities already established are FACTS, and facts about one row
+            -- constrain the others: a player already shown on one line cannot also
+            -- be on another. Collect them before deciding anything.
+            local claimed, pending = {}, {}
             SafeBlizzCall("BackfillEntryFrames", sw.ForEachEntryFrame, sw,
                 function(frame)
                     if frame.spellID ~= nil then return end
-                    if frame._dilvlGUIDFromAPI then return end
+                    if frame._dilvlGUIDFromAPI then
+                        local g = frame._dilvlGUID
+                        if g and not isSecret(g) then claimed[g] = true end
+                        return
+                    end
+                    pending[#pending + 1] = frame
+                end)
+
+            -- Fixpoint. Every acceptance adds a constraint that may decide another
+            -- row (three players of one spec, two already known → the third
+            -- follows), so sweep until a full pass changes nothing.
+            local reason = {}
+            local progress = true
+            while progress do
+                progress = false
+                for i = #pending, 1, -1 do
+                    local frame = pending[i]
+                    local why, guid, src
 
                     local idx = frame.index
                     if not idx or isSecret(idx) then
-                        bfWhy.noIndex = bfWhy.noIndex + 1 return
-                    end
-                    local src = sources[idx]
-                    if not src or isSecret(src) then
-                        bfWhy.noSrc = bfWhy.noSrc + 1 return
-                    end
-
-                    -- The row and the source must agree on class AND spec before
-                    -- anything else is considered.
-                    local class, fClass = src.classFilename, frame.classFilename
-                    local spec, fSpec = src.specIconID, frame.specIconID
-                    if class == nil or fClass == nil or spec == nil or fSpec == nil
-                        or isSecret(class) or isSecret(fClass)
-                        or isSecret(spec) or isSecret(fSpec) then
-                        bfWhy.classSecret = bfWhy.classSecret + 1 return
-                    end
-                    if class ~= fClass then
-                        bfWhy.classDiff = bfWhy.classDiff + 1 return
-                    end
-                    if spec ~= fSpec then
-                        bfWhy.specDiff = bfWhy.specDiff + 1 return
+                        why = "noIndex"
+                    else
+                        src = sources[idx]
+                        if not src or isSecret(src) then why = "noSrc" end
                     end
 
-                    -- Agreement at a position is not yet proof — the list may have
-                    -- been reordered since this frame was last filled, and another
-                    -- player of the same class and spec could now sit there. One of
-                    -- two things has to settle it:
-                    --   * the damage totals match, which pins the row exactly
-                    --     (only possible when they are readable), or
-                    --   * this class+spec occurs exactly once in the whole list, so
-                    --     no reordering could put anyone else here.
-                    -- Neither available means we cannot attribute the row, and an
-                    -- unattributed row stays untouched.
-                    local total, fTotal = src.totalAmount, frame.value
-                    local totalsAgree = total ~= nil and fTotal ~= nil
-                        and not isSecret(total) and not isSecret(fTotal)
-                        and total == fTotal
-                    local unique = comboCount[tostring(class) .. "\0" .. tostring(spec)] == 1
-                    if not (totalsAgree or unique) then
-                        bfWhy.ambiguous = bfWhy.ambiguous + 1 return
+                    if not why then
+                        -- The row and the source must agree on class AND spec
+                        -- before anything else is considered.
+                        local class, fClass = src.classFilename, frame.classFilename
+                        local spec, fSpec = src.specIconID, frame.specIconID
+                        if class == nil or fClass == nil or spec == nil or fSpec == nil
+                            or isSecret(class) or isSecret(fClass)
+                            or isSecret(spec) or isSecret(fSpec) then
+                            why = "classSecret"
+                        elseif class ~= fClass then
+                            why = "classDiff"
+                        elseif spec ~= fSpec then
+                            why = "specDiff"
+                        end
                     end
 
-                    local guid = src.sourceGUID
-                    if not guid then bfWhy.guidNil = bfWhy.guidNil + 1 return end
-                    if isSecret(guid) then bfWhy.guidSecret = bfWhy.guidSecret + 1 return end
+                    if not why then
+                        guid = src.sourceGUID
+                        if not guid then why = "guidNil"
+                        elseif isSecret(guid) then why = "guidSecret" end
+                    end
 
-                    local owner = src.name
-                    if owner ~= nil and isSecret(owner) then owner = nil end
-                    SetFrameGUID(frame, guid, true, owner)
-                    identityBackfills = identityBackfills + 1
-                end)
+                    if not why then
+                        -- Agreement at a position is not proof on its own: the list
+                        -- may have been reordered since this frame was last filled,
+                        -- and another player of the same class and spec could now
+                        -- sit there. Exactly one of these has to settle it.
+                        local g = groups[srcKey[idx]]
+                        local decided = false
+
+                        -- 1. Nobody else has this class+spec, so no reordering
+                        --    could put anyone else on this row.
+                        if g and g.n == 1 then
+                            decided = true
+
+                        -- 2. Elimination: every OTHER player with this class+spec is
+                        --    already accounted for on another row, so this one is
+                        --    the only candidate left. Requires the group to be fully
+                        --    named — an unnamed member could be the real occupant.
+                        elseif g and not g.blind and #g.guids == g.n and not claimed[guid] then
+                            local free = 0
+                            for _, cand in ipairs(g.guids) do
+                                if not claimed[cand] then free = free + 1 end
+                            end
+                            decided = (free == 1)
+                        end
+
+                        -- 3. The damage totals pin the row exactly. Unavailable once
+                        --    they were recorded in restricted combat, but they do
+                        --    fire on unrestricted sessions.
+                        if not decided then
+                            local total, fTotal = src.totalAmount, frame.value
+                            decided = total ~= nil and fTotal ~= nil
+                                and not isSecret(total) and not isSecret(fTotal)
+                                and total == fTotal
+                        end
+
+                        if not decided then why = "ambiguous" end
+                    end
+
+                    if why then
+                        reason[frame] = why
+                    else
+                        local owner = src.name
+                        if owner ~= nil and isSecret(owner) then owner = nil end
+                        SetFrameGUID(frame, guid, true, owner)
+                        claimed[guid] = true
+                        identityBackfills = identityBackfills + 1
+                        table.remove(pending, i)
+                        progress = true
+                    end
+                end
+            end
+
+            -- Count each unresolved row ONCE, with the reason from its final
+            -- evaluation. Counting inside the loop would multiply by sweep.
+            for _, frame in ipairs(pending) do
+                local why = reason[frame]
+                if why then bfWhy[why] = (bfWhy[why] or 0) + 1 end
+            end
         end)
 end
 
