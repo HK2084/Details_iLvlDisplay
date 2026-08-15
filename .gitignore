@@ -11,3 +11,7 @@ test_befehle.md
 # Packager output
 *.zip
 .release/
+
+# Interne Analysen, Reviews, Arbeitsnotizen. Nie committen — das Repo ist
+# oeffentlich. Ablage ausserhalb: e:/dev/gaming/_learnings/dilvl/
+docs/
