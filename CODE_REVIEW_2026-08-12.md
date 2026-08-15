@@ -627,3 +627,68 @@ Optional, sehr billig: `isSecretValue`-Guard bei core.lua:267/279 und die Serial
 - **`ui/`-Dateien** habe ich nicht vollständig gelesen; Lens E hat sie abgedeckt. Die zwei Zitate daraus (`page_diagnostics.lua:185`, `safe_callback.lua:89`) sind ungeprüft übernommen.
 - **`resizeStats`** kann nur der echte Raid beantworten: feuert der Resize-Hook nach dem v1.5.3-Fix wirklich? Das ist der wichtigste Datenpunkt heute Abend, und keine Quellenlektüre ersetzt ihn.
 - **Peer-Commit-Hashes** (Grid2 `62ba513`/`632f1c2`, Plater `3526fff7`, DBM `fea99dd27`, EllesmereUI `c9e30a25`, BigWigs `032c4adbc`) stammen aus Lens B/C; ich habe die Diffs nicht selbst gezogen. Als Signal belastbar, als Zitat nicht von mir verifiziert.
+
+---
+
+## D14 — BlizzDM hat keinen Sicherheitsdurchgang: was beim Rendern verpasst wird, bleibt ungetaggt
+
+**Live beobachtet 2026-08-15** nach einem `/reload` im Raid, solo, außerhalb des Kampfes.
+Im zweiten Blizzard-Fenster fehlten die Plätze 1–4, dauerhaft.
+
+```
+[9]  Arikna-DasSyndikat   guid:yes cache:yes tag:no [CLEAN]  native:1. Arikna-DasSyndikat
+[10] Rifty-Norgannon      guid:yes cache:yes tag:no [CLEAN]  native:2. Rifty-Norgannon
+[11] Lumínara-Norgannon   guid:yes cache:yes tag:no [CLEAN]  native:3. Lumínara-Norgannon
+[12] Skargrimm-Blackrock  guid:yes cache:yes tag:no [CLEAN]  native:4. Skargrimm-Blackrock
+[13] Deadase-Sen'jin      … tag:yes …                        native:5. [281] Deadase-S
+```
+
+`tagged: 21` von 25 — exakt diese vier. GUID vorhanden, Cache vorhanden, Pfad `[CLEAN]`.
+Es fehlt **nur der Schreibvorgang**. Dazu `refresh: passes=3  tagged=0/0  lastPass=73.2s ago`:
+der letzte Durchgang verarbeitete **null** Frames und lief vor über einer Minute.
+
+**Ursache:** `blizzdm.lua` refresht ausschließlich ereignisgesteuert —
+`DAMAGE_METER_CURRENT_SESSION_UPDATED` (:1276), `DAMAGE_METER_RESET` (:1277),
+`ZONE_CHANGED_NEW_AREA` (:1297), Kampfwechsel, der API-Cache-Callback und der
+`UpdateName`-Hook. **Einen periodischen Sicherheitsdurchgang gibt es nicht.**
+
+Rendert Blizzard eine Zeile zu einem Zeitpunkt, nach dem kein solches Ereignis mehr
+folgt — nach einem Reload, solo, außerhalb des Kampfes ist das der Normalfall —, bleibt
+sie ungetaggt, bis zufällig etwas anderes passiert. Der Details!-Kanal hat dieses Problem
+nicht, weil dort der 2-Sekunden-Ticker als Netz dient.
+
+**Nicht neu:** steckt genauso in der veröffentlichten v1.5.4.
+
+**Lösungsskizze (bewusst NICHT heute gebaut):** kein Polling — das widerspricht
+[[feedback_wow_coding_patterns]] „Event-Driven statt Timer". Stattdessen das vorhandene
+`deferredRetryPending`-Muster erweitern: endet ein Durchgang mit Frames, die **auflösbar,
+aber ungetaggt** sind, einen begrenzten Nachlauf bewaffnen (z.B. 3× im Abstand von 3 s),
+und einmalig kurz nach dem Login/Reload einen Durchgang planen, um genau den
+Ladereihenfolge-Fall abzudecken. `ScheduleRefresh` (:1143) setzt nur ein Dirty-Flag und
+weckt den OnUpdate — der Durchgang steigt früh aus, wenn nichts zu tun ist, die Kosten
+sind also gering.
+
+**Warum vertagt:** an diesem Abend gingen bereits neun Code-Änderungen ein, drei davon
+brauchten einen zweiten und dritten Anlauf. Ein Nachlauf-Mechanismus, der falsch
+abbricht, dreht sich im Raid endlos. Das baue ich mit klarem Kopf und einer eigenen
+Testrunde, nicht als zehnte Änderung am Ende einer langen Session.
+
+## D15 — Der CACHE-NAME-Pfad schreibt einen Namen, den wir selbst gewählt haben
+
+Wenn Blizzard den Namen als Secret schützt, bauen wir den kompletten Zeilentext aus dem
+Cache neu: `[iLvl] Name`. Beobachtbar daran, dass diesen Zeilen die **Rangnummer fehlt**
+(`native:[281] Parø` statt `native:7. [281] Parø-Thr`), weil wir sie nicht kennen.
+
+Die Konsequenz ist wichtiger als die Kosmetik: **wir schreiben einen Namen in eine Zeile,
+deren echten Inhalt wir nicht lesen können.** Liegt die GUID-Zuordnung für die Zeile
+daneben, steht dort der falsche Spieler — Hasans Beobachtung „zeigt mich zweimal an,
+einmal als Priest" passt genau dazu, denn das Klassensymbol kommt von Blizzard und nur
+der Text von uns.
+
+**Entscheidung offen (Produktfrage, nicht technisch):**
+1. **Sicher:** Namen nicht lesbar → Zeile unangetastet lassen. Kostet ~7 Tags pro Fenster,
+   kann aber nie einen falschen Namen anzeigen.
+2. **Vollständig:** wie bisher, zusätzlich die Rangnummer mitschreiben. Risiko bleibt.
+
+Empfehlung: **1**. Falsche Daten sind schlimmer als fehlende, und bei einem Damage-Meter
+schaut man zuerst auf Namen.
