@@ -403,3 +403,34 @@ die API dokumentieren und andere für uns integrieren lassen. Wir hängen an Add
 *Alle Datei:Zeile-Angaben wurden am 2026-08-08 gegen den lokalen Stand (TOC 1.5.3) direkt
 verifiziert. CurseForge-Zitate stammen aus einem Live-Pull der Kommentar-API, nicht aus
 Erinnerung. Für Reddit liegt keine Evidenz vor — die Quelle war nicht abrufbar.*
+
+---
+
+## Feature-Idee: alte vs. neue Season-Sets unterscheiden (Hasan, 2026-08-15)
+
+**Wunsch:** Auf einen Blick sehen, ob jemand noch das *alte* Tier-Set trägt oder schon das aktuelle.
+
+**Warum das billig ist:** Die Information liegt bereits vor, wir werfen sie nur weg.
+`U.MIDNIGHT_TIER_SETS` ist schon nach Saison gruppiert (S1 = 1978–1990, S2 = 2055–2067),
+speichert aber nur `true`.
+
+**Umbau, rückwärtskompatibel:** `[id] = true` → `[id] = season` (Zahl). Alle fünf
+Abfragestellen (`core.lua:2450`, `:2518`, `:2532`, `:2544`, `util.lua:179`) nutzen den
+Wert ausschließlich als Wahrheitswert oder zählen Schlüssel — `1`/`2` sind in Lua wahr,
+also **null Änderungen an den Aufrufern**. Danach kann `GetSetBonusForUnit` zusätzlich
+die Saison zurückgeben (`bonus, complete, season`).
+
+**Anzeige (offen, mit Hasan zu entscheiden):** eigener Marker (`[4P·S1]`) oder Farbe
+(aktuell grün, alt grau/orange). Farbe ist platzsparender — die Bar-Breite ist auf
+Details!-Zeilen knapp, und `FitNameText` im kommenden Details!-Rework kürzt zusätzlich.
+
+**⚠ Falle, aus eigener Erfahrung:** „Aktuelle Saison = höchste bekannte ID" ist
+**falsch**. Am 13.08.2026 lagen die S2-IDs bereits im Client, **bevor** die Saison
+startete — Blizzard liefert die Item-Set-Tabelle mit dem Patch, nicht mit dem
+Season-Start. Eine automatische Ableitung hätte die laufende Saison als „alt" markiert.
+Also **explizite Konstante** `U.CURRENT_TIER_SEASON = 2`, die beim Season-Start
+bewusst hochgezählt wird — dieselbe Pflege wie die Whitelist selbst.
+
+**Mischfälle:** 2 Teile S1 + 2 Teile S2 ergeben heute korrekt „2P" (Boni stapeln nicht
+über Sets hinweg, `best` nimmt das Maximum pro setID). Mit Saison-Info sollte der Marker
+die Saison des Sets zeigen, das den Bonus liefert — nicht die des zuletzt gefundenen Teils.
