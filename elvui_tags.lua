@@ -34,15 +34,27 @@ if not API then return end -- core.lua didn't load (shouldn't happen)
 -- variants delegate here so color/setbonus/master-toggle behaviour
 -- stays identical; only the iLvl wrapping differs.
 ---------------------------------------------------------------
+-- Returns nil, never "", when there is nothing to show.
+--
+-- oUF only suppresses a tag's literals on a NIL return: CreateTagFunc reads
+-- `return str and format('%s%s%s', prefix, str, suffix) or nil`
+-- (oUF/elements/tags.lua:707), and "" is truthy in Lua. So an empty string
+-- still prints the literals — a user writing [dilvl<ilvl] would read
+-- "Raza ilvl" with no number on every uninspected frame, forever, with no
+-- error. The oUF docs promise the opposite: literals "will be only displayed
+-- when the function returns a non-nil value".
 local function buildIlvl(unit, withBrackets)
     local db = API.GetDb()
-    if not db or not db.elvuiTag then return "" end
+    -- db.enabled is the addon-wide master switch. It used to be missing here,
+    -- so /dilvl off silenced every other channel and left the ElvUI number
+    -- standing on the frames.
+    if not db or not db.enabled or not db.elvuiTag then return nil end
 
     local guid = API.SafeUnitGUID(unit)  -- secret-safe: nil (not a throw) inside instances
-    if not guid then return "" end
+    if not guid then return nil end
 
     local cached, setBonus = API.GetCacheData(guid)
-    if not cached or not cached.ilvl then return "" end
+    if not cached or not cached.ilvl then return nil end
 
     local num = cached.ilvl
     local body = withBrackets and ("[" .. num .. "]") or tostring(num)

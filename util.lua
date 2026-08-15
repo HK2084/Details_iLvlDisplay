@@ -54,13 +54,35 @@ end
 -- iLvl color by gear tier (legendary / epic / rare / uncommon / poor).
 -- Returns a WoW color escape (no |r — caller appends).
 ----------------------------------------------------------------
-function U.GetIlvlColor(ilvl)
-    if ilvl >= 280 then return "|cFFFF8000"
-    elseif ilvl >= 268 then return "|cFFA335EE"
-    elseif ilvl >= 255 then return "|cFF0070DD"
-    elseif ilvl >= 242 then return "|cFF1EFF00"
-    else return "|cFF9D9D9D"
+-- One table, two readers. Channels that write coloured TEXT need the escape
+-- sequence; Grid2 hands its colours to SetTextColor and needs numbers. Keeping
+-- the thresholds in one place is the point — typing them twice is how the
+-- Grid2 channel ended up permanently white while everything else was coloured.
+-- Ordered high to low; the last row is the catch-all.
+U.ILVL_COLORS = {
+    {280, "FF8000", 1.000, 0.502, 0.000}, -- legendary orange
+    {268, "A335EE", 0.639, 0.208, 0.933}, -- epic purple
+    {255, "0070DD", 0.000, 0.439, 0.867}, -- rare blue
+    {242, "1EFF00", 0.118, 1.000, 0.000}, -- uncommon green
+    {0,   "9D9D9D", 0.616, 0.616, 0.616}, -- poor grey
+}
+
+local function ilvlColorRow(ilvl)
+    for i = 1, #U.ILVL_COLORS do
+        local row = U.ILVL_COLORS[i]
+        if ilvl >= row[1] then return row end
     end
+    return U.ILVL_COLORS[#U.ILVL_COLORS]
+end
+
+function U.GetIlvlColor(ilvl)
+    return "|cFF" .. ilvlColorRow(ilvl)[2]
+end
+
+-- r, g, b, a for widget APIs that take numbers (Grid2 SetTextColor).
+function U.GetIlvlColorRGB(ilvl)
+    local row = ilvlColorRow(ilvl)
+    return row[3], row[4], row[5], 1
 end
 
 ----------------------------------------------------------------

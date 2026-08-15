@@ -2787,6 +2787,9 @@ Details_iLvlDisplayAPI = {
     end,
     -- Shared color function so ElvUI tag uses the same tier colors.
     GetIlvlColor = GetIlvlColor,
+    -- RGB variant for widget APIs that take numbers instead of an escape
+    -- sequence (Grid2 SetTextColor). Same thresholds, one source: util.ILVL_COLORS.
+    GetIlvlColorRGB = util.GetIlvlColorRGB,
     -- Shared realm stripper. Every channel must use this and never Ambiguate
     -- directly — see util.StripRealm.
     StripRealm = StripRealm,
