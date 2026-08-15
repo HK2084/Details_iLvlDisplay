@@ -397,6 +397,18 @@ end
 --   3. sourceName → roster lookup via Ambiguate (fallback)
 -- Returns guid or nil.
 ---------------------------------------------------------------
+-- Single writer for a frame's identity. Every write MUST go through here so
+-- the GUID and its trust flag can never drift apart. They did: five
+-- assignments in ResolveFrameGUID and one clear in the session-switch handler
+-- set or cleared the GUID while leaving _dilvlGUIDFromAPI untouched, so a
+-- guessed GUID could inherit a stale "authoritative" mark and then be allowed
+-- to write a player name.
+local function SetFrameGUID(frame, guid, fromAPI)
+    frame._dilvlGUID = guid
+    frame._dilvlGUIDFromAPI = (guid and fromAPI) or nil
+    return guid
+end
+
 local function ResolveFrameGUID(frame)
     -- isLocalPlayer is NeverSecret, set by Blizzard's Init
     if frame.isLocalPlayer == true then
@@ -422,8 +434,7 @@ local function ResolveFrameGUID(frame)
         if nameReadable then
             local freshGUID = API.ResolveGUIDByName(name)
             if freshGUID and freshGUID ~= cachedGUID then
-                frame._dilvlGUID = freshGUID
-                return freshGUID
+                return SetFrameGUID(frame, freshGUID, false)
             end
         end
         return cachedGUID
@@ -432,7 +443,7 @@ local function ResolveFrameGUID(frame)
     -- No cached GUID — resolve from sourceName
     if nameReadable then
         local guid = API.ResolveGUIDByName(name)
-        if guid then frame._dilvlGUID = guid end
+        if guid then SetFrameGUID(frame, guid, false) end
         return guid
     end
 
@@ -445,8 +456,7 @@ local function ResolveFrameGUID(frame)
         if parsed and parsed ~= "" then
             local guid = API.ResolveGUIDByName(parsed)
             if guid then
-                frame._dilvlGUID = guid
-                return guid
+                return SetFrameGUID(frame, guid, false)
             end
         end
     end
@@ -465,8 +475,7 @@ local function ResolveFrameGUID(frame)
                 -- Try full name first (e.g. "Phaenthar-Silvermoon")
                 local guid = API.ResolveGUIDByName(parsed)
                 if guid then
-                    frame._dilvlGUID = guid
-                    return guid
+                    return SetFrameGUID(frame, guid, false)
                 end
                 -- Fallback: FontString may truncate realm names (e.g. "Тобальд-Гордун"
                 -- instead of "Тобальд-Гордунни"). Strip realm and try name-only.
@@ -474,8 +483,7 @@ local function ResolveFrameGUID(frame)
                 if nameOnly and nameOnly ~= parsed then
                     guid = API.ResolveGUIDByName(nameOnly)
                     if guid then
-                        frame._dilvlGUID = guid
-                        return guid
+                        return SetFrameGUID(frame, guid, false)
                     end
                 end
             end
@@ -515,13 +523,11 @@ if DamageMeterSourceEntryMixin then
     hooksecurefunc(DamageMeterSourceEntryMixin, "Init", function(self, combatSource)
         -- A recycled frame must never keep the previous player's identity, so
         -- clear first and only set again on success.
-        self._dilvlGUID = nil
-        self._dilvlGUIDFromAPI = nil
+        SetFrameGUID(self, nil, false)
         if not combatSource or isSecret(combatSource) then return end
         local guid = combatSource.sourceGUID
         if guid and not isSecret(guid) then
-            self._dilvlGUID = guid
-            self._dilvlGUIDFromAPI = true
+            SetFrameGUID(self, guid, true)
         end
     end)
 end
@@ -744,7 +750,13 @@ end
 -- with the same sourceName. Fixes: left-position causes frame A to fail while
 -- frame B (same player, different window) succeeds — without propagation,
 -- frame A hits MAX_RESOLVE_FAILS and gives up permanently.
-local function PropagateGUID(sourceName, guid)
+-- fromAPI: whether the GUID being spread came from Blizzard's combatSource or
+-- from our own name lookup. It MUST travel with the GUID. Without it this
+-- function silently broke the trust rule in both directions: a guessed GUID
+-- landing on a frame that still carried _dilvlGUIDFromAPI = true would look
+-- authoritative and be allowed to write a player name, and a correct
+-- Blizzard-supplied GUID could be replaced by a worse one.
+local function PropagateGUID(sourceName, guid, fromAPI)
     if not sourceName or not guid then return end
     if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
     DamageMeter:ForEachSessionWindow(function(sw)
@@ -752,8 +764,12 @@ local function PropagateGUID(sourceName, guid)
         sw:ForEachEntryFrame(function(f)
             if f.sourceName and not isSecret(f.sourceName)
                and f.sourceName == sourceName and f._dilvlGUID ~= guid then
+                -- Never downgrade: a frame that got its identity straight from
+                -- Blizzard keeps it. Init re-runs on every recycle, so that
+                -- value is at least as fresh as anything we could spread.
+                if f._dilvlGUIDFromAPI and not fromAPI then return end
                 local prev = f._dilvlGUID
-                f._dilvlGUID = guid
+                SetFrameGUID(f, guid, fromAPI)
                 if traceEnabled then
                     trace(format("PropagateGUID: %s → frame (was %s)",
                         sourceName and tostring(sourceName):sub(1,15) or "?",
@@ -793,7 +809,7 @@ local function InjectIlvl(frame)
     -- Reset fail counter on success + propagate GUID to sibling frames
     if snKey then
         nameResolveFails[snKey] = nil
-        PropagateGUID(sn, guid)
+        PropagateGUID(sn, guid, frame._dilvlGUIDFromAPI)
     end
 
     local tag = BuildTag(guid)
@@ -1036,8 +1052,7 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
         if name and not isSecret(name) then
             local guid = API.ResolveGUIDByName(name)
             if guid then
-                self._dilvlGUID = guid
-                self._dilvlGUIDFromAPI = nil -- explicit: this one is a guess
+                SetFrameGUID(self, guid, false)
             end
         end
     end
@@ -1394,7 +1409,7 @@ if DamageMeter.ForEachSessionWindow then
                         -- pass) beats confidently-wrong data. Out of combat — where
                         -- most session switches happen — sourceName is readable, so
                         -- the re-resolve is immediate with no visible gap.
-                        frame._dilvlGUID = nil
+                        SetFrameGUID(frame, nil, false)
                         frame._dilvlFontFile = nil
                         frame._dilvlFontSize = nil
                         frame._dilvlFontFlags = nil
