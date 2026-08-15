@@ -1031,11 +1031,40 @@ local identityBackfills = 0
 -- Why a backfill attempt gave up. Every early return below bumps exactly one of
 -- these, so a single debug line says where the chain breaks instead of leaving
 -- us to guess which of six preconditions failed.
+-- `direct` is the one success counter here: rows the ScrollBox answered for
+-- outright. Everything after it is a reason we could NOT decide a row.
 local bfWhy = {
+    direct = 0,
     combat = 0, noApi = 0, noSession = 0, secretSession = 0, noSources = 0,
     noIndex = 0, noSrc = 0, classSecret = 0, classDiff = 0, specDiff = 0,
     ambiguous = 0, guidNil = 0, guidSecret = 0,
 }
+
+-- Blizzard's own frame-to-data mapping, and the reason none of the guesswork
+-- below should normally be needed.
+--
+-- ScrollBox installs GetElementData on every frame it hands out, as a CLOSURE
+-- over the exact elementData that frame was filled with (ScrollBoxListView.lua
+-- :80-84). Blizzard's comment there: "Views require this function to relate data
+-- provider elements with their frame counterpart." Because it is a closure and
+-- not an index lookup, re-sorting the list cannot desync it.
+--
+-- It is installed in AcquireInternal (:386) BEFORE the initializer runs — the
+-- initializer itself reads it (:397) — so it is already live when our Init hook
+-- fires, and it is set back to nil when the frame is released (:120-124). Its
+-- absence therefore means "this frame is not bound to any row", which is exactly
+-- the liveness check we want before writing to it.
+--
+-- The damage meter's element data IS the DamageMeterCombatSource: BuildDataProvider
+-- inserts the combatSource table itself (DamageMeterSessionWindow.lua:646), and the
+-- window uses a LINEAR view (:336), so no tree-node unwrapping applies.
+local function ElementDataOf(frame)
+    local fn = frame.GetElementData
+    if type(fn) ~= "function" then return nil end
+    local ok, data = pcall(fn, frame)
+    if not ok or not data or isSecret(data) then return nil end
+    return data
+end
 
 local function BackfillIdentity()
     if IsGroupInCombat() then bfWhy.combat = bfWhy.combat + 1 return end
@@ -1048,6 +1077,37 @@ local function BackfillIdentity()
             end
             -- Edit mode hands back a mock session (DamageMeterSessionWindow.lua:564).
             if sw.IsEditing and sw:IsEditing() then return end
+
+            -- Ask the frame what it is showing. No index, no ordering assumption,
+            -- no inference — this is the framework's own answer.
+            local claimed, pending = {}, {}
+            SafeBlizzCall("BackfillDirect", sw.ForEachEntryFrame, sw,
+                function(frame)
+                    if frame.spellID ~= nil then return end
+                    if frame._dilvlGUIDFromAPI then
+                        local g = frame._dilvlGUID
+                        if g and not isSecret(g) then claimed[g] = true end
+                        return
+                    end
+
+                    local src = ElementDataOf(frame)
+                    local guid = src and src.sourceGUID
+                    if guid and not isSecret(guid) then
+                        local owner = src.name
+                        if owner ~= nil and isSecret(owner) then owner = nil end
+                        SetFrameGUID(frame, guid, true, owner)
+                        claimed[guid] = true
+                        identityBackfills = identityBackfills + 1
+                        bfWhy.direct = bfWhy.direct + 1
+                        return
+                    end
+
+                    pending[#pending + 1] = frame
+                end)
+
+            -- Everything answered directly: the inference below is not needed and
+            -- its cost (a session fetch plus a full grouping pass) is not paid.
+            if #pending == 0 then return end
 
             local okSession, session = pcall(sw.GetCombatSession, sw)
             if not okSession or not session then
@@ -1091,20 +1151,10 @@ local function BackfillIdentity()
                 end
             end
 
-            -- Identities already established are FACTS, and facts about one row
-            -- constrain the others: a player already shown on one line cannot also
-            -- be on another. Collect them before deciding anything.
-            local claimed, pending = {}, {}
-            SafeBlizzCall("BackfillEntryFrames", sw.ForEachEntryFrame, sw,
-                function(frame)
-                    if frame.spellID ~= nil then return end
-                    if frame._dilvlGUIDFromAPI then
-                        local g = frame._dilvlGUID
-                        if g and not isSecret(g) then claimed[g] = true end
-                        return
-                    end
-                    pending[#pending + 1] = frame
-                end)
+            -- `claimed` and `pending` are already filled by the direct pass above:
+            -- claimed holds every identity we know for a fact, pending the rows the
+            -- framework could not answer for. Identities are also CONSTRAINTS — a
+            -- player shown on one line cannot also be on another.
 
             -- Fixpoint. Every acceptance adds a constraint that may decide another
             -- row (three players of one spec, two already known → the third
@@ -1963,7 +2013,8 @@ API.GetBlizzDMDebug = function()
 
     -- Only the reasons that actually fired, in the order the chain checks them,
     -- so the first non-zero entry IS the place it breaks.
-    local bfOrder = {"combat", "noApi", "noSession", "secretSession", "noSources",
+    local bfOrder = {"direct",
+        "combat", "noApi", "noSession", "secretSession", "noSources",
         "noIndex", "noSrc", "classSecret", "classDiff", "specDiff", "ambiguous",
         "guidNil", "guidSecret"}
     local bfReason = ""

@@ -2330,10 +2330,11 @@ SlashCmdList["DILVL"] = function(msg)
                 -- rule working, not a fault.
                 print(string.format("    windows: %d  frames: %d  GUID: %d (%d api, %d backfill)  tagged: %d  secret: %d  nameSkip: %d(session)",
                     windows, frames, hasGuid, apiGuid or 0, backfills or 0, hasTag, secretName, nameSkips or 0))
-                -- Where the identity backfill gives up. First non-zero entry is
-                -- the link that breaks — the checks run in this order.
+                -- direct = rows the ScrollBox answered for outright. Everything
+                -- after it is a reason a row could NOT be decided, in the order
+                -- the checks run, so the first one is where it breaks.
                 if bfReason and bfReason ~= "" then
-                    print("    backfill stops at: " .. bfReason)
+                    print("    backfill: " .. bfReason)
                 end
                 print(string.format("    combat: group=%s  self=%s  ICL=%s  encounter=%s%s  unitFlags=%s  members=%d",
                     ci.groupCombat and "YES" or "no",
