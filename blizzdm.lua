@@ -1498,21 +1498,39 @@ if DamageMeter.ForEachSessionWindow then
                 -- re-resolves everything fresh via Ambiguate API.
                 if sw.ForEachEntryFrame then
                     sw:ForEachEntryFrame(function(frame)
-                        -- Clear unconditionally. A ScrollBox-recycled frame can
-                        -- represent a DIFFERENT player while its sourceName is still
-                        -- secret, so a preserved GUID would paint the previous
-                        -- occupant's iLvl onto the wrong bar. Erring toward "no data"
-                        -- (re-resolved fresh by InjectIlvl on the next readable-name
-                        -- pass) beats confidently-wrong data. Out of combat — where
-                        -- most session switches happen — sourceName is readable, so
-                        -- the re-resolve is immediate with no visible gap.
-                        SetFrameGUID(frame, nil, false)
-                        frame._dilvlFontFile = nil
-                        frame._dilvlFontSize = nil
-                        frame._dilvlFontFlags = nil
-                        frame._dilvlTextScale = nil
-                        frame._dilvlTextColor = nil
-                        frame._dilvlColorSetByAddon = nil
+                        -- A guessed GUID carries no guarantee that it still belongs
+                        -- to this row, so it goes: a recycled frame can represent a
+                        -- DIFFERENT player while sourceName is still secret, and a
+                        -- preserved guess would paint the previous occupant's item
+                        -- level onto the wrong bar.
+                        --
+                        -- An API identity is the opposite case and must SURVIVE.
+                        -- Refresh re-Inits every frame BEFORE this post-hook body
+                        -- runs (DamageMeterSessionWindow.lua:747-750, and :762 →
+                        -- SetDataProvider → the initializer, which ScrollBox runs
+                        -- synchronously), so CaptureIdentityAndInject has already
+                        -- cleared and re-established each frame's identity from
+                        -- Blizzard's own combatSource. Wiping again here deleted
+                        -- exactly that, in the same call stack, a moment later.
+                        --
+                        -- That is why every live dump read "(0 api)": the identity
+                        -- survived only on rows the ScrollBox acquired by SCROLLING,
+                        -- the one path that never goes through Refresh — which is
+                        -- also why a dump taken right after scrolling read "(4 api)"
+                        -- for exactly the four newly exposed rows. The consequence
+                        -- was not wrong data but no data: with no API identity, a
+                        -- row whose name Blizzard still protects after a fight has
+                        -- nothing to be attributed by, so it stays untagged even
+                        -- though its item level is sitting in our cache.
+                        if not frame._dilvlGUIDFromAPI then
+                            SetFrameGUID(frame, nil, false, nil)
+                            frame._dilvlFontFile = nil
+                            frame._dilvlFontSize = nil
+                            frame._dilvlFontFlags = nil
+                            frame._dilvlTextScale = nil
+                            frame._dilvlTextColor = nil
+                            frame._dilvlColorSetByAddon = nil
+                        end
                     end)
                     -- Reset per-player resolve fails (session switch = new context)
                     WipeAllFailCounters("session-switch")

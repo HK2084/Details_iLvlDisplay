@@ -2891,7 +2891,17 @@ Details_iLvlDisplayAPI = {
         if not name then return nil end
         local cleanName = StripRealm(name)
         local pName = SafeUnitName("player")
-        if pName == cleanName then return SafeUnitGUID("player") end
+        -- Claim the local player only on a form that CANNOT belong to anyone
+        -- else. This used to compare the realm-STRIPPED name, so a group member
+        -- "Torvi-Draenor" matched a local player "Torvi" and got our GUID — and
+        -- with it our item level, printed under their name. Blizzard's own
+        -- nameText supplies the name, so the row contradicted itself silently:
+        -- exactly the "wrong number under a right name" this function's roster
+        -- loop below goes to such lengths to avoid.
+        -- A name that still carries a realm is settled further down instead:
+        -- the exact uFull match (the player is enumerated among raid1..N) or,
+        -- failing that, the ilvlCache fallback.
+        if pName and name == pName then return SafeUnitGUID("player") end
         -- Try roster first
         local prefix, count
         if IsInRaid() then
