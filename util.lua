@@ -171,10 +171,31 @@ function U.GetSetBonusForUnit(unit)
         -- parsing needed, immune to item link format changes.
         local itemID = GetInventoryItemID(unit, slotID)
         if itemID and itemID > 0 then
+            -- Ask the client whether it HAS the data, instead of guessing from
+            -- the result. Neither a nil setID nor a present name can answer it:
+            -- an item genuinely without a set returns setID = nil legitimately
+            -- (the player's legs do exactly that), and an item can hand back its
+            -- name while setID is still missing. A first attempt tested `name`
+            -- and was wrong in precisely that way — live on 2026-08-15 the dump
+            -- read "live: 4P (complete=true) stored: false", i.e. a read that
+            -- called itself complete had written the wrong answer moments before.
             -- C_Item.GetItemInfo returns 18 values; setID is at position 16.
             local ok, name, _, _, _, _, _, _, _, _, _, _, _, _, _, _, setID = pcall(C_Item.GetItemInfo, itemID)
-            if not ok or name == nil then
-                -- Item data not in the client cache yet. Not "no set bonus".
+
+            -- Decide whether this slot was READABLE, before trusting its answer.
+            -- If IsItemDataCachedByID is unavailable for any reason, fall back to
+            -- the name heuristic rather than reporting permanent incompleteness —
+            -- a hard "never complete" would freeze the set bonus forever, which
+            -- is a worse failure than the one being fixed.
+            local readable
+            if C_Item.IsItemDataCachedByID then
+                local cachedOk, isCached = pcall(C_Item.IsItemDataCachedByID, itemID)
+                readable = cachedOk and isCached or false
+            else
+                readable = (name ~= nil)
+            end
+
+            if not ok or not readable then
                 complete = false
             elseif setID and U.MIDNIGHT_TIER_SETS[setID] then
                 setPieces[setID] = (setPieces[setID] or 0) + 1
