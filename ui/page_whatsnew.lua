@@ -26,6 +26,9 @@ local HISTORY_URL = "https://www.curseforge.com/wow/addons/details-item-level-pl
 -- version history, not here.
 local function buildEntries()
     return {
+        { ver = "1.5.6", items = {
+            { t = L["WN_156_SEASON"], d = L["WN_156_SEASON_D"] },
+        }},
         { ver = "1.5.0", items = {
             { t = L["WN_150_UI"],     d = L["WN_150_UI_D"] },
             { t = L["WN_150_SIZE"],   d = L["WN_150_SIZE_D"] },

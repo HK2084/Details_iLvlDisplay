@@ -63,6 +63,12 @@ ns.POS_KEYS_SET = {
 -- so a user installing ElvUI later still gets the ElvUI-specific hint.
 ns.LOGIN_HINTS = {
     {
+        -- No gate: this one is not a command to learn, it is a change to what
+        -- the numbers already on screen MEAN, so everyone should see it once.
+        key  = "seasoncolour",                              -- v1.5.6
+        msg  = "Tier set bonuses are now coloured by season — green is the current season's, grey an older one. While someone is switching over you will see both next to each other, oldest first.",
+    },
+    {
         key  = "detailswindow",                             -- v1.5.0
         gate = function() return Details ~= nil end,
         msg  = "/dilvl details window <n|all> — show iLvl on only ONE Details! window instead of all of them (e.g. 'window 1'). 'all' restores the default.",
