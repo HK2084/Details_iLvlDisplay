@@ -2,7 +2,7 @@
 
 Built for **WoW: Midnight (12.0+)**. Five independent output channels — the addon detects what you have installed. Details! and Blizzard's meter come up on their own; the three unit-frame channels are one command away.
 
-**New in v1.5.6:** tier set bonuses are **colour-coded by season** — green for the current season's set, grey for last season's. While someone is switching over, both are shown side by side, so one look at the meter tells you who has already moved across and who is still on the old set.
+**Tier sets are colour-coded by season** — green for the current season's set, grey for last season's. While someone is switching over, both are shown side by side, so one look at the meter tells you who has already moved across and who is still on the old set.
 
 **Don't use Details!?** No problem — the addon falls back to **Blizzard's Damage Meter** (12.0+) and works on top of your unit-frame addon of choice (ElvUI / Grid2 / Danders). Force BlizzDM on with `/dilvl blizzdm`.
 

@@ -1,17 +1,14 @@
 # Changelog
 
-## v1.5.6
+## v1.5.7
 
 ### New
 
-*   **Tier sets are colour-coded by season.** The current season's set bonus renders in green, an older season's in grey. While a player is switching over, both are shown side by side — two older pieces next to two current ones read as a grey `[2P]` followed by a green `[2P]` — so one look at the meter tells you who has already moved across and who is still on last season's set.
-
-### Optimised
-
-*   **Package reduced to runtime files only.** The download is roughly a third smaller: 144 KB.
+*   **The AddOn list is no longer English-only.** The description under the addon's name now reads in German, Russian, Simplified and Traditional Chinese, and Korean — in each case using the client's own wording for item level and set bonus, not a dictionary rendering of the English.
+*   **ElvUI's tag browser explains `[dilvl]` and `[dilvl:plain]` in German.** Those two descriptions — what you read when you search the browser for `dilvl` — were the last text in the addon that stayed English on every client. Any language without a translation falls back to English as before.
 
 ### Fixed
 
-*   **Rank prefixes are read from the client's own format string** instead of assuming a full stop. zhCN and zhTW use a different separator (`1、Name`), which previously broke both the name lookup and the rank display on those clients.
+*   **Nobody is shown under a name the addon invented.** Details! rewrites the text on its own bars: a guild nickname another player set for you, the realm suffix stripped off, a Cyrillic name romanised. That rendered text was being kept as the player's identity for up to seven days and written onto Blizzard's damage-meter rows. Only a name from the group roster or the combat log is stored now — and where there is neither, the row simply keeps no tag. A missing tag is fine, a wrong name is not.
 
 Full release history: [HISTORY.md](HISTORY.md)
