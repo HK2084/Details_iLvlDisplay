@@ -138,6 +138,12 @@ L["WN_143_ELVUI"]               = "ElvUI plain tag"
 L["WN_143_ELVUI_D"]             = "[dilvl:plain] — the bare iLvl number without brackets."
 
 ---------------------------------------------------------------
+-- ElvUI tag browser (elvui_tags.lua registers these with E:AddTagInfo)
+---------------------------------------------------------------
+L["ELVUI_TAG_DILVL_D"]         = "Shows item level and tier set bonus, wrapped in [brackets]. Enable with /dilvl elvui. Respects your /dilvl color and setbonus settings."
+L["ELVUI_TAG_PLAIN_D"]         = "Shows item level and tier set bonus without brackets around the iLvl. Enable with /dilvl elvui. Respects your /dilvl color and setbonus settings."
+
+---------------------------------------------------------------
 -- Magic: missing keys return their own name as fallback so an untranslated
 -- string just shows in English (or the key itself) instead of nil/error.
 -- This is the ecosystem-standard pattern (AceLocale silent=true does the same).

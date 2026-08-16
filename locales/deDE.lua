@@ -133,3 +133,9 @@ L["WN_144_DANDERS"]             = "Danders Frames Textgröße"
 L["WN_144_DANDERS_D"]           = "Einstellbare iLvl-Textgröße plus Anker-Positionen außerhalb des Frames."
 L["WN_143_ELVUI"]               = "ElvUI Plain-Tag"
 L["WN_143_ELVUI_D"]             = "[dilvl:plain] — die nackte iLvl-Zahl ohne Klammern."
+
+---------------------------------------------------------------
+-- ElvUI-Tag-Browser
+---------------------------------------------------------------
+L["ELVUI_TAG_DILVL_D"]         = "Zeigt Gegenstandsstufe und Set-Bonus, in [eckigen Klammern]. Mit /dilvl elvui aktivieren. Beachtet deine Einstellungen für /dilvl color und setbonus."
+L["ELVUI_TAG_PLAIN_D"]         = "Zeigt Gegenstandsstufe und Set-Bonus ohne Klammern um die iLvl. Mit /dilvl elvui aktivieren. Beachtet deine Einstellungen für /dilvl color und setbonus."

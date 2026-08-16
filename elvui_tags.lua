@@ -23,6 +23,8 @@
 -- using that tag. During 3h farming with no group changes: zero extra
 -- calls — and none at all while the feature is switched off.
 
+local _, ns = ...   -- addon namespace; only ns.L is used here
+
 if not ElvUI then return end -- no ElvUI installed → silent exit
 
 local E = unpack(ElvUI)
@@ -84,13 +86,14 @@ E:AddTag("dilvl:plain", "UNIT_INVENTORY_CHANGED", function(unit)
     return buildIlvl(unit, false)
 end)
 
-E:AddTagInfo("dilvl", "Details! iLvl Display",
-    "Shows item level and tier set bonus, wrapped in [brackets]. " ..
-    "Enable with /dilvl elvui. Respects your /dilvl color and setbonus settings.")
+-- Tag-browser text goes through the locale table like the rest of the UI.
+-- These run at FILE SCOPE, which is why locales load ahead of this file in
+-- the TOC; ns.L must already exist here. The identity fallback in enUS.lua
+-- means a missing key degrades to the key, never to nil.
+local L = ns.L
 
-E:AddTagInfo("dilvl:plain", "Details! iLvl Display",
-    "Shows item level and tier set bonus without brackets around the iLvl. " ..
-    "Enable with /dilvl elvui. Respects your /dilvl color and setbonus settings.")
+E:AddTagInfo("dilvl", L["Details! iLvl Display"], L["ELVUI_TAG_DILVL_D"])
+E:AddTagInfo("dilvl:plain", L["Details! iLvl Display"], L["ELVUI_TAG_PLAIN_D"])
 
 ---------------------------------------------------------------
 -- Register callback: core.lua fires all registered callbacks

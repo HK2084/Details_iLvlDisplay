@@ -13,6 +13,13 @@
 ## SavedVariables: Details_iLvlDisplayDB
 
 init.lua
+
+# Locales load HERE, before every consumer. They depend on nothing but the
+# (addonName, ns) varargs, and elvui_tags.lua registers its tag-browser
+# descriptions at file scope - so L must already exist by then.
+locales\enUS.lua
+locales\deDE.lua
+
 secrets.lua
 util.lua
 core.lua
@@ -21,9 +28,6 @@ grid2_status.lua
 danders_integration.lua
 blizzdm.lua
 
-# Locales (load first — pages reference L["..."] strings)
-locales\enUS.lua
-locales\deDE.lua
 
 # Settings UI (load after L is populated)
 ui\theme.lua
