@@ -302,9 +302,10 @@ end
 -- Set bonus display helpers.
 --
 -- Stored form is "4P#2", or "2P#1,2P#2" while two sets both grant a bonus.
--- Values written before seasons were tracked carry no suffix; they are treated
--- as unknown season and render exactly as they always did, so the persisted
--- cache needs no migration.
+-- Values written before seasons were tracked carry no suffix and are treated as
+-- unknown season. The persisted cache still needs no migration, but it does NOT
+-- render as it used to: on the coloured surfaces such an entry now shows no mark
+-- at all until the next inspect rewrites it. See seasonColor below for why.
 ----------------------------------------------------------------
 local function parseSetBonus(sb)
     if type(sb) ~= "string" or sb == "" then return nil end
