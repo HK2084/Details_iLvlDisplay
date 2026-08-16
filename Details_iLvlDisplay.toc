@@ -14,9 +14,10 @@
 
 init.lua
 
-# Locales load HERE, before every consumer. They depend on nothing but the
-# (addonName, ns) varargs, and elvui_tags.lua registers its tag-browser
-# descriptions at file scope - so L must already exist by then.
+# Locales load HERE, before every consumer. They need only the (addonName, ns)
+# varargs and GetLocale(), both available this early, and nothing this addon
+# defines later. elvui_tags.lua registers its tag-browser descriptions at file
+# scope, so L must already exist by then.
 locales\enUS.lua
 locales\deDE.lua
 
