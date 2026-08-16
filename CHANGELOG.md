@@ -4,11 +4,14 @@
 
 ### New
 
-*   **Tier sets from an older season are shown in grey**, the current season's in green. Players swap tier a piece at a time — two old, two new, then four new — and until now the display could not tell you which set a bonus came from. The strongest bonus is still the one shown, so four old pieces plus two new still reads 4P, just in grey.
+*   **Tier sets are colour-coded by season.** The current season's set bonus renders in green, an older season's in grey. During a tier transition the strongest bonus is still the one displayed — four older pieces alongside two current ones still reads 4P, in grey.
+
+### Optimised
+
+*   **Package reduced to runtime files only.** The download is roughly a third smaller: 144 KB.
 
 ### Fixed
 
-*   **The download is a third smaller** — 144 KB instead of 234 KB. Internal development documents were being packaged along with the addon.
-*   **Rank numbers work on Chinese clients.** The game writes them as `1、Name` there rather than `1. Name`, which our name lookup did not recognise, so those rows lost both their numbering and their item level.
+*   **Rank prefixes are read from the client's own format string** instead of assuming a full stop. zhCN and zhTW use a different separator (`1、Name`), which previously broke both the name lookup and the rank display on those clients.
 
 Full release history: [HISTORY.md](HISTORY.md)
