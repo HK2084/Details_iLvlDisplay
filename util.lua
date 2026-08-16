@@ -317,27 +317,67 @@ local function parseSetBonus(sb)
     return out
 end
 
--- Green for the current season, grey for an older one. Grey says "older season"
--- and nothing more — whether Blizzard still grants that bonus in current content
--- is not something we can read, so we do not claim it. 9D9D9D is already the
--- bottom of our item-level scale and reads as dated.
+-- Green for the current season, grey for an older one, and NOTHING for a value
+-- whose season we do not know.
+--
+-- That last case is the one that matters and it nearly shipped wrong. Before
+-- seasons existed green was simply "the colour of a set bonus" — neutral, the
+-- only one there was. The moment grey arrived, green stopped being neutral and
+-- became a claim: "current season". Every entry already sitting in a user's
+-- SavedVariables from v1.5.5 carries no season, and painting those green would
+-- have asserted that claim for data that cannot support it — on the whole cache
+-- at once, on the first login after the update, at exactly the moment when in
+-- practice they are all last season's sets.
+--
+-- Nor may they be painted grey: v1.5.5 already detected season-2 sets too, so a
+-- suffix-less value is season-UNKNOWN, not season-1. Grey would be the same
+-- unfounded claim in the other direction.
+--
+-- So the coloured surfaces show nothing until the next inspect rewrites the
+-- entry with a season — a missing tag is fine, a wrong one is not. The
+-- uncoloured surfaces (Danders, Grid2) keep showing the bonus, because there
+-- the colour claim does not arise.
+--
+-- 9D9D9D is already the bottom of our item-level scale and reads as dated.
 local function seasonColor(season)
-    if season and season ~= U.CURRENT_TIER_SEASON then return "|cFF9D9D9D" end
+    if not season then return nil end
+    if season ~= U.CURRENT_TIER_SEASON then return "|cFF9D9D9D" end
     return "|cFF00FF00"
 end
 
 -- Coloured, ready to print. Two bonuses render as two marks, oldest first:
--- "|cFF9D9D9D[2P]|r |cFF00FF00[2P]|r". bracket=false drops the brackets for
--- the columns layout, which has its own field and does not want them.
-function U.SetBonusTag(sb, bracket)
+-- "|cFF9D9D9D[2P]|r |cFF00FF00[2P]|r".
+--
+--   bracket     = false  drops the brackets; the columns layout has its own field.
+--   primaryOnly = true   emits a single mark, for width-limited surfaces.
+--
+-- Returns nil when there is nothing we may show — no bonus at all, or only
+-- bonuses whose season is unknown. CALLERS MUST CHECK: four of them build their
+-- text by concatenation and would throw on a nil.
+function U.SetBonusTag(sb, bracket, primaryOnly)
     local list = parseSetBonus(sb)
     if not list then return nil end
     if bracket == nil then bracket = true end
+
+    if primaryOnly then
+        local pick = list[1]
+        for _, entry in ipairs(list) do
+            if entry.season == U.CURRENT_TIER_SEASON then pick = entry break end
+        end
+        list = { pick }
+    end
+
     local parts = {}
     for _, entry in ipairs(list) do
-        local body = bracket and ("[" .. entry.bonus .. "]") or entry.bonus
-        parts[#parts + 1] = seasonColor(entry.season) .. body .. "|r"
+        -- A mark whose season we cannot name is skipped, not guessed. See
+        -- seasonColor above for why neither colour would be honest.
+        local colour = seasonColor(entry.season)
+        if colour then
+            local body = bracket and ("[" .. entry.bonus .. "]") or entry.bonus
+            parts[#parts + 1] = colour .. body .. "|r"
+        end
     end
+    if #parts == 0 then return nil end
     return table.concat(parts, " ")
 end
 

@@ -525,9 +525,9 @@ local function BuildTag(name, noLeadingSpace)
     -- O(1) set bonus lookup — nameToSetBonus is kept in sync with nameToIlvl.
     -- Previously this iterated the full ilvlCache (O(N) per bar, O(N²) in 40-man raids).
     if db.showSetBonus then
-        local sb = nameToSetBonus[name]
-        if sb then
-            tag = tag .. " " .. SetBonusTag(sb)
+        local sbTag = SetBonusTag(nameToSetBonus[name])
+        if sbTag then
+            tag = tag .. " " .. sbTag
         end
     end
 
@@ -667,7 +667,12 @@ local function RefreshAllColumns()
                 -- Set tier text
                 -- No brackets here: the columns layout gives the tier its own
                 -- field, so they would only cost width.
-                cols.tierFS:SetText(sb and SetBonusTag(sb, false) or "")
+                -- One mark only: this column is a fixed 28 px truncation
+                -- threshold (COL_TIER_WIDTH), and a clipped fragment of a
+                -- second mark reads worse than a clean single one. The
+                -- current season's is preferred, matching the other
+                -- width-limited surfaces (Danders, Grid2).
+                cols.tierFS:SetText(SetBonusTag(sb, false, true) or "")
 
                 -- Measure our ilvl column
                 local iw = cols.ilvlFS:GetStringWidth() or 0; if isSecretValue(iw) then iw = 0 end
@@ -2063,9 +2068,8 @@ SlashCmdList["DILVL"] = function(msg)
                 name = Details.item_level_pool[guid].name or name
             end
             local age = now - data.time
-            local sb = setBonusCache[guid]
-                and (SetBonusTag(setBonusCache[guid]) .. " ")
-                or ""
+            local sbTag = SetBonusTag(setBonusCache[guid])
+            local sb = sbTag and (sbTag .. " ") or ""
             -- `stale` = explicitly flagged for re-inspect (boss kill, gear change).
             -- The old marker was time = 0, which the load purge read as an age of
             -- ~1.79 billion seconds and deleted. Age and "needs refresh" are now

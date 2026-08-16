@@ -394,8 +394,9 @@ local function BuildTag(guid)
         tag = prefix .. "[" .. cached.ilvl .. "]"
     end
 
-    if db.showSetBonus and setBonus then
-        tag = tag .. " " .. API.SetBonusTag(setBonus)
+    if db.showSetBonus then
+        local sbTag = API.SetBonusTag(setBonus)
+        if sbTag then tag = tag .. " " .. sbTag end
     end
 
     return tag
