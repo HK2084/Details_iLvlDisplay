@@ -1,6 +1,11 @@
 ## Interface: 120001, 120005, 120007, 120100
 ## Title: Details! Item Level Display
 ## Notes: Shows item level and tier set bonus on Details!, ElvUI, Grid2, Danders Frames, and Blizzard's built-in damage meter. Auto-detects what's installed, each surface independently toggleable.
+## Notes-deDE: Zeigt Gegenstandsstufe und 2P/4P Set-Bonus auf Details!, ElvUI, Grid2, Danders Frames und Blizzards eingebauter Schadensanzeige. Erkennt automatisch, was du installiert hast — jede Oberfläche einzeln umschaltbar.
+## Notes-ruRU: Показывает уровень предметов и бонус комплекта рядом с именем игрока.
+## Notes-zhCN: 在玩家名字旁显示物品等级和套装奖励。
+## Notes-zhTW: 在玩家名稱旁顯示物品等級與套裝效果。
+## Notes-koKR: 플레이어 이름 옆에 아이템 레벨과 세트 효과를 표시합니다.
 ## Author: HK2084
 ## Version: 1.5.6
 ## IconTexture: Interface\AddOns\Details_iLvlDisplay\icon

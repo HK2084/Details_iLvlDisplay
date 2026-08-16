@@ -106,4 +106,6 @@ These are Blizzard restrictions, not addon bugs.
 
 Full documentation, source code, and issue tracker on [GitHub](https://github.com/HK2084/Details_iLvlDisplay).
 
+**Translations welcome.** The addon ships in English and German; the AddOn-list description is also localised for ruRU, zhCN, zhTW and koKR. If a string reads wrong in your language, open an issue on GitHub — corrections from native speakers are very welcome.
+
 **License:** free to download and use, and you are welcome to tweak it for your own UI. Please don't reupload it or publish modified copies — see the full license on this page.

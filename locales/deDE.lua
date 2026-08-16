@@ -28,7 +28,7 @@ L["Diagnostics"]                = "Diagnose"
 ---------------------------------------------------------------
 -- Page: General
 ---------------------------------------------------------------
-L["GENERAL_INFO"]               = "Erkennt automatisch was du installiert hast. Einzelne Oberflächen im Tab 'Ausgabe-Kanäle' umschalten."
+L["GENERAL_INFO"]               = "Erkennt automatisch, was du installiert hast. Einzelne Oberflächen im Tab 'Ausgabe-Kanäle' umschalten."
 L["Master Toggles"]             = "Haupt-Schalter"
 L["Enable Details! iLvl Display"] = "Details! iLvl-Anzeige aktivieren"
 L["TOOLTIP_MASTER_ENABLE"]      = "Haupt-Schalter für das ganze Addon. Deaktivieren um alle Ausgabe-Kanäle still zu legen ohne deinstallieren."
