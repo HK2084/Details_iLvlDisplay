@@ -107,20 +107,39 @@ U.TIER_SLOTS = {1, 3, 5, 7, 10} -- Head, Shoulder, Chest, Legs, Hands
 -- PvP gear (honor/conquest) has its own setIDs outside this range — the
 -- whitelist approach means they are automatically ignored regardless of
 -- their setID values.
+-- Which raid season is CURRENTLY the one people gear towards. Set by hand, on
+-- purpose, and it must be flipped when a new season opens.
+--
+-- Not derived from the set IDs: the highest ID is not reliably the current
+-- season (2070 "Biss von Zul'jan" sits outside the tier run entirely).
+--
+-- And deliberately NOT taken from C_MythicPlus.GetCurrentUIDisplaySeason()
+-- either, although it returns exactly the right SHAPE of number. Measured live
+-- on 2026-08-16, during the season-2 pre-season: it already answered 2 while
+-- every player was still wearing season-1 tier and still had an active 4-piece
+-- bonus. The API leads the gear transition, so trusting it would have greyed
+-- out the whole raid's current sets. It is surfaced in /dilvl debug as a
+-- cross-check instead, so the day the two disagree is visible and the switch
+-- here happens knowingly.
+--
+-- Flipping this is not extra work: the set IDs below already have to be added
+-- per season by hand anyway.
+U.CURRENT_TIER_SEASON = 1
+
 U.MIDNIGHT_TIER_SETS = {
-    [1978] = true, -- Death Knight   (Relentless Rider's Lament)
-    [1979] = true, -- Demon Hunter   (Devouring Reaver's Sheathe)
-    [1980] = true, -- Druid          (Sprouts of the Luminous Bloom)
-    [1981] = true, -- Evoker         (Livery of the Black Talon)
-    [1982] = true, -- Hunter         (Primal Sentry's Camouflage)
-    [1983] = true, -- Mage           (Voidbreaker's Accordance)
-    [1984] = true, -- Monk           (Way of Ra-den's Chosen)
-    [1985] = true, -- Paladin        (Luminant Verdict's Vestments)
-    [1986] = true, -- Priest         (Blind Oath's Burden)
-    [1987] = true, -- Rogue          (Motley of the Grim Jest)
-    [1988] = true, -- Shaman         (Mantle of the Primal Core) ← confirmed
-    [1989] = true, -- Warlock        (Reign of the Abyssal Immolator)
-    [1990] = true, -- Warrior        (Rage of the Night Ender)
+    [1978] = 1, -- Death Knight   (Relentless Rider's Lament)
+    [1979] = 1, -- Demon Hunter   (Devouring Reaver's Sheathe)
+    [1980] = 1, -- Druid          (Sprouts of the Luminous Bloom)
+    [1981] = 1, -- Evoker         (Livery of the Black Talon)
+    [1982] = 1, -- Hunter         (Primal Sentry's Camouflage)
+    [1983] = 1, -- Mage           (Voidbreaker's Accordance)
+    [1984] = 1, -- Monk           (Way of Ra-den's Chosen)
+    [1985] = 1, -- Paladin        (Luminant Verdict's Vestments)
+    [1986] = 1, -- Priest         (Blind Oath's Burden)
+    [1987] = 1, -- Rogue          (Motley of the Grim Jest)
+    [1988] = 1, -- Shaman         (Mantle of the Primal Core) ← confirmed
+    [1989] = 1, -- Warlock        (Reign of the Abyssal Immolator)
+    [1990] = 1, -- Warrior        (Rage of the Night Ender)
 
     -- Season 2 (patch 12.1). Read straight out of the live client with
     -- /dilvl sets 2054 2454 on 2026-08-13, before the season opened: Blizzard
@@ -133,19 +152,19 @@ U.MIDNIGHT_TIER_SETS = {
     -- so a mislabelled comment cannot cause a wrong tag.
     -- Deliberately NOT included: 2070 ("Biss von Zul'jan"). The gap at
     -- 2068-2069 puts it outside the tier run.
-    [2055] = true, -- Death Knight   (Tiegel des unheilvollen Grabritters)
-    [2056] = true, -- Demon Hunter   (Jagd des abyssischen Verdammnishundes)
-    [2057] = true, -- Druid          (Borke des geheimnisvollen Traumbehüters)
-    [2058] = true, -- Evoker         (Echo des Unheils)
-    [2059] = true, -- Hunter         (Hinterhalt der lauernden Viper)
-    [2060] = true, -- Mage           (Gewand des urweltlichen Leyhüters)
-    [2061] = true, -- Monk           (List des Affenkönigs)
-    [2062] = true, -- Paladin        (Strahlen der geweihten Flamme)
-    [2063] = true, -- Priest         (Gewandung des kosmischen Büßers)
-    [2064] = true, -- Rogue          (Hexgeflecht des auserkorenen Blutschlächters)
-    [2065] = true, -- Shaman         (Prophezeiung des Schlangenorakels)
-    [2066] = true, -- Warlock        (Gesprengte Fesseln des verdammten Nekrolythen)
-    [2067] = true, -- Warrior        (Herrschaft des Jadekriegsfürsten)
+    [2055] = 2, -- Death Knight   (Tiegel des unheilvollen Grabritters)
+    [2056] = 2, -- Demon Hunter   (Jagd des abyssischen Verdammnishundes)
+    [2057] = 2, -- Druid          (Borke des geheimnisvollen Traumbehüters)
+    [2058] = 2, -- Evoker         (Echo des Unheils)
+    [2059] = 2, -- Hunter         (Hinterhalt der lauernden Viper)
+    [2060] = 2, -- Mage           (Gewand des urweltlichen Leyhüters)
+    [2061] = 2, -- Monk           (List des Affenkönigs)
+    [2062] = 2, -- Paladin        (Strahlen der geweihten Flamme)
+    [2063] = 2, -- Priest         (Gewandung des kosmischen Büßers)
+    [2064] = 2, -- Rogue          (Hexgeflecht des auserkorenen Blutschlächters)
+    [2065] = 2, -- Shaman         (Prophezeiung des Schlangenorakels)
+    [2066] = 2, -- Warlock        (Gesprengte Fesseln des verdammten Nekrolythen)
+    [2067] = 2, -- Warrior        (Herrschaft des Jadekriegsfürsten)
 }
 
 ----------------------------------------------------------------
@@ -224,15 +243,68 @@ function U.GetSetBonusForUnit(unit)
         complete = false
     end
 
-    local best = 0
-    for _, count in pairs(setPieces) do
-        if count > best then best = count end
+    -- The strongest SINGLE set wins — counts are never summed across sets, so
+    -- 2 old + 2 new correctly reads 2P rather than 4P.
+    --
+    -- On a tie the current season wins. Someone wearing 2 old and 2 new pieces
+    -- has both 2-piece bonuses, and the current one is the stronger of the two
+    -- and the one they are moving towards, so it is the more useful of the two
+    -- to show. The reverse case matters just as much and is why the strongest
+    -- bonus still wins outright: 4 old + 2 new is a real 4-piece, and showing
+    -- 2P there would understate the player.
+    local best, bestSeason = 0, nil
+    for setID, count in pairs(setPieces) do
+        local season = U.MIDNIGHT_TIER_SETS[setID]
+        local beatsOnCount  = count > best
+        local winsOnSeason  = count == best
+                              and season == U.CURRENT_TIER_SEASON
+                              and bestSeason ~= U.CURRENT_TIER_SEASON
+        if beatsOnCount or winsOnSeason then
+            best, bestSeason = count, season
+        end
     end
 
-    if best >= 4 then return "4P", complete
-    elseif best >= 2 then return "2P", complete
+    -- Season is carried INSIDE the value ("4P#1") so that all the plumbing in
+    -- between — two cache writes, a dozen StoreNameBonus calls, the persisted
+    -- SavedVariables — stays untouched. Nothing compares this string by value
+    -- anywhere; it is only ever concatenated, and the render sites split it
+    -- through U.SetBonusText / U.SetBonusColor.
+    local suffix = bestSeason and ("#" .. bestSeason) or ""
+    if best >= 4 then return "4P" .. suffix, complete
+    elseif best >= 2 then return "2P" .. suffix, complete
     end
     return nil, complete
+end
+
+----------------------------------------------------------------
+-- Set bonus display helpers.
+--
+-- Stored form is "4P" or "4P#2" — the bonus, optionally followed by the season
+-- of the set that granted it. Entries written before seasons were tracked carry
+-- no suffix; they are treated as unknown and render exactly as they always did,
+-- so no cache migration is needed.
+----------------------------------------------------------------
+function U.SetBonusText(sb)
+    if type(sb) ~= "string" then return nil end
+    return (sb:match("^(%dP)#%d+$")) or sb
+end
+
+function U.SetBonusSeason(sb)
+    if type(sb) ~= "string" then return nil end
+    local season = sb:match("^%dP#(%d+)$")
+    return season and tonumber(season) or nil
+end
+
+-- Green for the current season, grey for an older one. Grey says "older
+-- season" and nothing more — whether Blizzard still grants that bonus in
+-- current content is not something we can read, so we do not claim it.
+-- 9D9D9D is already the bottom of our item-level scale and reads as dated.
+function U.SetBonusColor(sb)
+    local season = U.SetBonusSeason(sb)
+    if season and season ~= U.CURRENT_TIER_SEASON then
+        return "|cFF9D9D9D"
+    end
+    return "|cFF00FF00"
 end
 
 ----------------------------------------------------------------

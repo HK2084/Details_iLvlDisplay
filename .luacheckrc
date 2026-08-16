@@ -72,7 +72,8 @@ globals = {
 -- code; the six secret-prone APIs are intentionally ABSENT (see header).
 read_globals = {
 	"ACCEPT", "Ambiguate", "CANCEL",
-	"C_AddOns", "C_InstanceEncounter", "C_Item", "C_Map", "C_PaperDollInfo",
+	"C_AddOns", "C_InstanceEncounter", "C_Item", "C_Map", "C_MythicPlus",
+	"C_PaperDollInfo",
 	"C_Secrets", "C_Timer", "C_UnitAuras",
 	"CanInspect", "ClearInspectPlayer", "CreateFrame",
 	"DETAILS_ATTRIBUTE_DAMAGE", "DETAILS_ATTRIBUTE_HEAL", "DILvlDebugFrame",

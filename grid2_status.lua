@@ -52,7 +52,7 @@ function DiLvl:GetText(unit)
     local cached, setBonus = API.GetCacheData(guid)
     if not cached or not cached.ilvl then return "" end
     if db.showSetBonus and setBonus then
-        return tostring(cached.ilvl) .. " " .. setBonus
+        return tostring(cached.ilvl) .. " " .. API.SetBonusText(setBonus)
     end
     return tostring(cached.ilvl)
 end

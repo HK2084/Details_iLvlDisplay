@@ -395,7 +395,7 @@ local function BuildTag(guid)
     end
 
     if db.showSetBonus and setBonus then
-        tag = tag .. " |cFF00FF00[" .. setBonus .. "]|r"
+        tag = tag .. " " .. API.SetBonusColor(setBonus) .. "[" .. API.SetBonusText(setBonus) .. "]|r"
     end
 
     return tag
@@ -414,7 +414,10 @@ local function StripTagFromText(txt)
     txt = txt:gsub("%s*|c%x%x%x%x%x%x%x%x%[%d+%]|r%s*", " ")
     -- Strip uncolored iLvl tags: " [245]" or "[245] "
     txt = txt:gsub("%s*%[%d+%]%s*", " ")
-    -- Strip colored tier tags: " |cFF00FF00[2P]|r" / " |cFF00FF00[4P]|r"
+    -- Strip colored tier tags: " |cFF00FF00[2P]|r", " |cFF9D9D9D[4P]|r".
+    -- The colour VARIES since season colouring (green = current season, grey
+    -- = older), so this must stay a wildcard match and must never be narrowed
+    -- to one code — a tag we fail to strip is a tag that doubles up.
     txt = txt:gsub("%s*|c%x%x%x%x%x%x%x%x%[%d[PT]%]|r%s*", " ")
     -- Collapse any double spaces and trim
     txt = txt:gsub("  +", " ")

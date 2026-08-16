@@ -225,6 +225,8 @@ local GetIlvlColor       = util.GetIlvlColor
 local GetSetBonusForUnit = util.GetSetBonusForUnit
 local TIER_SLOTS         = util.TIER_SLOTS
 local MIDNIGHT_TIER_SETS = util.MIDNIGHT_TIER_SETS
+local SetBonusText       = util.SetBonusText
+local SetBonusColor      = util.SetBonusColor
 -- Realm stripper. Never Ambiguate directly — see util.StripRealm.
 local StripRealm         = util.StripRealm
 
@@ -526,7 +528,7 @@ local function BuildTag(name, noLeadingSpace)
     if db.showSetBonus then
         local sb = nameToSetBonus[name]
         if sb then
-            tag = tag .. " |cFF00FF00[" .. sb .. "]|r"
+            tag = tag .. " " .. SetBonusColor(sb) .. "[" .. SetBonusText(sb) .. "]|r"
         end
     end
 
@@ -664,7 +666,7 @@ local function RefreshAllColumns()
                     cols.ilvlFS:SetText(tostring(ilvl))
                 end
                 -- Set tier text
-                cols.tierFS:SetText(sb and ("|cFF00FF00" .. sb .. "|r") or "")
+                cols.tierFS:SetText(sb and (SetBonusColor(sb) .. SetBonusText(sb) .. "|r") or "")
 
                 -- Measure our ilvl column
                 local iw = cols.ilvlFS:GetStringWidth() or 0; if isSecretValue(iw) then iw = 0 end
@@ -2060,7 +2062,9 @@ SlashCmdList["DILVL"] = function(msg)
                 name = Details.item_level_pool[guid].name or name
             end
             local age = now - data.time
-            local sb = setBonusCache[guid] and ("|cFF00FF00[" .. setBonusCache[guid] .. "]|r ") or ""
+            local sb = setBonusCache[guid]
+                and (SetBonusColor(setBonusCache[guid]) .. "[" .. SetBonusText(setBonusCache[guid]) .. "]|r ")
+                or ""
             -- `stale` = explicitly flagged for re-inspect (boss kill, gear change).
             -- The old marker was time = 0, which the load purge read as an age of
             -- ~1.79 billion seconds and deleted. Age and "needs refresh" are now
@@ -2550,7 +2554,17 @@ SlashCmdList["DILVL"] = function(msg)
             for guid, data in pairs(ilvlCache) do
                 local name = data.name or "?"
                 local age = ((now - data.time) .. "s") .. (data.stale and "+flag" or "")
-                local sb = setBonusCache[guid] and ("[" .. setBonusCache[guid] .. "] ") or ""
+                -- Season suffix belongs to storage, not to the eye. Show the
+                -- season only where it differs from the current one, so the
+                -- normal case stays as short as it was.
+                local rawSb = setBonusCache[guid]
+                local sb = ""
+                if rawSb then
+                    local season = util.SetBonusSeason(rawSb)
+                    sb = "[" .. util.SetBonusText(rawSb)
+                        .. ((season and season ~= util.CURRENT_TIER_SEASON) and ("/S" .. season) or "")
+                        .. "] "
+                end
                 local src = data.source and string.upper(data.source) or "?"
                 print(string.format("    %s: %s%d iLvl [%s] (%s)", name, sb, data.ilvl, src, age))
             end
@@ -2566,9 +2580,29 @@ SlashCmdList["DILVL"] = function(msg)
             local liveSb, liveComplete = GetSetBonusForUnit("player")
             local pg = SafeUnitGUID("player")
             local storedSb = pg and setBonusCache[pg]
+            local function show(v)
+                if v == nil then return "nil" end
+                if type(v) ~= "string" then return tostring(v) end
+                local season = util.SetBonusSeason(v)
+                return util.SetBonusText(v) .. (season and (" S" .. season) or " S?")
+            end
             print(string.format("  --- Own Tier Slots ---  live: %s (complete=%s)  stored: %s",
-                tostring(liveSb), tostring(liveComplete),
-                storedSb == nil and "nil" or tostring(storedSb)))
+                show(liveSb), tostring(liveComplete), show(storedSb)))
+
+            -- Cross-check our hand-set season against what the client thinks.
+            -- They are ALLOWED to differ: measured on 2026-08-16 the API already
+            -- said 2 during the season-2 pre-season while everyone still wore
+            -- season-1 tier. This line is how we notice the day it is time to
+            -- flip U.CURRENT_TIER_SEASON, instead of finding out from a user.
+            local uiSeason
+            if C_MythicPlus and C_MythicPlus.GetCurrentUIDisplaySeason then
+                local okS, v = pcall(C_MythicPlus.GetCurrentUIDisplaySeason)
+                if okS then uiSeason = v end
+            end
+            print(string.format("      tier season: ours=%d  client=%s%s",
+                util.CURRENT_TIER_SEASON, tostring(uiSeason),
+                (uiSeason and uiSeason ~= util.CURRENT_TIER_SEASON)
+                    and "  |cFFFFD100(differ — check whether the new season has opened)|r" or ""))
         end
         local slotNames = {[1]="Head",[3]="Shoulder",[5]="Chest",[7]="Legs",[10]="Hands"}
         for _, slotID in ipairs(TIER_SLOTS) do
@@ -3019,6 +3053,11 @@ Details_iLvlDisplayAPI = {
     -- RGB variant for widget APIs that take numbers instead of an escape
     -- sequence (Grid2 SetTextColor). Same thresholds, one source: util.ILVL_COLORS.
     GetIlvlColorRGB = util.GetIlvlColorRGB,
+    -- Season-aware set-bonus rendering. Stored form may carry a season suffix
+    -- ("4P#1"); never print the raw value, always split it through these.
+    SetBonusText = util.SetBonusText,
+    SetBonusColor = util.SetBonusColor,
+    SetBonusSeason = util.SetBonusSeason,
     -- Shared realm stripper. Every channel must use this and never Ambiguate
     -- directly — see util.StripRealm.
     StripRealm = StripRealm,
