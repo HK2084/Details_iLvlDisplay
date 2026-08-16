@@ -107,24 +107,26 @@ U.TIER_SLOTS = {1, 3, 5, 7, 10} -- Head, Shoulder, Chest, Legs, Hands
 -- PvP gear (honor/conquest) has its own setIDs outside this range — the
 -- whitelist approach means they are automatically ignored regardless of
 -- their setID values.
--- Which raid season is CURRENTLY the one people gear towards. Set by hand, on
--- purpose, and it must be flipped when a new season opens.
+-- Which raid season is CURRENTLY running. Season 2 opened with patch 12.1; the
+-- pre-season is already part of it, so season-1 tier is the OLD set even while
+-- most players are still wearing it.
 --
--- Not derived from the set IDs: the highest ID is not reliably the current
--- season (2070 "Biss von Zul'jan" sits outside the tier run entirely).
+-- That last sentence is the whole trap, and I walked into it on 2026-08-16:
+-- seeing a raid full of season-1 tier, I concluded season 1 must still be
+-- current and that C_MythicPlus.GetCurrentUIDisplaySeason() (which answered 2)
+-- was running ahead of reality. It was not. What people are WEARING says
+-- nothing about which season is running — lagging behind is precisely the
+-- transition this colouring exists to show.
 --
--- And deliberately NOT taken from C_MythicPlus.GetCurrentUIDisplaySeason()
--- either, although it returns exactly the right SHAPE of number. Measured live
--- on 2026-08-16, during the season-2 pre-season: it already answered 2 while
--- every player was still wearing season-1 tier and still had an active 4-piece
--- bonus. The API leads the gear transition, so trusting it would have greyed
--- out the whole raid's current sets. It is surfaced in /dilvl debug as a
--- cross-check instead, so the day the two disagree is visible and the switch
--- here happens knowingly.
+-- Still a hand-set constant rather than that API call, but for control, not
+-- distrust: the set IDs below are maintained per season by hand anyway, a
+-- season without a new tier would leave the two legitimately out of step, and
+-- getting this wrong mislabels every set in the raid at once. /dilvl debug
+-- prints both and flags a mismatch, so the API stays a cross-check.
 --
--- Flipping this is not extra work: the set IDs below already have to be added
--- per season by hand anyway.
-U.CURRENT_TIER_SEASON = 1
+-- Not derived from the set IDs either: the highest ID is not reliably the
+-- current season (2070 "Biss von Zul'jan" sits outside the tier run entirely).
+U.CURRENT_TIER_SEASON = 2
 
 U.MIDNIGHT_TIER_SETS = {
     [1978] = 1, -- Death Knight   (Relentless Rider's Lament)
