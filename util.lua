@@ -254,15 +254,30 @@ function U.GetSetBonusForUnit(unit)
     -- to show. The reverse case matters just as much and is why the strongest
     -- bonus still wins outright: 4 old + 2 new is a real 4-piece, and showing
     -- 2P there would understate the player.
+    -- Compare the BONUS each set actually grants, not the piece count. Three
+    -- pieces and two pieces both grant 2P, so comparing counts made a set with
+    -- one more piece "win" a contest it had in fact tied. The only distribution
+    -- where that shows is 3 old + 2 new: equal bonuses, but the old set won on
+    -- count and the row rendered grey where the tie rule says green.
+    --
+    -- Found by the author, from the fact that a made-up example in the design
+    -- table (4 old + 2 new) cannot exist: there are five tier slots, so six
+    -- pieces is impossible. The impossible row had been hiding the real one.
+    local function bonusTier(count)
+        if count >= 4 then return 4 elseif count >= 2 then return 2 end
+        return 0
+    end
+
     local best, bestSeason = 0, nil
     for setID, count in pairs(setPieces) do
         local season = U.MIDNIGHT_TIER_SETS[setID]
-        local beatsOnCount  = count > best
-        local winsOnSeason  = count == best
-                              and season == U.CURRENT_TIER_SEASON
-                              and bestSeason ~= U.CURRENT_TIER_SEASON
-        if beatsOnCount or winsOnSeason then
-            best, bestSeason = count, season
+        local tier   = bonusTier(count)
+        local beats  = tier > best
+        local ties   = tier == best
+                       and season == U.CURRENT_TIER_SEASON
+                       and bestSeason ~= U.CURRENT_TIER_SEASON
+        if tier > 0 and (beats or ties) then
+            best, bestSeason = tier, season
         end
     end
 

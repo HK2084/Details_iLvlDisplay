@@ -4,7 +4,7 @@
 
 ### New
 
-*   **Tier sets are colour-coded by season.** The current season's set bonus renders in green, an older season's in grey. During a tier transition the strongest bonus is still the one displayed — four older pieces alongside two current ones still reads 4P, in grey.
+*   **Tier sets are colour-coded by season.** The current season's set bonus renders in green, an older season's in grey. The strongest bonus is still the one displayed, so four older pieces alongside a single current one still reads 4P, in grey.
 
 ### Optimised
 
