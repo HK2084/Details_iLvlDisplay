@@ -40,6 +40,40 @@ local _hasanysecretvalues  = API.hasanysecretvalues
 local SafeUnitName         = API.SafeUnitName
                             or function() return nil end
 local SafeUnitGUID         = API.SafeUnitGUID  or function() return nil end
+
+---------------------------------------------------------------
+-- The rank prefix Blizzard draws in front of a name is LOCALISED, and it is
+-- not always a full stop:
+--     enUS/deDE/koKR/ruRU   "%d. %s"
+--     zhCN                  "%d、%s"      (U+3001)
+--     zhTW                  "%d。%s"      (U+3002)
+-- Three places used to hardcode "^%d+%." — two identity fallbacks that read
+-- Blizzard's rendered text, and the split that keeps the rank in front of our
+-- tag. On a Chinese client none of them matched: the fallbacks silently
+-- resolved nothing and the rank was pushed off the line. A missing tag, never
+-- a wrong one, which is why it could sit there unnoticed.
+--
+-- Derived from Blizzard's own format string rather than enumerated, so a locale
+-- we have not looked at is covered too. gsub escapes byte-wise, which is what
+-- we want: the multi-byte separators come out as literal bytes in the pattern.
+--
+-- NOTE: this is for BLIZZARD's meter only. Details! hardcodes ". " in every
+-- language (Details-Damage-Meter/boot.lua:1332), so the patterns in core.lua
+-- and util.lua are correct as they stand and must NOT be switched over.
+---------------------------------------------------------------
+local RANK_CAPTURE, RANK_SPLIT
+do
+    local fmt = DAMAGE_METER_SOURCE_NAME
+    local sep = type(fmt) == "string" and fmt:match("^%%d(.-)%%s$") or nil
+    if sep and sep ~= "" then
+        local escaped = sep:gsub("(%W)", "%%%1")
+        RANK_CAPTURE = "^%d+" .. escaped .. "%s*(.+)"
+        RANK_SPLIT   = "^(%d+" .. escaped .. "%s*)(.*)"
+    else
+        RANK_CAPTURE = "^%d+%.%s*(.+)"
+        RANK_SPLIT   = "^(%d+%.%s*)(.*)"
+    end
+end
 -- Realm stripper. Never Ambiguate directly — see util.StripRealm. The
 -- fallback keeps this file working even if core.lua is older than this one.
 local StripRealm           = API.StripRealm
@@ -459,7 +493,7 @@ local function ResolveFrameGUID(frame)
     -- Fallback 1: nameText field (no secret wrapper on field itself)
     local nt = frame.nameText
     if nt and not isSecret(nt) then
-        local parsed = tostring(nt):match("^%d+%.%s*(.+)") or tostring(nt)
+        local parsed = tostring(nt):match(RANK_CAPTURE) or tostring(nt)
         parsed = StripTagFromText(parsed)
         parsed = parsed and parsed:match("^%s*(.-)%s*$")
         if parsed and parsed ~= "" then
@@ -477,7 +511,7 @@ local function ResolveFrameGUID(frame)
     if nameFS and type(nameFS) ~= "string" then
         local ok, txt = pcall(nameFS.GetText, nameFS)
         if ok and txt and not isSecret(txt) and type(txt) == "string" then
-            local parsed = txt:match("^%d+%.%s*(.+)") or txt
+            local parsed = txt:match(RANK_CAPTURE) or txt
             parsed = StripTagFromText(parsed)
             parsed = parsed and parsed:match("^%s*(.-)%s*$")
             if parsed and parsed ~= "" then
@@ -901,7 +935,7 @@ local function InjectIlvl(frame)
     local db = API.GetDb()
     if db and db.ilvlPosition == "left" then
         -- Insert between rank prefix and name: "1. [272] Playername"
-        local rank, rest = baseName:match("^(%d+%.%s*)(.*)")
+        local rank, rest = baseName:match(RANK_SPLIT)
         if rank then
             displayText = rank .. tag .. " " .. rest
         else
