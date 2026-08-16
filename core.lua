@@ -481,14 +481,40 @@ local function RebuildNameIlvlMap()
                     local ilvl = GetIlvlForGuid(actor.serial)
                     if ilvl then
                         -- Patch name into cache entry if Details! API wrote it without one.
-                        -- Prefer Name-Realm form via roster (cross-realm asymmetry fix);
-                        -- fall back to actor.displayName / nome which Details! often gives
-                        -- without realm suffix. The reverse-lookup nameOnly fallback in
-                        -- ResolveGUIDByName covers any leftover bare entries.
+                        -- Prefer the Name-Realm form via the roster (cross-realm asymmetry
+                        -- fix); otherwise actor.nome, which is the combat-log name.
+                        --
+                        -- NOT actor.displayName. Details! documents the two apart:
+                        --   Definitions.lua:601  displayName  "actor name shown in the
+                        --                                      regular window"
+                        --   Definitions.lua:610  nome         "name of the actor"
+                        -- displayName is a RENDERED string and Details! rewrites it freely.
+                        -- Two of the three paths are ON BY DEFAULT:
+                        --   * a guild nickname replaces it outright
+                        --     (container_actors.lua:644-651). ignore_nicktag defaults to
+                        --     false (profiles.lua:1330) and the pool is fed over the GUILD
+                        --     addon channel, so the string is authored by another player.
+                        --     checkValidNickname constrains WHO, not WHAT — no similarity
+                        --     check, so "Gandalf" for Ivan-Blackrock passes.
+                        --   * remove_realm_from_name defaults to true (profiles.lua:980) and
+                        --     strips the realm at :657-658, giving the bare "Torvi" for a
+                        --     cross-realm player — the collision vector line 340 worries
+                        --     about. (The ">" form at :802 is the PET branch; we filter
+                        --     IsPlayer(), so it cannot reach us.)
+                        --   * Translit is off by default, but romanises IN PLACE when on
+                        --     (class_damage.lua:3921-3925), so one render anywhere leaves
+                        --     the shared actor permanently carrying "!Ivan" for "Иван".
+                        -- Any of those would have been persisted here as identity —
+                        -- and blizzdm.lua:909 writes cached.name onto a Blizzard-owned row,
+                        -- so we would have put a spelling we invented under someone's bar.
+                        -- A name we cannot attribute is worse than no name, and nome is
+                        -- never rewritten.
+                        --
+                        -- The reverse-lookup nameOnly fallback in ResolveGUIDByName still
+                        -- covers any leftover bare entries.
                         local entry = ilvlCache[actor.serial]
                         if entry and not entry.name then
                             entry.name = ResolveFullNameByGuid(actor.serial)
-                                      or actor.displayName
                                       or actor.nome
                         end
                         -- actor.serial IS the player GUID, so identity is provable here.
