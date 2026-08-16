@@ -225,8 +225,7 @@ local GetIlvlColor       = util.GetIlvlColor
 local GetSetBonusForUnit = util.GetSetBonusForUnit
 local TIER_SLOTS         = util.TIER_SLOTS
 local MIDNIGHT_TIER_SETS = util.MIDNIGHT_TIER_SETS
-local SetBonusText       = util.SetBonusText
-local SetBonusColor      = util.SetBonusColor
+local SetBonusTag        = util.SetBonusTag
 -- Realm stripper. Never Ambiguate directly — see util.StripRealm.
 local StripRealm         = util.StripRealm
 
@@ -528,7 +527,7 @@ local function BuildTag(name, noLeadingSpace)
     if db.showSetBonus then
         local sb = nameToSetBonus[name]
         if sb then
-            tag = tag .. " " .. SetBonusColor(sb) .. "[" .. SetBonusText(sb) .. "]|r"
+            tag = tag .. " " .. SetBonusTag(sb)
         end
     end
 
@@ -666,7 +665,9 @@ local function RefreshAllColumns()
                     cols.ilvlFS:SetText(tostring(ilvl))
                 end
                 -- Set tier text
-                cols.tierFS:SetText(sb and (SetBonusColor(sb) .. SetBonusText(sb) .. "|r") or "")
+                -- No brackets here: the columns layout gives the tier its own
+                -- field, so they would only cost width.
+                cols.tierFS:SetText(sb and SetBonusTag(sb, false) or "")
 
                 -- Measure our ilvl column
                 local iw = cols.ilvlFS:GetStringWidth() or 0; if isSecretValue(iw) then iw = 0 end
@@ -2063,7 +2064,7 @@ SlashCmdList["DILVL"] = function(msg)
             end
             local age = now - data.time
             local sb = setBonusCache[guid]
-                and (SetBonusColor(setBonusCache[guid]) .. "[" .. SetBonusText(setBonusCache[guid]) .. "]|r ")
+                and (SetBonusTag(setBonusCache[guid]) .. " ")
                 or ""
             -- `stale` = explicitly flagged for re-inspect (boss kill, gear change).
             -- The old marker was time = 0, which the load purge read as an age of
@@ -2558,13 +2559,7 @@ SlashCmdList["DILVL"] = function(msg)
                 -- season only where it differs from the current one, so the
                 -- normal case stays as short as it was.
                 local rawSb = setBonusCache[guid]
-                local sb = ""
-                if rawSb then
-                    local season = util.SetBonusSeason(rawSb)
-                    sb = "[" .. util.SetBonusText(rawSb)
-                        .. ((season and season ~= util.CURRENT_TIER_SEASON) and ("/S" .. season) or "")
-                        .. "] "
-                end
+                local sb = rawSb and ("[" .. util.SetBonusDebug(rawSb) .. "] ") or ""
                 local src = data.source and string.upper(data.source) or "?"
                 print(string.format("    %s: %s%d iLvl [%s] (%s)", name, sb, data.ilvl, src, age))
             end
@@ -2582,9 +2577,7 @@ SlashCmdList["DILVL"] = function(msg)
             local storedSb = pg and setBonusCache[pg]
             local function show(v)
                 if v == nil then return "nil" end
-                if type(v) ~= "string" then return tostring(v) end
-                local season = util.SetBonusSeason(v)
-                return util.SetBonusText(v) .. (season and (" S" .. season) or " S?")
+                return util.SetBonusDebug(v) or tostring(v)
             end
             print(string.format("  --- Own Tier Slots ---  live: %s (complete=%s)  stored: %s",
                 show(liveSb), tostring(liveComplete), show(storedSb)))
@@ -3055,9 +3048,9 @@ Details_iLvlDisplayAPI = {
     GetIlvlColorRGB = util.GetIlvlColorRGB,
     -- Season-aware set-bonus rendering. Stored form may carry a season suffix
     -- ("4P#1"); never print the raw value, always split it through these.
-    SetBonusText = util.SetBonusText,
-    SetBonusColor = util.SetBonusColor,
-    SetBonusSeason = util.SetBonusSeason,
+    SetBonusTag = util.SetBonusTag,
+    SetBonusPlain = util.SetBonusPlain,
+    SetBonusDebug = util.SetBonusDebug,
     -- Shared realm stripper. Every channel must use this and never Ambiguate
     -- directly — see util.StripRealm.
     StripRealm = StripRealm,

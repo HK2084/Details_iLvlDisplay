@@ -191,7 +191,7 @@ local function updateFrame(frame)
     if not cached or not cached.ilvl then clearText(frame) return end
 
     local text = tostring(cached.ilvl)
-    if db.showSetBonus and setBonus then text = text .. " " .. API.SetBonusText(setBonus) end
+    if db.showSetBonus and setBonus then text = text .. " " .. API.SetBonusPlain(setBonus) end
     if db.colorIlvl then text = API.GetIlvlColor(cached.ilvl) .. text .. "|r" end
 
     local fs = SafeCall("ensureFS", ensureFS, frame)

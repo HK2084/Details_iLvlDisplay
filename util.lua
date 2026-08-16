@@ -254,74 +254,118 @@ function U.GetSetBonusForUnit(unit)
     -- to show. The reverse case matters just as much and is why the strongest
     -- bonus still wins outright: 4 old + 2 new is a real 4-piece, and showing
     -- 2P there would understate the player.
-    -- Compare the BONUS each set actually grants, not the piece count. Three
-    -- pieces and two pieces both grant 2P, so comparing counts made a set with
-    -- one more piece "win" a contest it had in fact tied. The only distribution
-    -- where that shows is 3 old + 2 new: equal bonuses, but the old set won on
-    -- count and the row rendered grey where the tie rule says green.
+    -- Every set that actually grants a bonus is reported, not just the best
+    -- one. During a tier change a player can carry TWO live bonuses — 2 old
+    -- pieces and 2 new ones, for instance — and showing only one of them hides
+    -- exactly the state this colouring was built to make visible.
     --
-    -- Found by the author, from the fact that a made-up example in the design
-    -- table (4 old + 2 new) cannot exist: there are five tier slots, so six
-    -- pieces is impossible. The impossible row had been hiding the real one.
+    -- Compare the BONUS, never the piece count: three pieces and two pieces both
+    -- grant 2P, so counting pieces made one set "beat" another it had in fact
+    -- tied. Five tier slots means at most two sets can reach a bonus at once
+    -- (2+2 fits, 2+2+2 does not), but nothing below assumes that.
     local function bonusTier(count)
         if count >= 4 then return 4 elseif count >= 2 then return 2 end
         return 0
     end
 
-    local best, bestSeason = 0, nil
+    local granting = {}
     for setID, count in pairs(setPieces) do
-        local season = U.MIDNIGHT_TIER_SETS[setID]
-        local tier   = bonusTier(count)
-        local beats  = tier > best
-        local ties   = tier == best
-                       and season == U.CURRENT_TIER_SEASON
-                       and bestSeason ~= U.CURRENT_TIER_SEASON
-        if tier > 0 and (beats or ties) then
-            best, bestSeason = tier, season
+        local tier = bonusTier(count)
+        if tier > 0 then
+            granting[#granting + 1] = {
+                bonus  = (tier >= 4) and "4P" or "2P",
+                season = U.MIDNIGHT_TIER_SETS[setID],
+            }
         end
     end
+    if #granting == 0 then return nil, complete end
 
-    -- Season is carried INSIDE the value ("4P#1") so that all the plumbing in
-    -- between — two cache writes, a dozen StoreNameBonus calls, the persisted
-    -- SavedVariables — stays untouched. Nothing compares this string by value
-    -- anywhere; it is only ever concatenated, and the render sites split it
-    -- through U.SetBonusText / U.SetBonusColor.
-    local suffix = bestSeason and ("#" .. bestSeason) or ""
-    if best >= 4 then return "4P" .. suffix, complete
-    elseif best >= 2 then return "2P" .. suffix, complete
+    -- Oldest season first, so the display reads as a progression: what the
+    -- player is leaving behind, then what they are building.
+    table.sort(granting, function(a, b)
+        return (a.season or 0) < (b.season or 0)
+    end)
+
+    -- Season rides INSIDE the value ("2P#1,2P#2") so all the plumbing in between
+    -- stays untouched — two cache writes, a dozen StoreNameBonus calls, the
+    -- persisted SavedVariables. Nothing anywhere compares this string by value;
+    -- it is only ever concatenated, and every render site goes through the
+    -- helpers below. Comma, not "|": that character starts a WoW colour escape.
+    local parts = {}
+    for _, entry in ipairs(granting) do
+        parts[#parts + 1] = entry.bonus .. (entry.season and ("#" .. entry.season) or "")
     end
-    return nil, complete
+    return table.concat(parts, ","), complete
 end
 
 ----------------------------------------------------------------
 -- Set bonus display helpers.
 --
--- Stored form is "4P" or "4P#2" — the bonus, optionally followed by the season
--- of the set that granted it. Entries written before seasons were tracked carry
--- no suffix; they are treated as unknown and render exactly as they always did,
--- so no cache migration is needed.
+-- Stored form is "4P#2", or "2P#1,2P#2" while two sets both grant a bonus.
+-- Values written before seasons were tracked carry no suffix; they are treated
+-- as unknown season and render exactly as they always did, so the persisted
+-- cache needs no migration.
 ----------------------------------------------------------------
-function U.SetBonusText(sb)
-    if type(sb) ~= "string" then return nil end
-    return (sb:match("^(%dP)#%d+$")) or sb
-end
-
-function U.SetBonusSeason(sb)
-    if type(sb) ~= "string" then return nil end
-    local season = sb:match("^%dP#(%d+)$")
-    return season and tonumber(season) or nil
-end
-
--- Green for the current season, grey for an older one. Grey says "older
--- season" and nothing more — whether Blizzard still grants that bonus in
--- current content is not something we can read, so we do not claim it.
--- 9D9D9D is already the bottom of our item-level scale and reads as dated.
-function U.SetBonusColor(sb)
-    local season = U.SetBonusSeason(sb)
-    if season and season ~= U.CURRENT_TIER_SEASON then
-        return "|cFF9D9D9D"
+local function parseSetBonus(sb)
+    if type(sb) ~= "string" or sb == "" then return nil end
+    local out = {}
+    for part in sb:gmatch("[^,]+") do
+        local bonus, season = part:match("^(%dP)#(%d+)$")
+        out[#out + 1] = { bonus = bonus or part, season = season and tonumber(season) or nil }
     end
+    if #out == 0 then return nil end
+    return out
+end
+
+-- Green for the current season, grey for an older one. Grey says "older season"
+-- and nothing more — whether Blizzard still grants that bonus in current content
+-- is not something we can read, so we do not claim it. 9D9D9D is already the
+-- bottom of our item-level scale and reads as dated.
+local function seasonColor(season)
+    if season and season ~= U.CURRENT_TIER_SEASON then return "|cFF9D9D9D" end
     return "|cFF00FF00"
+end
+
+-- Coloured, ready to print. Two bonuses render as two marks, oldest first:
+-- "|cFF9D9D9D[2P]|r |cFF00FF00[2P]|r". bracket=false drops the brackets for
+-- the columns layout, which has its own field and does not want them.
+function U.SetBonusTag(sb, bracket)
+    local list = parseSetBonus(sb)
+    if not list then return nil end
+    if bracket == nil then bracket = true end
+    local parts = {}
+    for _, entry in ipairs(list) do
+        local body = bracket and ("[" .. entry.bonus .. "]") or entry.bonus
+        parts[#parts + 1] = seasonColor(entry.season) .. body .. "|r"
+    end
+    return table.concat(parts, " ")
+end
+
+-- One bonus, no colour — for surfaces that are text-only and tight (Danders
+-- overlay, Grid2 indicator), where two uncoloured marks would be unreadable.
+-- Prefers the current season, since that is the one that keeps growing.
+function U.SetBonusPlain(sb)
+    local list = parseSetBonus(sb)
+    if not list then return nil end
+    for _, entry in ipairs(list) do
+        if entry.season == U.CURRENT_TIER_SEASON then return entry.bonus end
+    end
+    return list[1].bonus
+end
+
+-- Human-readable for /dilvl output: "4P", or "2P/S1+2P/S2" when it is worth
+-- spelling out. The season is shown only where it is not the current one, so
+-- the ordinary line stays as short as it was.
+function U.SetBonusDebug(sb)
+    local list = parseSetBonus(sb)
+    if not list then return nil end
+    local parts = {}
+    for _, entry in ipairs(list) do
+        parts[#parts + 1] = entry.bonus
+            .. ((entry.season and entry.season ~= U.CURRENT_TIER_SEASON)
+                and ("/S" .. entry.season) or "")
+    end
+    return table.concat(parts, "+")
 end
 
 ----------------------------------------------------------------

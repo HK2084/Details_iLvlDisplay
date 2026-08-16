@@ -67,7 +67,7 @@ local function buildIlvl(unit, withBrackets)
     end
 
     if db.showSetBonus and setBonus then
-        tag = tag .. " " .. API.SetBonusColor(setBonus) .. "[" .. API.SetBonusText(setBonus) .. "]|r"
+        tag = tag .. " " .. API.SetBonusTag(setBonus)
     end
 
     return tag
