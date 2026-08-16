@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- util.lua — pure helpers (no addon state, no Blizzard side effects)
 --
 -- Functions in here read from arguments only and either return values

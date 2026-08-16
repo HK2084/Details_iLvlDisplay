@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- locales/deDE.lua — German overrides, only loaded on deDE clients.
 --
 -- Community translations (frFR, esES, ruRU, ...) can be added as additional

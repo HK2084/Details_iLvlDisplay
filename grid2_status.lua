@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- grid2_status.lua — optional Grid2 raid frame integration
 -- Registers a custom Grid2 status "dilvl" that shows iLvl
 -- (and optional 2P/4P tier set bonus) in any Grid2 indicator

@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- ui/blizzard_settings.lua — register addon in Blizzard's native Settings panel.
 --
 -- Per deep-dive (04_blizzard_settings_api.md): InterfaceOptions_AddCategory is

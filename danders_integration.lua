@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- danders_integration.lua — optional Danders Frames integration (v2)
 -- Attaches an addon-owned FontString to each Danders Frame and fills it
 -- with iLvl (and optional 2P/4P set bonus). Inside-frame anchor avoids

@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- locales/enUS.lua — default English strings + identity-fallback metatable.
 --
 -- PATTERN: every user-facing string in the UI goes through `L["..."]`.

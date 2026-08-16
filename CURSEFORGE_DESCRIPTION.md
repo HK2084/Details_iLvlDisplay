@@ -105,3 +105,5 @@ These are Blizzard restrictions, not addon bugs.
 ***
 
 Full documentation, source code, and issue tracker on [GitHub](https://github.com/HK2084/Details_iLvlDisplay).
+
+**License:** free to download and use, and you are welcome to tweak it for your own UI. Please don't reupload it or publish modified copies — see the full license on this page.

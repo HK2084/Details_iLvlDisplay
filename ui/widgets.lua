@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- ui/widgets.lua — self-contained widget toolkit
 --
 -- DESIGN: prefer Blizzard native templates (UICheckButtonTemplate,

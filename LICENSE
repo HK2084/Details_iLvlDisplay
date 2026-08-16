@@ -1,16 +1,33 @@
-MIT License
+Custom License for: Details! Item Level Display
+Copyright © 2026 HK2084
 
-Copyright (c) 2026 HK2084
+The contents of this AddOn, excluding third-party libraries and resources, are
+copyrighted to their respective authors, with all rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This AddOn is free to download and use. The author grants you the following
+rights:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. You may use this AddOn in your personal UI and include it in UI packs,
+   provided the AddOn is distributed unmodified and retains its original name,
+   folder structure, and all copyright notices.
+
+2. You may make modifications to this AddOn for private use only. You may not
+   publish, distribute, or share modified versions of this AddOn.
+
+3. You may not reupload, redistribute, sell, sublicense, or claim ownership of
+   this AddOn or any portion of it, in original or modified form.
+
+4. You may not rename this AddOn, including its folders, files, or branding.
+
+5. This copyright notice must be included in all copies or distributions where
+   the AddOn is provided.
+
+Contributions: by submitting a pull request, patch, or other contribution, you
+grant the author a perpetual, worldwide, irrevocable, royalty-free license to
+use, modify, and distribute that contribution as part of this AddOn under this
+license. You keep the copyright in what you wrote.
+
+All rights not explicitly granted in this license are reserved by the author.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- ui/page_channels.lua — Output Channels page (REAL).
 --
 -- 5 channels stacked vertically inside a ScrollFrame (so the page survives

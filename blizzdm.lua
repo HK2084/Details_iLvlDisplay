@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- blizzdm.lua — Blizzard Damage Meter iLvl overlay
 -- Shows iLvl (and tier set bonus) next to player names on WoW's built-in
 -- damage meter (Blizzard_DamageMeter, added in 12.0).

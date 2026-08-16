@@ -1,3 +1,5 @@
+-- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
+-- Licensed for private use only; see LICENSE. No redistribution of modified copies.
 -- elvui_tags.lua — optional ElvUI party frame integration
 -- Registers two custom ElvUI tags that show iLvl (and set bonus)
 -- in ElvUI unit frames (party, raid, player, etc.):

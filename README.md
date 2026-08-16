@@ -206,4 +206,5 @@ The tags update instantly when inspect data arrives, on gear swaps, or when the 
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+Custom — free to download and use, private modifications allowed,
+redistribution of modified copies is not. See [LICENSE](LICENSE).
