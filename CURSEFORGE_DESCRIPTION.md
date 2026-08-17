@@ -36,7 +36,6 @@ Position toggle (`/dilvl position`) applies to Details! and Blizzard DM. Column 
 *   **Position toggle** — iLvl before or after player name via `/dilvl position`
 *   **Column mode works during combat** — iLvl and tier stay visible while fighting
 *   Item level colour-coded by gear tier, in the familiar quality colours (orange → purple → blue → green → grey). The tier mark's green and grey mean *season*, not gear tier
-*   **Instant iLvl via LibOpenRaid** — Details! users share iLvl instantly, no inspect delay
 *   **Two ElvUI tags** — `[dilvl]` (with brackets, `Raza [284]`) and `[dilvl:plain]` (bare number, `Raza 284`). Listed in ElvUI's tag browser, usable in any Custom Text
 *   **Danders Frames overlay** — 13 anchor positions (7 inside + 6 off-frame above/below the unit) and live text size (`/dilvl danders size <n>`, range 6-30, no `/reload` needed)
 *   **Details! fine-tuning** — pin the iLvl text size with `/dilvl details size <n>` (0 = match Details' own font) and restrict the display to a single Details! window with `/dilvl details window <n>`

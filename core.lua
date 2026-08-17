@@ -1439,6 +1439,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
+        -- Drop the derived colour bands so the next lookup re-asks Blizzard
+        -- for the season reward curve. Ten calls (four reward levels, six
+        -- quality colours), paid once per LOADING SCREEN, not per login, and
+        -- unconditional on purpose: this fires on every zone change too, and
+        -- re-deriving costs less than reasoning about when a patch could have
+        -- moved the ceiling under us. A stale ceiling is wrong in the one
+        -- direction nobody looks at.
+        util.ResetIlvlBands()
         -- Guard against multiple tickers: PLAYER_ENTERING_WORLD fires on every
         -- zone transition. Without this flag, rapid zoning within 3s creates
         -- multiple tickers and OnTick runs multiple times per interval.
@@ -2232,6 +2240,20 @@ SlashCmdList["DILVL"] = function(msg)
         print(string.format("  Color: %s  SetBonus: %s",
             db.colorIlvl and "ON" or "OFF",
             db.showSetBonus and "ON" or "OFF"))
+        -- Which colour scale is actually in force. Without this the fallback is
+        -- indistinguishable from a working derivation in a bug report, and the
+        -- fallback is the quiet failure mode we care about.
+        do
+            local bands, derived = util.GetIlvlBands()
+            local parts = {}
+            for i = 1, #bands do
+                parts[#parts + 1] = string.format("|cFF%s%d|r", bands[i][2], bands[i][1])
+            end
+            print(string.format("  iLvl colours: %s  (%s)",
+                table.concat(parts, " "),
+                derived and "derived from this season's M+ reward curve"
+                        or "|cFFFFD100FALLBACK — reward curve unavailable|r"))
+        end
         print(string.format("  Grid2: %s (host: %s)  Danders: %s (host: %s)",
             db.grid2Status and "ON" or "OFF",
             Grid2 and "loaded" or "absent",

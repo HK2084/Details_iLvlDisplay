@@ -19,7 +19,6 @@ Shows **item level** and **tier set bonus** on **Details!**, **ElvUI**, **Grid2*
 - **Column mode works during combat** — uses addon-created overlays, no taint
 - Color-coded by gear tier (see table below)
 - **2P / 4P tier set bonus** detection for Midnight Season 1 tier pieces
-- **Instant iLvl via LibOpenRaid** — if group members run Details!, their iLvl arrives via addon-comm with no inspect delay
 - Automatic background inspection of group and raid members outside of combat (fallback for players without Details!)
 - 2-hour persistent cache — survives `/reload`, loads instantly on re-login
 - Automatic re-inspection after boss kills (catches loot upgrades)
@@ -53,13 +52,24 @@ Column mode shows iLvl and tier set during combat. Columns auto-hide on narrow w
 
 ### iLvl Colors
 
-| Color | Range |
-| --- | --- |
-| Orange | BiS / top tier |
-| Purple | High end |
-| Blue | Mid |
-| Green | Low |
-| Grey | Base |
+The boundaries are not fixed numbers. They are read from this season's Mythic+
+reward levels at every loading screen, so the scale moves with the season
+instead of rotting: in Midnight season 2 that puts gold at 318, orange at 315,
+purple at 308 and blue at 305.
+
+| Color | Meaning | Season 2 |
+| --- | --- | --- |
+| Gold | Above anything Mythic+ awards | 318+ |
+| Orange | Top Mythic+ reward | 315+ |
+| Purple | Mid Mythic+ reward | 308+ |
+| Blue | Has started current content | 305+ |
+| Green | Approaching it | 285+ |
+| Grey | Last season's gear | below |
+
+Gold is deliberately empty at the start of a season and fills slowly — a colour
+you already have on day one cannot tell you anything for the rest of the season.
+If the reward levels cannot be read, the addon falls back to a fixed table and
+says so in `/dilvl debug`.
 
 ---
 
@@ -97,10 +107,13 @@ Open with `/dilvl ui` (or via Esc → Options → AddOns → Details! iLvl Displ
 
 ## How it works
 
-The addon has two data sources:
+Item levels come from Blizzard's inspect API: the addon inspects group members
+outside of combat and caches what it gets.
 
-1. **LibOpenRaid** (instant) — when group members also run Details!, their iLvl is broadcast via addon-comm. No inspect delay.
-2. **Inspect API** (fallback) — for players without Details!, the addon inspects them outside of combat.
+A second path via LibOpenRaid — where anyone running Details! broadcasts their
+gear over addon-comm with no inspect delay — is wired up but has never actually
+delivered data (the callback registration was rejected at call time). It is not
+counted as a data source until that is fixed and verified.
 
 iLvl data is cached for 2 hours per player.
 

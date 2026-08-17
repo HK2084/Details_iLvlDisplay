@@ -65,6 +65,13 @@ ns.POS_KEYS_SET = {
 -- so a user installing ElvUI later still gets the ElvUI-specific hint.
 ns.LOGIN_HINTS = {
     {
+        -- No gate, same reasoning as the season colouring below: this changes
+        -- what every number on screen MEANS. Someone who sees their own 286 go
+        -- from orange to green and is not told why will file it as a bug.
+        key  = "seasonilvlcolour",                          -- v1.5.8
+        msg  = "Item level colours now follow the current season instead of fixed numbers: gold sits above anything Mythic+ awards, then orange, purple, blue, green, grey. Expect the top colours to be empty early in a season and fill up as people gear.",
+    },
+    {
         -- No gate: this one is not a command to learn, it is a change to what
         -- the numbers already on screen MEAN, so everyone should see it once.
         key  = "seasoncolour",                              -- v1.5.6

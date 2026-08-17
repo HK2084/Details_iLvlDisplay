@@ -57,8 +57,35 @@ function U.StripRealm(name)
 end
 
 ----------------------------------------------------------------
--- iLvl color by gear tier (legendary / epic / rare / uncommon / poor).
--- Returns a WoW color escape (no |r — caller appends).
+-- iLvl colour by gear tier.
+--
+-- WHY THIS IS NOT A FIXED TABLE ANY MORE
+--
+-- It used to be, and the numbers rotted. Measured on 256 real cache entries on
+-- 2026-08-17, the old thresholds put 43.4 % of everyone met in FOUR DAYS into
+-- the top band: orange had stopped meaning "well geared" and started meaning
+-- "plays the game". And season 2 was about to make it total — the whole sample
+-- ran 157..295 while the LOWEST season-2 mythic+ reward is 305, so within days
+-- every single player would have been orange for the rest of the expansion.
+--
+-- A fixed table cannot survive that, because the thing it measures moves every
+-- season while the table does not. So the bands are derived from Blizzard's own
+-- mythic+ reward curve instead: those numbers ARE the season, Blizzard keeps
+-- them current, and we inherit that for free. Five of the six boundaries are
+-- values Blizzard defines, not values we invented.
+--
+--   artifact   >= reward(+10)      beyond what mythic+ hands out at all
+--   legendary  >= reward(+7)
+--   epic       >= reward(+4)
+--   rare       >= reward(+2)       the season floor: has started current content
+--   uncommon   >= reward(+2) - 20  the one invented number, and the mildest
+--   poor       below
+--
+-- The colours come from C_Item.GetItemQualityColor for the same reason: if
+-- Blizzard ever retunes the palette we follow instead of drifting.
+--
+-- U.ILVL_COLORS below is the FALLBACK, kept in the old shape on purpose so
+-- every consumer keeps working unchanged when the API says nothing.
 ----------------------------------------------------------------
 -- One table, two readers. Channels that write coloured TEXT need the escape
 -- sequence; Grid2 hands its colours to SetTextColor and needs numbers. Keeping
@@ -73,12 +100,93 @@ U.ILVL_COLORS = {
     {0,   "9D9D9D", 0.616, 0.616, 0.616}, -- poor grey
 }
 
+-- Key levels the boundaries hang on, highest first, and the quality each maps
+-- to. Enum.ItemQuality.Artifact (6) sits above Legendary and is the point of
+-- the whole exercise: a band that stays EMPTY for weeks and only fills for
+-- people whose gear provably did not come from mythic+.
+local BAND_KEYS = {10, 7, 4, 2}
+local BAND_QUALITY = {6, 5, 4, 3}   -- artifact, legendary, epic, rare
+local UNCOMMON_BELOW_FLOOR = 20     -- the only invented number in the scheme
+local PLAUSIBLE_MIN = 200           -- see validation below
+
+-- Nil until first use, then a table in U.ILVL_COLORS' shape, or `false` meaning
+-- "asked, got nothing usable, use the fallback and do not ask again this login".
+local derivedBands = nil
+
+local function qualityColor(quality)
+    if not (C_Item and C_Item.GetItemQualityColor) then return nil end
+    local ok, r, g, b = pcall(C_Item.GetItemQualityColor, quality)
+    if not ok or type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" then
+        return nil
+    end
+    return r, g, b, format("%02X%02X%02X", r * 255 + 0.5, g * 255 + 0.5, b * 255 + 0.5)
+end
+
+local function rewardFor(keyLevel)
+    if not (C_MythicPlus and C_MythicPlus.GetRewardLevelFromKeystoneLevel) then return nil end
+    local ok, lvl = pcall(C_MythicPlus.GetRewardLevelFromKeystoneLevel, keyLevel)
+    -- A ZERO IS MORE DANGEROUS THAN A NIL HERE, which is why this tests the
+    -- value and not just its presence. Measured 2026-08-17:
+    -- GetRewardLevelForDifficultyLevel(10) returned endOfRunRewardLevel = 0.
+    -- A zero ceiling would make every threshold negative and paint EVERY player
+    -- artifact — the exact inverse of what this feature is for. An API that
+    -- goes quiet must disable the feature, never flip it.
+    if not ok or type(lvl) ~= "number" or lvl < PLAUSIBLE_MIN then return nil end
+    return lvl
+end
+
+local function buildBands()
+    local rows, prev = {}, nil
+    for i = 1, #BAND_KEYS do
+        local lvl = rewardFor(BAND_KEYS[i])
+        if not lvl then return false end
+        -- Strictly descending, or the curve is not a curve and we do not
+        -- understand it well enough to colour by it.
+        if prev and lvl >= prev then return false end
+        prev = lvl
+        local r, g, b, hex = qualityColor(BAND_QUALITY[i])
+        if not hex then return false end
+        rows[i] = {lvl, hex, r, g, b}
+    end
+
+    local floor = rows[#rows][1] - UNCOMMON_BELOW_FLOOR
+    if floor <= 0 then return false end
+    local r, g, b, hex = qualityColor(2)   -- uncommon
+    if not hex then return false end
+    rows[#rows + 1] = {floor, hex, r, g, b}
+
+    r, g, b, hex = qualityColor(0)         -- poor, catch-all
+    if not hex then return false end
+    rows[#rows + 1] = {0, hex, r, g, b}
+
+    return rows
+end
+
+-- Called by core.lua on login. Deliberately NOT cached across sessions: a
+-- stored ceiling that a patch has moved would be wrong in the one direction
+-- nobody checks, and this costs four API calls once per login.
+function U.ResetIlvlBands()
+    derivedBands = nil
+end
+
+local function ilvlBands()
+    if derivedBands == nil then derivedBands = buildBands() end
+    return derivedBands or U.ILVL_COLORS
+end
+
+-- Exposed for /dilvl debug so the dump can show which scale is in force.
+function U.GetIlvlBands()
+    local b = ilvlBands()
+    return b, (b ~= U.ILVL_COLORS)
+end
+
 local function ilvlColorRow(ilvl)
-    for i = 1, #U.ILVL_COLORS do
-        local row = U.ILVL_COLORS[i]
+    local bands = ilvlBands()
+    for i = 1, #bands do
+        local row = bands[i]
         if ilvl >= row[1] then return row end
     end
-    return U.ILVL_COLORS[#U.ILVL_COLORS]
+    return bands[#bands]
 end
 
 function U.GetIlvlColor(ilvl)
