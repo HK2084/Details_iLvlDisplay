@@ -1,14 +1,13 @@
 # Changelog
 
-## v1.5.7
+## v1.5.8
 
 ### New
 
-*   **The AddOn list is no longer English-only.** The description under the addon's name now reads in German, Russian, Simplified and Traditional Chinese, and Korean — in each case using the client's own wording for item level and set bonus, not a dictionary rendering of the English.
-*   **ElvUI's tag browser explains `[dilvl]` and `[dilvl:plain]` in German.** Those two descriptions — what you read when you search the browser for `dilvl` — were the last text in the addon that stayed English on every client. Any language without a translation falls back to English as before.
+*   **Item level colours now follow the season instead of fixed numbers.** The boundaries are read from this season's Mythic+ reward levels, so they move when the season does. A new gold sits above anything Mythic+ awards — reaching it means the gear came from somewhere else — and it is meant to be empty for the first weeks. The old fixed scale had drifted far enough that 43 % of everyone you met showed up in the top colour; with season 2's gear it would have been all of them.
 
 ### Fixed
 
-*   **Nobody is shown under a name the addon invented.** Details! rewrites the text on its own bars: a guild nickname another player set for you, the realm suffix stripped off, a Cyrillic name romanised. That rendered text was being kept as the player's identity for up to seven days and written onto Blizzard's damage-meter rows. Only a name from the group roster or the combat log is stored now — and where there is neither, the row simply keeps no tag. A missing tag is fine, a wrong name is not.
+*   **The description no longer advertises instant item levels via LibOpenRaid.** That path was wired up years ago but its callback was rejected the moment it registered, so it has never delivered a single value — every item level you have ever seen came from the inspect route. Nothing about the addon got worse; a claim that was not true was removed. The path itself will be repaired in a later release, and will not be advertised again until it can be shown working.
 
 Full release history: [HISTORY.md](HISTORY.md)
