@@ -54,6 +54,21 @@ local isInspecting = false
 local pendingInspect = {}      -- guid -> true for every NotifyInspect WE fired (a set, not a scalar: sweeps overlap)
 local inspectGeneration  = 0   -- bumped by QueueGroupInspect; invalidates in-flight safety-timeout closures from a prior sweep
 local lastManualInspectTime = 0 -- GetTime() of last INSPECT_READY we didn't trigger (ElvUI-safe guard)
+-- Inspect outcome accounting. Every field counts a RESULT, never a precondition:
+-- `sent` is a NotifyInspect that actually left, not a queue insert; `ok` is an
+-- item level we actually stored, not an INSPECT_READY we happened to receive.
+-- Before this existed the dump printed "Queue: 0 pending  inspecting: false"
+-- for BOTH "everyone is cached, nothing to do" and "all 20 requests died" —
+-- opposite states, and the only distinction a bug report needs.
+local inspectStats = {
+    sent     = 0,   -- NotifyInspect calls that actually fired
+    ok       = 0,   -- our request answered AND an item level was stored (a visible tag)
+    empty    = 0,   -- our request answered but GetInspectItemLevel gave nothing
+    timedOut = 0,   -- 15s safety timer fired with our request still unanswered
+    requeued = 0,   -- timed-out entries actually put back on the queue
+    deferred = 0,   -- turns skipped BEFORE spending a NotifyInspect (CanInspect false)
+}
+local INSPECT_FAIL_LIMIT = 3
 local lastInspectInfo = nil -- {name, ilvl, source, time} last completed inspect for debug
 local detailsReady = false
 -- Weak keys, same pattern as danders_integration.lua: Details! throws its bar
@@ -1238,6 +1253,7 @@ local function ProcessNextInspect()
     if SafeUnitGUID(entry.unit) == entry.guid and CanInspect(entry.unit, false) then
         pendingInspect[entry.guid] = true -- track that WE triggered this inspect
         NotifyInspect(entry.unit)
+        inspectStats.sent = inspectStats.sent + 1 -- counted AFTER the call left
         -- Safety timeout: if INSPECT_READY never fires (server throttle, player
         -- LoS'd mid-inspect, disconnect), unblock the queue after 15s. Capture
         -- the sweep generation so that a QueueGroupInspect in the meantime (it
@@ -1245,16 +1261,46 @@ local function ProcessNextInspect()
         -- a no-op — otherwise it could start a SECOND ProcessNextInspect chain
         -- over the freshly-rebuilt queue (double inspects / out-of-order removal).
         local gen = inspectGeneration
+        -- The guard no longer tests `isInspecting`. That was a PRECONDITION flag
+        -- and the wrong one: two ProcessNextInspect chains can overlap, and when
+        -- they do, the first timeout sets isInspecting = false and the second one
+        -- then fails its own guard — so that request's guid stayed in
+        -- pendingInspect forever, uncounted and unretried. `inspectGeneration ==
+        -- gen` plus `pendingInspect[entry.guid]` already say exactly the right
+        -- thing: THIS request, from THIS sweep, is still unanswered.
         C_Timer.After(15, function()
-            if inspectGeneration == gen and isInspecting and pendingInspect[entry.guid] then
+            if inspectGeneration == gen and pendingInspect[entry.guid] then
                 isInspecting = false
                 pendingInspect[entry.guid] = nil
+                inspectStats.timedOut = inspectStats.timedOut + 1
+                -- Put the entry BACK. It was table.remove'd off the head before the
+                -- request went out and the old code never re-added it, so a
+                -- timed-out player got no second chance in this sweep — and since
+                -- nothing sweeps periodically (the 2s ticker does not call
+                -- QueueGroupInspect; every call site is event-driven), a static
+                -- group meant no second chance for the rest of the session.
+                --
+                -- The bound is entry-scoped on purpose. A guid-keyed budget would
+                -- outlive the sweep and write off a player who was merely behind a
+                -- loading screen, for the whole evening, with no reset on zoning.
+                -- Bounding the entry cannot do that: the next sweep builds a fresh
+                -- entry and the player gets a clean slate.
+                local fails = (entry.timeouts or 0) + 1
+                entry.timeouts = fails
+                if fails < INSPECT_FAIL_LIMIT then
+                    inspectStats.requeued = inspectStats.requeued + 1
+                    table.insert(inspectQueue, entry) -- tail: everyone else goes first
+                end
                 C_Timer.After(0.5, ProcessNextInspect)
             end
         end)
     else
         -- Can't inspect right now (out of range, throttled, etc.).
         -- Re-queue up to 3 times so we retry after other players are done.
+        -- Deliberately NOT a timeout strike: "I could not even ask" is a
+        -- different outcome from "the server ignored me", and conflating them
+        -- would spend the re-queue budget without ever sending a request.
+        inspectStats.deferred = inspectStats.deferred + 1
         entry.retries = (entry.retries or 0) + 1
         if entry.retries <= 3 then
             table.insert(inspectQueue, entry)
@@ -1588,6 +1634,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local guid = ...
         if isSecretValue(guid) then return end
         local prefix, count = GetGroupInfo()
+        local storedIlvl = false -- RESULT flag: did this event actually produce a tag?
 
         for i = 1, count do
             local u = prefix .. i
@@ -1615,6 +1662,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     local cachedName = ilvlCache[guid] and ilvlCache[guid].name
                     ilvlCache[guid] = {ilvl = ilvlFloor, time = time(), name = fullName or name or cachedName, source = "inspect"}
                     lastInspectInfo = {name = fullName or name or cachedName, ilvl = ilvlFloor, time = GetTime()}
+                    storedIlvl = true -- set at the WRITE, so `ok` counts stored data, not events
                     -- Populate nameToIlvl directly — don't rely on Details! combat
                     -- actors (player may not have dealt damage/healed yet).
                     if name then
@@ -1635,6 +1683,16 @@ frame:SetScript("OnEvent", function(self, event, ...)
         NotifyElvUI(lastInspectInfo and lastInspectInfo.name or nil)
         if pendingInspect[guid] then
             pendingInspect[guid] = nil
+            -- Count the OUTCOME, not the event. An INSPECT_READY carrying no
+            -- readable item level is a completely different failure from one that
+            -- never arrived, and only `ok` means a tag now exists. That is the
+            -- difference between "the server ignores us" and "the server answers
+            -- with nothing" in a pasted bug report.
+            if storedIlvl then
+                inspectStats.ok = inspectStats.ok + 1
+            else
+                inspectStats.empty = inspectStats.empty + 1
+            end
             ClearInspectPlayer()
             C_Timer.After(1.0, ProcessNextInspect)
         elseif InspectWindowOpen() then
@@ -2262,7 +2320,6 @@ SlashCmdList["DILVL"] = function(msg)
         -- are still in flight rather than a single GUID.
         local pendingCount = 0
         for _ in pairs(pendingInspect) do pendingCount = pendingCount + 1 end
-        local pending = (pendingCount > 0) and (pendingCount .. " in flight") or "none"
         -- GetBuildInfo returns version, build, date, tocversion. Field 4 is the
         -- INTERFACE number (120100), not the build (69283) -- labelling it
         -- "WoW build" sent every bug report in with the wrong number.
@@ -2362,8 +2419,20 @@ SlashCmdList["DILVL"] = function(msg)
         print(string.format("  Resize-hook: %d installed / %d attempts  noFrame=%d  field=%s  fired=%d  refreshed=%d",
             resizeStats.installed, resizeStats.attempts, resizeStats.noFrame,
             tostring(resizeStats.field), resizeStats.fired, resizeStats.refreshed))
-        print(string.format("  Queue: %d pending  inspecting: %s  manualPause: %s  pending: %s",
-            #inspectQueue, tostring(isInspecting), manualPause, pending))
+        print(string.format("  Queue: %d waiting  %d in flight  inspecting: %s  manualPause: %s",
+            #inspectQueue, pendingCount, tostring(isInspecting), manualPause))
+        -- Outcomes, not preconditions. The line above still only describes the
+        -- queue's CURRENT shape, and "0 waiting" reads the same whether every
+        -- player is cached or every request died. This line separates them:
+        --   sent      NotifyInspect calls that really left
+        --   ok        answers that produced a stored item level (a visible tag)
+        --   empty     answers that carried no readable item level
+        --   timedOut  15s expiries — the server never answered
+        --   requeued  timed-out players handed another turn
+        --   deferred  turns skipped before spending a request (CanInspect false)
+        print(string.format("  Inspects: %d sent  %d ok  %d empty  %d timed out  %d re-queued  %d deferred",
+            inspectStats.sent, inspectStats.ok, inspectStats.empty,
+            inspectStats.timedOut, inspectStats.requeued, inspectStats.deferred))
         -- Queue contents (who is waiting)
         if #inspectQueue > 0 then
             local qNames = {}
