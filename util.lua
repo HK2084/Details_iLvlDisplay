@@ -84,8 +84,18 @@ end
 -- The colours come from C_Item.GetItemQualityColor for the same reason: if
 -- Blizzard ever retunes the palette we follow instead of drifting.
 --
--- U.ILVL_COLORS below is the FALLBACK, kept in the old shape on purpose so
--- every consumer keeps working unchanged when the API says nothing.
+-- U.ILVL_COLORS below is the FALLBACK, kept in the same row shape so every
+-- consumer keeps working unchanged when the API says nothing.
+--
+-- IT IS A SNAPSHOT AND IT WILL ROT. These are the derived season 2 values,
+-- measured in-game 2026-08-18: keys 2/4/7/10 returned 305/308/315/318. When
+-- season 3 raises the reward curve this table becomes too GENEROUS — everyone
+-- gold — which is the same failure the season 1 numbers produced on season 2
+-- launch day, only inverted. Refresh it at every season start:
+--     /run for _,k in ipairs({2,4,7,10}) do print(k, C_MythicPlus.GetRewardLevelFromKeystoneLevel(k)) end
+-- The colours are measured too (C_Item.GetItemQualityColor, same day) rather
+-- than copied from a wiki — Blizzard's palette lives in the engine, not in
+-- any Lua file we can diff.
 ----------------------------------------------------------------
 -- One table, two readers. Channels that write coloured TEXT need the escape
 -- sequence; Grid2 hands its colours to SetTextColor and needs numbers. Keeping
@@ -93,10 +103,11 @@ end
 -- Grid2 channel ended up permanently white while everything else was coloured.
 -- Ordered high to low; the last row is the catch-all.
 U.ILVL_COLORS = {
-    {280, "FF8000", 1.000, 0.502, 0.000}, -- legendary orange
-    {268, "A335EE", 0.639, 0.208, 0.933}, -- epic purple
-    {255, "0070DD", 0.000, 0.439, 0.867}, -- rare blue
-    {242, "1EFF00", 0.118, 1.000, 0.000}, -- uncommon green
+    {318, "E6CC80", 0.902, 0.800, 0.502}, -- artifact gold   (key +10)
+    {315, "FF8000", 1.000, 0.502, 0.000}, -- legendary orange (key +7)
+    {308, "A335EE", 0.639, 0.208, 0.933}, -- epic purple      (key +4)
+    {305, "0070DD", 0.000, 0.439, 0.867}, -- rare blue        (key +2, season floor)
+    {285, "1EFF00", 0.118, 1.000, 0.000}, -- uncommon green   (floor - 20)
     {0,   "9D9D9D", 0.616, 0.616, 0.616}, -- poor grey
 }
 
@@ -109,9 +120,23 @@ local BAND_QUALITY = {6, 5, 4, 3}   -- artifact, legendary, epic, rare
 local UNCOMMON_BELOW_FLOOR = 20     -- the only invented number in the scheme
 local PLAUSIBLE_MIN = 200           -- see validation below
 
--- Nil until first use, then a table in U.ILVL_COLORS' shape, or `false` meaning
--- "asked, got nothing usable, use the fallback and do not ask again this login".
+-- Nil until first use, then a table in U.ILVL_COLORS' shape, or `false`
+-- meaning "asked, got nothing usable, using the fallback".
+--
+-- `false` used to be final until the next loading screen. It cannot be: on a
+-- cold login the reward levels are NOT loaded yet when we first ask, so the
+-- very first attempt always fails and the whole session then runs on the
+-- fallback scale. That shipped in 1.5.8 and hit live on season 2 launch day --
+-- everyone above 280 painted orange, which is the exact rot the derived scale
+-- exists to prevent. See U.RetryIlvlBands below.
 local derivedBands = nil
+
+-- Bounded, because the retry is driven by an event that our own request
+-- provokes. Without a cap a client that never gets reward data would ping-pong
+-- request -> event -> request forever.
+local MAX_RETRIES = 4
+local retries = 0
+local requested = false
 
 local function qualityColor(quality)
     if not (C_Item and C_Item.GetItemQualityColor) then return nil end
@@ -162,16 +187,46 @@ local function buildBands()
     return rows
 end
 
+-- Nothing asks the server for the season reward levels on its own. Blizzard's
+-- own UI does not assume they are there either -- Blizzard_WeeklyRewards.lua
+-- says so in as many words ("we might not have reward data available") -- and
+-- both ChallengesUI:OnShow and WeeklyRewards:FullRefresh call RequestMapInfo()
+-- and then wait for CHALLENGE_MODE_MAPS_UPDATE. We ask exactly once per reset,
+-- which is what turns a permanent fallback into a fallback that lasts a second.
+local function requestSeasonData()
+    if requested then return end
+    requested = true
+    if C_MythicPlus and C_MythicPlus.RequestMapInfo then
+        pcall(C_MythicPlus.RequestMapInfo)
+    end
+end
+
 -- Called by core.lua on login. Deliberately NOT cached across sessions: a
 -- stored ceiling that a patch has moved would be wrong in the one direction
--- nobody checks, and this costs four API calls once per login.
+-- nobody checks, and this costs ten API calls once per loading screen.
 function U.ResetIlvlBands()
     derivedBands = nil
+    retries = 0
+    requested = false
 end
 
 local function ilvlBands()
-    if derivedBands == nil then derivedBands = buildBands() end
+    if derivedBands == nil then
+        derivedBands = buildBands()
+        if not derivedBands then requestSeasonData() end
+    end
     return derivedBands or U.ILVL_COLORS
+end
+
+-- Called by core.lua when CHALLENGE_MODE_MAPS_UPDATE reports that the season
+-- data arrived. Returns true only when the scale actually changed from
+-- fallback to derived, so the caller repaints once and not on every event.
+function U.RetryIlvlBands()
+    if derivedBands then return false end        -- already derived, nothing to do
+    if retries >= MAX_RETRIES then return false end
+    retries = retries + 1
+    derivedBands = nil
+    return ilvlBands() ~= U.ILVL_COLORS
 end
 
 -- Exposed for /dilvl debug so the dump can show which scale is in force.

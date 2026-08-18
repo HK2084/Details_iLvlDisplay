@@ -7,7 +7,7 @@
 ## Notes-zhTW: 在玩家名稱旁顯示物品等級與套裝效果。
 ## Notes-koKR: 플레이어 이름 옆에 아이템 레벨과 세트 효과를 표시합니다.
 ## Author: HK2084
-## Version: 1.5.8
+## Version: 1.5.9
 ## IconTexture: Interface\AddOns\Details_iLvlDisplay\icon
 ## OptionalDeps: Details, QuickItemLevel, ElvUI, LibOpenRaid-1.0, Blizzard_DamageMeter, Grid2, DandersFrames
 ## SavedVariables: Details_iLvlDisplayDB

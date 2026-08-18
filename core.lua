@@ -1352,6 +1352,7 @@ frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 frame:RegisterEvent("ENCOUNTER_END")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+frame:RegisterEvent("CHALLENGE_MODE_MAPS_UPDATE")
 
 frame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -1436,6 +1437,22 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     end)
                 end
             end
+        end
+
+    elseif event == "CHALLENGE_MODE_MAPS_UPDATE" then
+        -- The server answering util's RequestMapInfo(). This is the only signal
+        -- that the season reward levels have arrived, and without it a cold
+        -- login is stuck on the fallback colour scale for the whole session:
+        -- we derive the bands at PLAYER_ENTERING_WORLD, which on a fresh login
+        -- is always before the data exists. Reported live on season 2 launch
+        -- day, 2026-08-18 — every player above 280 painted orange.
+        --
+        -- Repaint only when the scale actually flipped. RetryIlvlBands is
+        -- bounded, so a client that never receives reward data settles on the
+        -- fallback instead of asking forever.
+        if util.RetryIlvlBands() then
+            RefreshAllBarTexts()
+            NotifyElvUI()
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
