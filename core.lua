@@ -121,6 +121,11 @@ local CALLBACK_ERROR_LIMIT = 5
 local _callbackErrors = {}      -- name -> consecutive error count
 local _callbackErrorLogged = {} -- name -> bool (logged-once flag)
 local _callbackParked = {}      -- name -> fn, set aside on auto-unregister so it can be restored
+-- The live registry. A file-local, NOT a field on Details_iLvlDisplayAPI any
+-- more: a public table is a public write, and the ownership check in
+-- RegisterCallback would be decorative if one assignment could walk around it.
+local _callbackRegistry = {}     -- name -> fn
+local _callbackRefuseLogged = {} -- name -> bool, so a refusal is reported once, not per call
 local function SafeCall(fn, ...)
     if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
     local ok, err = pcall(fn, ...)
@@ -1391,6 +1396,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
             -- old time = 0 marker destroyed fresh data.
             local now = time()
             for guid, data in pairs(ilvlCache) do
+                -- A non-number ilvl passes every `cached.ilvl` truthiness guard
+                -- and is then concatenated into a tag. Clearing the field turns
+                -- it into "not inspected yet" — a missing tag, which is fine.
+                -- The entry itself is kept, matching the rule just above.
+                if data.ilvl ~= nil and type(data.ilvl) ~= "number" then data.ilvl = nil end
                 if type(data.time) == "number" and data.time > 0
                    and (now - data.time) >= CACHE_DISCARD then
                     ilvlCache[guid] = nil
@@ -2980,7 +2990,14 @@ Details_iLvlDisplayAPI = {
     -- Returns cached iLvl entry + set bonus string for a GUID.
     -- Both may be nil if the player hasn't been inspected yet.
     GetCacheData = function(guid)
-        if not guid or not ilvlCache then return nil, nil end
+        -- A SECRET guid is truthy, so `not guid` waves it straight through and
+        -- the table lookups below throw "attempt to use a secret value as a
+        -- table key". type() cannot see it either: a secret GUID still reports
+        -- "string". This is PUBLIC — the obvious third-party call is
+        -- API.GetCacheData(UnitGUID(unit)), and inside a restricted instance
+        -- that value IS secret, so the throw would land in our file with our
+        -- addon's name on it, for someone else's mistake.
+        if not guid or isSecretValue(guid) or not ilvlCache then return nil, nil end
         return ilvlCache[guid], setBonusCache[guid]
     end,
     -- Resolve a player name to GUID via group roster, with ilvlCache fallback.
@@ -2992,7 +3009,11 @@ Details_iLvlDisplayAPI = {
     -- Fallback: if player left the group, reverse-lookup from ilvlCache
     -- so Blizz DM can still show iLvl for past sessions.
     ResolveGUIDByName = function(name)
-        if not name then return nil end
+        -- Same hole as GetCacheData, one function along: StripRealm hands a
+        -- secret back UNCHANGED, so it survives into the `name == pName`
+        -- comparison below, and comparing a secret throws. A secret name
+        -- carries nothing we could resolve anyway.
+        if not name or isSecretValue(name) then return nil end
         local cleanName = StripRealm(name)
         local pName = SafeUnitName("player")
         -- Claim the local player only on a form that CANNOT belong to anyone
@@ -3125,35 +3146,87 @@ Details_iLvlDisplayAPI = {
     -- Shared realm stripper. Every channel must use this and never Ambiguate
     -- directly — see util.StripRealm.
     StripRealm = StripRealm,
-    -- Live db reference — elvui_tags.lua checks db.elvuiTag at call time.
+    -- Live db reference, and it stays live on purpose. READ-ONLY BY CONTRACT
+    -- for anything outside this addon: do not write through it.
+    -- Not copied and not proxied, for two reasons. Our own kill switches write
+    -- through it (blizzdm.lua:145, danders_integration.lua:177 and :265) and
+    -- against a copy those writes would silently vanish — the auto-disable
+    -- would fire, not persist, and the error loop it exists to stop would
+    -- restart. And this is a per-frame call, so a copy would allocate a table
+    -- per tagged unit per refresh. If an external consumer ever needs
+    -- protection the answer is a scalar GetSetting(key) next to this one.
     GetDb = function() return db end,
     -- Callback registry — multiple consumers (elvui_tags, blizzdm) register here.
     -- Fires on: INSPECT_READY, UpdatePlayerCache, GROUP_ROSTER_UPDATE.
-    _callbacks = {},
+    -- The registry table is a file-local now (_callbackRegistry, top of file)
+    -- and no longer a field here. It used to be `_callbacks = {}`, and a public
+    -- table is a public write: one line of
+    -- Details_iLvlDisplayAPI._callbacks.elvui = fn replaced our channel with no
+    -- message anywhere, walking straight around the ownership rule below.
+    --
+    -- OWNERSHIP RULE: a name that is live OR parked belongs to whoever put the
+    -- function there. Registering a DIFFERENT function under it is refused and
+    -- reported; registering the SAME function is allowed, which is what keeps
+    -- RestoreCallback working unchanged. Returns true when installed, false
+    -- when refused. A refusal touches nothing — not the registry, not the
+    -- error counters.
     RegisterCallback = function(self, name, fn)
-        self._callbacks[name] = fn
-        -- Clear any stale counters from a prior auto-unregister so the
-        -- newly-registered callback gets a fresh 0/5 budget. Without
-        -- this, a re-register after auto-unregister would inherit the
-        -- old 5 count and trip the limit on its first error.
-        _callbackErrors[name] = nil
-        _callbackErrorLogged[name] = nil
+        -- isSecretValue, not type(): a secret string still reports "string",
+        -- and every line below uses `name` as a table key.
+        if type(name) ~= "string" or isSecretValue(name)
+           or type(fn) ~= "function" or isSecretValue(fn) then
+            geterrorhandler()("Details! iLvl Display: RegisterCallback expects "
+                .. "(name, fn) — a plain string and a function. Call it with "
+                .. "a colon: API:RegisterCallback(name, fn).")
+            return false
+        end
+        -- Parked counts as taken: the callback is on its way back through
+        -- RestoreCallback and the slot is still its owner's.
+        local held = _callbackRegistry[name] or _callbackParked[name]
+        if held and held ~= fn then
+            if not _callbackRefuseLogged[name] then
+                _callbackRefuseLogged[name] = true
+                geterrorhandler()("Details! iLvl Display: callback name [" .. name
+                    .. "] is already in use — pick a unique one. Nothing was changed.")
+            end
+            return false
+        end
+        local wasLive = _callbackRegistry[name] ~= nil
+        _callbackRegistry[name] = fn
+        if not wasLive then
+            -- Fresh budget ONLY when the slot was actually vacant (first
+            -- install, or a restore after auto-unregister). Re-registering over
+            -- a LIVE callback must not wipe its error count, or the
+            -- CALLBACK_ERROR_LIMIT kill switch below could be defeated forever
+            -- by re-registering after every error.
+            _callbackErrors[name] = nil
+            _callbackErrorLogged[name] = nil
+        end
+        return true
     end,
     UnregisterCallback = function(self, name)
-        self._callbacks[name] = nil
+        if type(name) ~= "string" or isSecretValue(name) then return false end
+        _callbackRegistry[name] = nil
         _callbackErrors[name] = nil
         _callbackErrorLogged[name] = nil
         _callbackParked[name] = nil
+        _callbackRefuseLogged[name] = nil
+        return true
     end,
     -- Bring a parked callback back after the error that killed it is gone
     -- (ElvUI finished its profile switch, Grid2 reloaded its layout).
     -- Called from the /dilvl elvui|grid2 on branches, which reset the
     -- counters anyway. No-op if nothing is parked under that name.
     RestoreCallback = function(self, name)
+        if type(name) ~= "string" or isSecretValue(name) then return false end
         local parked = _callbackParked[name]
-        if not parked or self._callbacks[name] then return false end
+        if not parked or _callbackRegistry[name] then return false end
+        -- Register FIRST, unpark only on success. The old order cleared the
+        -- park and then called RegisterCallback, which could not fail. It can
+        -- now, and a refusal after the clear would throw the parked function
+        -- away for the session — the exact outcome parking exists to prevent.
+        if not self:RegisterCallback(name, parked) then return false end
         _callbackParked[name] = nil
-        self:RegisterCallback(name, parked)
         return true
     end,
     -- Secret-value defense surface (#26). Sub-files used to duplicate
@@ -3185,7 +3258,7 @@ Details_iLvlDisplayAPI = {
 -- logic such as resetting per-player resolve-fail counters (blizzdm.lua v1.4.2).
 -- Existing subscribers ignore the extra arg — Lua silently drops unused params.
 NotifyElvUI = function(playerName)
-    local registry = Details_iLvlDisplayAPI._callbacks
+    local registry = _callbackRegistry
     for name, cb in pairs(registry) do
         local ok, err = pcall(cb, playerName)
         if ok then

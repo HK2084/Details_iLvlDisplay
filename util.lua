@@ -11,6 +11,11 @@
 
 local _, ns = ...
 local U = ns.util
+-- secrets.lua loads before this file (see the TOC), so the guard is already
+-- built. Needed by ilvlColorRow below: type() cannot see a secret, only this
+-- can. (StripRealm further down still calls issecretvalue raw — routing
+-- that one through here too is a separate, unrelated tidy-up.)
+local isSecretValue = ns.secrets.isSecretValue
 
 ----------------------------------------------------------------
 -- Strip a realm suffix: "Fhina-Thrall" -> "Fhina".
@@ -237,6 +242,16 @@ end
 
 local function ilvlColorRow(ilvl)
     local bands = ilvlBands()
+    -- PUBLIC entry point: GetIlvlColor and GetIlvlColorRGB below are re-exported
+    -- on Details_iLvlDisplayAPI, so this runs on values we did not produce.
+    -- `ilvl >= row[1]` throws for nil AND for a string, and cached.ilvl comes
+    -- straight out of SavedVariables. type() alone is not enough either: a
+    -- SECRET number reports "number" and the comparison would still throw.
+    -- Grey, never nil — every caller concatenates or unpacks the return
+    -- value, so nil would only move the throw one line down into the caller.
+    if type(ilvl) ~= "number" or isSecretValue(ilvl) then
+        return bands[#bands]
+    end
     for i = 1, #bands do
         local row = bands[i]
         if ilvl >= row[1] then return row end
