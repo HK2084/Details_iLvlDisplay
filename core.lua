@@ -1016,21 +1016,47 @@ end
 ---------------------------------------------------------------
 -- Scan and hook all Details! bars
 ---------------------------------------------------------------
+local function HookOneInstance(instance)
+    if not instance then return end
+
+    HookInstanceResize(instance) -- hook resize event on the Details! window
+
+    -- No bars: a window that exists in the array but was never built (closed
+    -- window, or pre-init right after login). SKIP it, never abandon the scan.
+    local bars = instance.barras
+    if not bars then return end
+
+    for i = 1, #bars do
+        HookBarTextIfNeeded(bars[i])
+    end
+end
+
 local function HookAllBars()
     if not Details then return end
 
-    for instanceId = 1, 10 do
-        local ok, instance = pcall(Details.GetInstance, Details, instanceId)
-        if not ok or not instance then break end
+    -- Details! keeps EVERY window in one array — open or closed — and exposes it
+    -- through the public Details:GetAllInstances() (classes/class_instance.lua:1090,
+    -- declared in that addon's public surface at Definitions.lua:300). Its own doc
+    -- comment says it plainly: "these instance could be not initialized yet, some
+    -- might be open, some not in use". Verified against the installed build
+    -- #Details.20260811.15270.172.
+    --
+    -- The old "1..10 + break" loop was wrong twice:
+    --   * `break` on a missing `barras` killed every window BEHIND a closed one.
+    --     A closed window keeps its array slot and never gets its widgets
+    --     rebuilt, so window 1 closed + window 2 open meant: bail at index 1 and
+    --     tag NOTHING, in any window. That is a total blackout of the Details!
+    --     channel, not a partial one.
+    --   * the cap of 10 hid windows 11-30, and 30 is Details' own maximum.
+    --
+    -- pcall also covers a Details! without the accessor: pcall(nil, ...) returns
+    -- false rather than throwing, so the Details! surface simply stays off and
+    -- every other channel is untouched.
+    local ok, instances = pcall(Details.GetAllInstances, Details)
+    if not ok or type(instances) ~= "table" then return end
 
-        HookInstanceResize(instance) -- hook resize event on the Details! window
-
-        local bars = instance.barras
-        if not bars then break end
-
-        for i = 1, #bars do
-            HookBarTextIfNeeded(bars[i])
-        end
+    for i = 1, #instances do
+        HookOneInstance(instances[i])
     end
 end
 
@@ -2327,6 +2353,12 @@ SlashCmdList["DILVL"] = function(msg)
         -- OnSizeChanged hook never attached — that was the pre-1.5.3 bug (we read
         -- instance.baseFrame, Details! spells it baseframe). Expect installed>=1 per
         -- open Details! window, field=baseframe, and fired>0 after dragging the window edge.
+        --
+        -- READ `installed`, NOT `attempts`. Since v1.6 the scan walks every window
+        -- Details! knows about instead of stopping at the first closed one, so
+        -- `attempts` free-runs (the ticker re-scans every 2s) and `noFrame` climbs
+        -- for as long as any window stays closed. Both are normal now; only
+        -- installed=0 with an open window is a fault.
         print(string.format("  Resize-hook: %d installed / %d attempts  noFrame=%d  field=%s  fired=%d  refreshed=%d",
             resizeStats.installed, resizeStats.attempts, resizeStats.noFrame,
             tostring(resizeStats.field), resizeStats.fired, resizeStats.refreshed))
