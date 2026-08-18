@@ -99,6 +99,12 @@ local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- true only once C_Timer.NewTicker actually returned (what /dilvl debug reports)
 local bootstrapArmed = false -- guard against scheduling the 3s login setup twice on rapid zoning
 local selfBonusRetries = 0 -- bounded re-reads when our own tier items are not in the item cache yet
+-- Group members whose LAST set-bonus read came back incomplete. This records the
+-- RESULT ("no bonus established"), not the precondition ("was inspected"): it is
+-- set only when GetSetBonusForUnit reported complete == false, and cleared the
+-- moment a complete read lands. Keyed by the GUID from INSPECT_READY, which is
+-- rejected earlier when secret, so this table never holds a secret key.
+local sbIncomplete = {}
 local NotifyElvUI -- forward declaration; assigned after Details_iLvlDisplayAPI is built
 -- Defaults-merge / schema-migration / validators are defined further down
 -- but referenced inside the ADDON_LOADED OnEvent closure, so they need
@@ -1651,11 +1657,24 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     -- can distinguish from "never inspected" (nil = not in table).
                     -- Same rule as UpdatePlayerCache: an INCOMPLETE read (item
                     -- data not cached yet) must never overwrite a known bonus.
-                    -- The re-inspect after the next boss kill will fill it in.
-                    if sbComplete or setBonusCache[guid] == nil then
+                    --
+                    -- The FIRST read used to be exempt from that rule, and that is
+                    -- the one case that puts a WRONG number on screen: a member
+                    -- wearing four tier pieces of which two are not in the item
+                    -- cache yet counts as two, and that "2P" was persisted into
+                    -- SavedVariables and rendered. A missing tag is fine, a wrong one
+                    -- is not — so an incomplete first read now records "known
+                    -- nothing" instead, which is exactly what the player's own path
+                    -- already does.
+                    if sbComplete then
                         setBonusCache[guid] = setBonus or false
+                        sbIncomplete[guid] = nil
                     else
+                        if setBonusCache[guid] == nil then
+                            setBonusCache[guid] = false -- first read: never a partial count
+                        end
                         setBonus = setBonusCache[guid] or nil
+                        sbIncomplete[guid] = true
                     end
                     -- Fallback to existing cached name if UnitName() returned nil
                     -- (unit token can go stale between queue and INSPECT_READY)
@@ -1663,6 +1682,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     ilvlCache[guid] = {ilvl = ilvlFloor, time = time(), name = fullName or name or cachedName, source = "inspect"}
                     lastInspectInfo = {name = fullName or name or cachedName, ilvl = ilvlFloor, time = GetTime()}
                     storedIlvl = true -- set at the WRITE, so `ok` counts stored data, not events
+                    -- An incomplete set-bonus read leaves this entry unfinished, so
+                    -- its fresh timestamp must not read as "done". Reuse the stale
+                    -- flag the inspect queue already honours, and the member is
+                    -- re-inspected on the next sweep instead of waiting for a boss
+                    -- kill. Self-clearing: the next INSPECT_READY replaces this table.
+                    if sbIncomplete[guid] then
+                        ilvlCache[guid].stale = true
+                    end
                     -- Populate nameToIlvl directly — don't rely on Details! combat
                     -- actors (player may not have dealt damage/healed yet).
                     if name then
@@ -2394,6 +2421,15 @@ SlashCmdList["DILVL"] = function(msg)
         local ambiguousShorts = 0
         for _ in pairs(shortNameAmbiguous) do ambiguousShorts = ambiguousShorts + 1 end
 
+        local sbPending = 0
+        for _ in pairs(sbIncomplete) do sbPending = sbPending + 1 end
+        if sbPending > 0 then
+            -- A RESULT: these members were inspected but their tier items were not
+            -- readable, so they carry no set-bonus tag on purpose. They are flagged
+            -- stale and will be re-read by the next sweep. A number here that never
+            -- falls is the signature of an item cache that is not filling.
+            print(string.format("  Set bonus: %d member(s) awaiting a complete read", sbPending))
+        end
         print(string.format("  Cache: %d iLvl  %d setBonus  %d nameMap (%d short-form)  %d bonusMap  %d hooks (%d w/ text)  %d columns",
             cacheCount, setBonusCount, mapCount, shortForms, bonusMapCount, hookCount, cleanTextCount, colCount))
         if ambiguousShorts > 0 then
