@@ -114,6 +114,20 @@ local CURRENT_SCHEMA_VERSION
 local VALIDATORS
 local RecursiveDefaultsMerge, MigrateSchema, ValidateDb
 local openRaidLib = nil -- LibOpenRaid-1.0 handle; assigned after ADDON_LOADED if available
+-- LibOpenRaid delivery counters. Deliberately NOT "is the library loaded": that
+-- question answered "yes" for the entire time the callback was never registered
+-- and not one value ever arrived. Every field here measures a RESULT.
+--   lib        -> LibStub handed us the library
+--   registered -> lib.RegisterCallback returned boolean true. On failure it
+--                 returns an integer code instead, which we keep verbatim
+--   updates    -> GearUpdate callbacks actually received this session
+--   fromSelf   -> of those, how many were about us (LoR reports the player too)
+--   stored     -> item levels written to the cache from LoR (callback + sweep)
+--   pulled     -> of those, how many came from a LoRPullAllGear sweep
+--   noToken    -> callbacks dropped because arg 1 was not a live unit
+local lorHandler -- forward decl: the persistent addon object handed to LoR
+local lorStats = {lib = false, registered = false, regCode = nil,
+                  updates = 0, fromSelf = 0, stored = 0, pulled = 0, noToken = 0}
 local barColumns = {}       -- bar -> {ilvlFS, tierFS} (custom column FontStrings for layout="columns")
 local fsBar = {}            -- lineText1 fontString -> owning bar (for per-window gating in the FontString-only refresh path)
 local columnRefreshPending = false -- debounce flag for next-frame column refresh
@@ -1425,6 +1439,134 @@ local function UpdatePlayerCache()
     NotifyElvUI(pname)
 end
 
+---------------------------------------------------------------
+-- LibOpenRaid-1.0 gear ingestion — ONE store path, two callers: the
+-- "GearUpdate" callback (live comms) and LoRPullAllGear (a sweep of what the
+-- library already holds). Kept in one function so the sweep cannot grow its
+-- own, subtly different, secret handling.
+---------------------------------------------------------------
+local function LoRApplyGear(unit, gearInfo)
+    if not unit or not ilvlCache then return false end
+    -- isSecretValue covers issecrettable too. type() can NEVER tell us this —
+    -- a secret keeps its underlying Lua type — and indexing a secret table
+    -- throws, so this has to come before the field read.
+    if isSecretValue(gearInfo) then return false end
+    if type(gearInfo) ~= "table" then return false end
+    local raw = gearInfo.ilevel
+    if isSecretValue(raw) then return false end
+    if type(raw) ~= "number" or raw <= 0 then return false end
+    local guid = SafeUnitGUID(unit)
+    if not guid then return false end -- restricted instance: no identity, no write
+    if guid == SafeUnitGUID("player") then return false end -- self: GetAverageItemLevel is exact
+    local ilvl = math.floor(raw)
+    local existing = ilvlCache[guid]
+    if existing and ilvl == existing.ilvl and (time() - existing.time) <= 300 then
+        return false -- unchanged and fresh: nothing to store, nothing to notify
+    end
+    local name, realm = SafeUnitName(unit)
+    if not name then return false end
+    local storedName = (realm and realm ~= "") and (name .. "-" .. realm) or name
+    ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName, source = "lor",
+        -- `stale` means "an INSPECT is owed", and only an INSPECT_READY may clear
+        -- it. Two separate reasons, both load-bearing:
+        --   1. Carry an existing flag. A boss kill flags the whole group and
+        --      queues a re-inspect; LibOpenRaid re-broadcasts gear a few seconds
+        --      after combat ends, so without this the LoR write would land first,
+        --      clear the flag, and cancel the post-kill re-inspect for everyone.
+        --   2. Raise one when we have never inspected this player. LoR gives us
+        --      an item level, never a set bonus — that has exactly one producer
+        --      for group members, the inspect path. A LoR write with no flag looks
+        --      like a completed inspect: present, not stale, zero seconds old. The
+        --      queue would then never ask, setBonusCache would stay empty, and the
+        --      [2P]/[4P] tag would silently disappear for everyone LoR covers.
+        stale = (existing and existing.stale) or (setBonusCache[guid] == nil) or nil}
+    StoreNameIlvl(storedName, ilvl, guid)
+    StoreNameIlvl(name, ilvl, guid)
+    lorStats.stored = lorStats.stored + 1
+    mapDirty = true
+    NotifyElvUI(storedName)
+    return true
+end
+
+---------------------------------------------------------------
+-- Drain LibOpenRaid's stored gear for everyone currently in the group.
+--
+-- WHY: the callback only fires when a comm ARRIVES. Anything the library
+-- received before we registered, and any update whose unit we could not
+-- resolve, sits in its store and would otherwise never reach us. Details!
+-- itself runs the same token sweep, so this is the supported pattern rather
+-- than a private-namespace trick: GetUnitGear(unitId) is public and does the
+-- token -> internal-key resolution itself.
+--
+-- The pcall is NOT defensive noise and must not be tidied away: the library
+-- resolves the token through a raw name lookup and then uses that name as a
+-- TABLE KEY, which throws inside the library when the name is secret.
+--
+-- @bRequest: also ask the group to re-broadcast. Public, no-ops when not
+-- grouped, and refuses a second send inside 30s. Only the login sweep passes
+-- true — a roster sweep must not make 39 people re-broadcast every time
+-- someone zones in.
+---------------------------------------------------------------
+local function LoRPullAllGear(bRequest)
+    if not openRaidLib or not ilvlCache then return end
+    if type(openRaidLib.GetUnitGear) ~= "function" then return end
+    if bRequest and type(openRaidLib.RequestAllData) == "function" then
+        pcall(openRaidLib.RequestAllData)
+    end
+    local prefix, count = GetGroupInfo()
+    for i = 1, count do
+        local unit = prefix .. i
+        if UnitExists(unit) and UnitIsPlayer(unit) then
+            local ok, gearInfo = pcall(openRaidLib.GetUnitGear, unit)
+            if ok and gearInfo and LoRApplyGear(unit, gearInfo) then
+                lorStats.pulled = lorStats.pulled + 1
+            end
+        end
+    end
+end
+
+-- Collapse a burst of GROUP_ROSTER_UPDATEs into ONE sweep. In a world boss raid
+-- filling from 17 to 34 that event fires constantly; without this the sweep
+-- would run dozens of times for a single arrival.
+local lorPullPending = false
+local function LoRSchedulePull(delay)
+    if lorPullPending then return end
+    lorPullPending = true
+    C_Timer.After(delay, function()
+        lorPullPending = false
+        LoRPullAllGear()
+    end)
+end
+
+-- The addon object handed to LibOpenRaid. It must be a PERSISTENT table with a
+-- NAMED member: the library stores the pair {addonObject, "OnGearUpdate"} and
+-- later calls addonObject["OnGearUpdate"](...), so both halves have to outlive
+-- the registration call.
+lorHandler = {}
+
+-- Payload is (unitId, unitGearInfo, allUnitsGear). The library dispatches with
+-- the PAYLOAD ONLY — no self, no event name — so the old body's leading `_`
+-- slot shifted every argument by one and `unit` actually held the gear table.
+-- arg 3 is deliberately not taken: we act on the one unit that changed, and the
+-- sweep covers the rest.
+function lorHandler.OnGearUpdate(unitId, unitGearInfo)
+    lorStats.updates = lorStats.updates + 1
+    if not unitId or isSecretValue(unitId) then return end
+    -- The library resolves this from its own id cache, which is refreshed at the
+    -- END of its roster handler — so an early comm can arrive carrying a bare
+    -- name instead of a token. Most of those still resolve, because unit
+    -- functions accept a group member's name; the ones that do not have no GUID,
+    -- and without a GUID we do not store. The next sweep picks them up.
+    if not UnitExists(unitId) then
+        lorStats.noToken = lorStats.noToken + 1
+        return
+    end
+    if SafeUnitGUID(unitId) == SafeUnitGUID("player") then
+        lorStats.fromSelf = lorStats.fromSelf + 1
+    end
+    LoRApplyGear(unitId, unitGearInfo)
+end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("INSPECT_READY")
@@ -1491,38 +1633,32 @@ frame:SetScript("OnEvent", function(self, event, ...)
             -- LibOpenRaid-1.0: optional data source, bundled with Details!
             -- Provides iLvl via addon-comm (no inspect needed when both players have Details!).
             -- We use it as a first source; our own inspect queue is the fallback.
+            --
+            -- HOW LoR REGISTRATION ACTUALLY WORKS:
+            --   RegisterCallback(addonObject, event, callbackMemberName)
+            -- stores the PAIR {addonObject, callbackMemberName} and later calls
+            -- addonObject[callbackMemberName](payload...). So arg 3 must be the
+            -- NAME of a member of arg 1. Passing the function itself makes the
+            -- library's integrity check hit `not addonObject[callbackMemberName]`
+            -- and return 3, and RegisterCallback then returns that 3 WITHOUT ever
+            -- registering. That is exactly what the previous
+            -- `lib.RegisterCallback({}, "GearUpdate", function(...) end)` did: it
+            -- never registered once, it never errored, and the debug dump said
+            -- "active" the whole time. The return value is the only proof of
+            -- success, so we keep it and print it.
             if LibStub then
                 local ok, lib = pcall(LibStub, "LibOpenRaid-1.0")
                 if ok and lib then
-                    openRaidLib = lib
-                    -- LoR fires GearUpdate(GetUnitID(name), unitGearInfo, allUnitsGear):
-                    -- arg 1 is a UNIT TOKEN ("party3"/"raid11"/"player") for anyone in
-                    -- the group, NOT a "Name-Realm" string, and the gear table is arg 2.
-                    -- (The old code treated arg 1 as a name and matched it against the
-                    -- roster, which never matched for group members — so this fast path
-                    -- was silently dead and we fell back to the inspect queue.)
-                    lib.RegisterCallback({}, "GearUpdate", function(_, unit, gearInfo)
-                        if not unit or not ilvlCache then return end
-                        if isSecretValue(unit) then return end
-                        if not UnitExists(unit) then return end          -- token must be a live unit
-                        gearInfo = gearInfo or (lib.GetUnitGear and lib.GetUnitGear(unit))
-                        if not gearInfo or not gearInfo.ilevel or gearInfo.ilevel <= 0 then return end
-                        local guid = SafeUnitGUID(unit)
-                        if not guid then return end
-                        if guid == SafeUnitGUID("player") then return end    -- self: GetAverageItemLevel is more accurate
-                        local ilvl = math.floor(gearInfo.ilevel)
-                        local existing = ilvlCache[guid]
-                        if not existing or ilvl ~= existing.ilvl or (time() - existing.time) > 300 then
-                            local name, realm = SafeUnitName(unit)
-                            if not name then return end
-                            local storedName = (realm and realm ~= "") and (name.."-"..realm) or name
-                            ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName, source = "lor"}
-                            StoreNameIlvl(storedName, ilvl, guid)
-                            StoreNameIlvl(name, ilvl, guid)
-                            mapDirty = true
-                            NotifyElvUI(storedName)
+                    lorStats.lib = true
+                    if type(lib.RegisterCallback) == "function" then
+                        openRaidLib = lib
+                        local okReg, result = pcall(lib.RegisterCallback,
+                            lorHandler, "GearUpdate", "OnGearUpdate")
+                        lorStats.registered = (okReg and result == true) or false
+                        if not lorStats.registered then
+                            lorStats.regCode = okReg and tostring(result) or "error"
                         end
-                    end)
+                    end
                 end
             end
         end
@@ -1575,6 +1711,20 @@ frame:SetScript("OnEvent", function(self, event, ...)
             -- the cache is not bound yet.
             C_Timer.After(5, UpdatePlayerCache)
             C_Timer.After(20, UpdatePlayerCache)
+
+            -- LibOpenRaid has no public "ready" signal. The observable schedule
+            -- instead: it calls RequestAllData itself at its first
+            -- PLAYER_ENTERING_WORLD and only when already grouped; responders
+            -- answer after 1-6s. So the sweep at 6s lands on a mostly-filled
+            -- store and re-asks (its own 30s cooldown makes a duplicate request a
+            -- no-op), and the 20s sweep catches slow responders and the "logged
+            -- in solo, invited during the loading screen" case.
+            -- Scheduled rather than called inline, so a throw here cannot be what
+            -- stops the ticker — same reasoning as the two calls above.
+            -- C_Timer.After passes no arguments, so the 20s call gets
+            -- bRequest = nil and only drains: exactly one request per login.
+            C_Timer.After(6, function() LoRPullAllGear(true) end)
+            C_Timer.After(20, LoRPullAllGear)
 
             C_Timer.After(3, function()
                 detailsReady = true
@@ -1801,6 +1951,13 @@ frame:SetScript("OnEvent", function(self, event, ...)
             mapDirty = true
             NotifyElvUI()
             C_Timer.After(3, QueueGroupInspect)
+            -- One coalesced LoR sweep per roster burst. On any group change every
+            -- other member's library schedules a full send 5-11s later, and those
+            -- arrive as callbacks — but a comm that lands before the library
+            -- refreshes its id cache reaches us as a name we may not resolve, and
+            -- is dropped by the no-token guard. 12s is past that window, and the
+            -- sweep is token-driven and therefore always GUID-attributable.
+            LoRSchedulePull(12)
         end
 
     elseif event == "UNIT_INVENTORY_CHANGED" then
@@ -2496,10 +2653,31 @@ SlashCmdList["DILVL"] = function(msg)
             print(string.format("  Last inspect: %s → %d iLvl (%s)",
                 tostring(lastInspectInfo.name), lastInspectInfo.ilvl or 0, ago))
         end
-        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  LibOpenRaid: %s  Details!-HookErrors: %d/%d",
+        print(string.format("  Details ready: %s  Ticker: %s  MapDirty: %s  Details!-HookErrors: %d/%d",
             tostring(detailsReady), tostring(tickerStarted), tostring(mapDirty),
-            openRaidLib and "active" or "n/a",
             detailsBarErrors, DETAILS_BAR_ERROR_LIMIT))
+        -- LibOpenRaid health. The old slot printed "active" for `openRaidLib ~= nil`
+        -- — for "the library is installed" — which stayed true for the entire time
+        -- the callback was never registered and not one value ever arrived. What is
+        -- reported now: whether LoR ACCEPTED our registration (its own return code
+        -- when it did not), and how many values we actually received and stored.
+        -- Reading it: solo, `updates` ticks once per loading screen and is all
+        -- fromSelf, with stored 0 — that is correct, not a fault. In a group,
+        -- updates minus fromSelf at 0 means nobody else runs an addon embedding
+        -- LoR. updates high with stored 0 means every value was a duplicate or was
+        -- refused for lack of a GUID (restricted instance).
+        local lorState
+        if not lorStats.lib then
+            lorState = "not installed"
+        elseif lorStats.registered then
+            lorState = "registered"
+        else
+            lorState = "NOT REGISTERED (RegisterCallback returned "
+                .. tostring(lorStats.regCode) .. ")"
+        end
+        print(string.format("  LibOpenRaid: %s  updates: %d (%d self)  stored: %d  from-sweep: %d  no-token: %d",
+            lorState, lorStats.updates, lorStats.fromSelf, lorStats.stored,
+            lorStats.pulled, lorStats.noToken))
         print(string.format("  SecretAPI: CanCompareUnitTokens=%s  UnitNameBlocked: %d  UnitNameRejected: %d  UnitIsUnitBlocked: %d",
             (C_Secrets and C_Secrets.CanCompareUnitTokens) and "yes" or "no",
             secretStats.unitNameBlocked,
@@ -3377,6 +3555,16 @@ Details_iLvlDisplayAPI = {
     InCombatRaw     = InCombatRaw,
     isSecretValue   = isSecretValue,
     hasanysecretvalues = _hasanysecretvalues,
+    -- LibOpenRaid delivery counters for the diagnostics page. Returns a COPY:
+    -- the page renders the session counters, it must not be able to reset them.
+    GetLoRDebug = function()
+        return {
+            lib = lorStats.lib, registered = lorStats.registered,
+            regCode = lorStats.regCode, updates = lorStats.updates,
+            fromSelf = lorStats.fromSelf, stored = lorStats.stored,
+            pulled = lorStats.pulled, noToken = lorStats.noToken,
+        }
+    end,
 }
 
 -- Internal helper — call once after any cache write that should update UI.

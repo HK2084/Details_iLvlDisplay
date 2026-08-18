@@ -62,8 +62,32 @@ local function collectDebugLines()
     addKV("DandersFrames", DandersFrames_IsReady ~= nil)
     addKV("Blizzard DM",   C_AddOns and C_AddOns.IsAddOnLoaded
         and C_AddOns.IsAddOnLoaded("Blizzard_DamageMeter") and true or false)
+    -- Presence only. This section answers "is it installed"; the block below
+    -- answers the question that actually matters, "did it ever hand us a number".
     addKV("LibOpenRaid",   LibStub and LibStub:GetLibrary("LibOpenRaid-1.0", true) ~= nil)
     add("")
+
+    -- LibOpenRaid delivery (not presence). Guarded so the page still renders if
+    -- core.lua is older than this file and lacks the accessor.
+    if type(Details_iLvlDisplayAPI) == "table" and Details_iLvlDisplayAPI.GetLoRDebug then
+        local okLoR, lor = pcall(Details_iLvlDisplayAPI.GetLoRDebug)
+        if okLoR and type(lor) == "table" then
+            add("--- LibOpenRaid delivery ---")
+            if not lor.lib then
+                addKV("registered", "n/a (library not installed)")
+            elseif lor.registered then
+                addKV("registered", "yes")
+            else
+                addKV("registered", "NO (RegisterCallback returned " .. tostring(lor.regCode) .. ")")
+            end
+            addKV("GearUpdate callbacks", lor.updates)
+            addKV("of those, about us",   lor.fromSelf)
+            addKV("values stored",        lor.stored)
+            addKV("from roster sweep",    lor.pulled)
+            addKV("dropped, no unit token", lor.noToken)
+            add("")
+        end
+    end
 
     -- Secret API status (relevant since 12.0+)
     add("--- Secret-API status ---")
