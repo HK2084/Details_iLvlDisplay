@@ -23,6 +23,7 @@ cd "$(dirname "$0")/.."
 # Each entry: "<raw-call-pattern>|<the safe wrapper it must go through>"
 FORBIDDEN=(
   ':GetNameText(|SafeGetNameText() — Blizzard DamageMeter mixin, secret sourceDisplayType'
+  'GetUnitGear(|a pcall — LibOpenRaid keys its store by a raw name lookup and throws INSIDE the library on a secret'
 )
 
 status=0

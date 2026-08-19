@@ -63,10 +63,17 @@ local lastManualInspectTime = 0 -- GetTime() of last INSPECT_READY we didn't tri
 local inspectStats = {
     sent     = 0,   -- NotifyInspect calls that actually fired
     ok       = 0,   -- our request answered AND an item level was stored (a visible tag)
-    empty    = 0,   -- our request answered but GetInspectItemLevel gave nothing
+    empty    = 0,   -- our request answered but nothing was stored: no readable item
+                    -- level, or the unit token no longer resolved to that player
     timedOut = 0,   -- 15s safety timer fired with our request still unanswered
     requeued = 0,   -- timed-out entries actually put back on the queue
-    deferred = 0,   -- turns skipped BEFORE spending a NotifyInspect (CanInspect false)
+    deferred = 0,   -- turns skipped BEFORE spending a request (CanInspect false, or
+                    -- the queued token no longer resolves to that player)
+    harvested = 0,  -- item levels stored from an INSPECT_READY somebody ELSE asked for.
+                    -- Details! and other addons run their own inspect queues and we
+                    -- read the results; without this counter a dump showing
+                    -- "1 sent  0 ok" beside six seconds-old item levels reads as a
+                    -- dead pipeline when it is in fact a well-fed one.
 }
 local INSPECT_FAIL_LIMIT = 3
 local lastInspectInfo = nil -- {name, ilvl, source, time} last completed inspect for debug
@@ -1479,7 +1486,20 @@ local function LoRApplyGear(unit, gearInfo)
         --      like a completed inspect: present, not stale, zero seconds old. The
         --      queue would then never ask, setBonusCache would stay empty, and the
         --      [2P]/[4P] tag would silently disappear for everyone LoR covers.
-        stale = (existing and existing.stale) or (setBonusCache[guid] == nil) or nil}
+        --   3. Re-raise one once the inspect horizon has already expired. The early
+        --      return above only fires for an UNCHANGED item level inside 300s, so
+        --      every later delivery rewrites `.time` — and LibOpenRaid re-sends the
+        --      whole group's gear a few seconds after EVERY combat drop, not only
+        --      when something changed. Without this clause `.time` is refreshed
+        --      faster than CACHE_REFRESH, the queue gate can never fire again, and
+        --      the 2h re-inspect that retires a stale [2P]/[4P] sitting beside a
+        --      fresh number is gone for everyone LoR covers. Deliberately NOT keyed
+        --      on "the item level changed": our number comes from the inspect API
+        --      and LoR's from GetAverageItemLevel, so a permanent 1-point disagreement
+        --      would re-queue the entire raid after every pull. The horizon fires at
+        --      most once per player per 2h and also catches an equal-ilvl tier swap.
+        stale = (existing and existing.stale) or (setBonusCache[guid] == nil)
+                or (existing and (time() - existing.time) >= CACHE_REFRESH) or nil}
     StoreNameIlvl(storedName, ilvl, guid)
     StoreNameIlvl(name, ilvl, guid)
     lorStats.stored = lorStats.stored + 1
@@ -1561,7 +1581,12 @@ function lorHandler.OnGearUpdate(unitId, unitGearInfo)
         lorStats.noToken = lorStats.noToken + 1
         return
     end
-    if SafeUnitGUID(unitId) == SafeUnitGUID("player") then
+    -- Both reads must SUCCEED before they may be compared. Inside a restricted
+    -- instance SafeUnitGUID returns nil, and nil == nil would then count a total
+    -- stranger as "about us" -- a counter lying in the release built to stop that.
+    local selfGuid = SafeUnitGUID("player")
+    local unitGuid = SafeUnitGUID(unitId)
+    if selfGuid and unitGuid and unitGuid == selfGuid then
         lorStats.fromSelf = lorStats.fromSelf + 1
     end
     LoRApplyGear(unitId, unitGearInfo)
@@ -1858,6 +1883,12 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- Only advance the queue if WE triggered this INSPECT_READY.
         mapDirty = true
         NotifyElvUI(lastInspectInfo and lastInspectInfo.name or nil)
+        -- Somebody else asked, we kept the answer. Counted separately so `sent`
+        -- and `ok` stay honest about OUR pipeline while the dump still shows where
+        -- the data actually came from.
+        if storedIlvl and not pendingInspect[guid] then
+            inspectStats.harvested = inspectStats.harvested + 1
+        end
         if pendingInspect[guid] then
             pendingInspect[guid] = nil
             -- Count the OUTCOME, not the event. An INSPECT_READY carrying no
@@ -2578,8 +2609,16 @@ SlashCmdList["DILVL"] = function(msg)
         local ambiguousShorts = 0
         for _ in pairs(shortNameAmbiguous) do ambiguousShorts = ambiguousShorts + 1 end
 
+        -- Count only members who are STILL HERE. sbIncomplete is keyed by GUID and
+        -- is cleared solely by a later complete read for the same player, so anyone
+        -- who left keeps their flag forever -- and the line below would then report
+        -- people who logged off hours ago, while telling the reader that a number
+        -- which never falls means the item cache is not filling.
         local sbPending = 0
-        for _ in pairs(sbIncomplete) do sbPending = sbPending + 1 end
+        for i = 1, count do
+            local sbGuid = SafeUnitGUID(prefix .. i)
+            if sbGuid and sbIncomplete[sbGuid] then sbPending = sbPending + 1 end
+        end
         if sbPending > 0 then
             -- A RESULT: these members were inspected but their tier items were not
             -- readable, so they carry no set-bonus tag on purpose. They are flagged
@@ -2618,14 +2657,19 @@ SlashCmdList["DILVL"] = function(msg)
         -- queue's CURRENT shape, and "0 waiting" reads the same whether every
         -- player is cached or every request died. This line separates them:
         --   sent      NotifyInspect calls that really left
-        --   ok        answers that produced a stored item level (a visible tag)
-        --   empty     answers that carried no readable item level
+        --   ok        OUR answers that produced a stored item level (a visible tag)
+        --   empty     OUR answers that stored nothing (unreadable, or the token moved on)
         --   timedOut  15s expiries — the server never answered
         --   requeued  timed-out players handed another turn
-        --   deferred  turns skipped before spending a request (CanInspect false)
-        print(string.format("  Inspects: %d sent  %d ok  %d empty  %d timed out  %d re-queued  %d deferred",
+        --   deferred  turns skipped before spending a request (cannot inspect, or the
+        --             queued token no longer resolves to that player)
+        --   harvested stored from an inspect ANOTHER addon asked for. High harvested
+        --             with low sent is normal in a group running Details!, and is the
+        --             reason "1 sent  0 ok" can sit beside fresh item levels.
+        print(string.format("  Inspects: %d sent  %d ok  %d empty  %d timed out  %d re-queued  %d deferred  %d harvested",
             inspectStats.sent, inspectStats.ok, inspectStats.empty,
-            inspectStats.timedOut, inspectStats.requeued, inspectStats.deferred))
+            inspectStats.timedOut, inspectStats.requeued, inspectStats.deferred,
+            inspectStats.harvested))
         -- Queue contents (who is waiting)
         if #inspectQueue > 0 then
             local qNames = {}
@@ -2672,7 +2716,7 @@ SlashCmdList["DILVL"] = function(msg)
         elseif lorStats.registered then
             lorState = "registered"
         else
-            lorState = "NOT REGISTERED (RegisterCallback returned "
+            lorState = "NOT REGISTERED ("
                 .. tostring(lorStats.regCode) .. ")"
         end
         print(string.format("  LibOpenRaid: %s  updates: %d (%d self)  stored: %d  from-sweep: %d  no-token: %d",
