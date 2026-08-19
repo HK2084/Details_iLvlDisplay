@@ -111,9 +111,15 @@ Item levels come from Blizzard's inspect API: the addon inspects group members
 outside of combat and caches what it gets.
 
 A second path via LibOpenRaid — where anyone running Details! broadcasts their
-gear over addon-comm with no inspect delay — is wired up but has never actually
-delivered data (the callback registration was rejected at call time). It is not
-counted as a data source until that is fixed and verified.
+gear over addon-comm — delivers item levels with no inspect delay. It had been
+wired up for years but never worked: the callback registration was rejected at
+call time, so not one value ever arrived. Repaired and verified in a live raid
+in v1.6.0. Cache entries sourced this way are marked `[LOR]` in `/dilvl cache`,
+and `/dilvl debug` reports how many values actually arrived rather than whether
+the library is installed.
+
+An item level from this path still schedules an inspect, because LibOpenRaid
+reports gear but not the tier set bonus.
 
 iLvl data is cached for 2 hours per player.
 

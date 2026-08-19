@@ -65,6 +65,14 @@ ns.POS_KEYS_SET = {
 -- so a user installing ElvUI later still gets the ElvUI-specific hint.
 ns.LOGIN_HINTS = {
     {
+        -- No gate: there is no command to learn. What changes is WHERE the
+        -- numbers come from and how fast they appear, and someone who suddenly
+        -- sees item levels before any inspect could have run deserves to know
+        -- it is intentional rather than wonder what it is reading.
+        key  = "loropenraid",                               -- v1.6.0
+        msg  = "Item levels now arrive instantly from anyone in your group who also runs Details!, without waiting for an inspect. This was advertised for years but never actually worked; it does now. Players sourced this way show up as [LOR] in /dilvl cache.",
+    },
+    {
         -- No gate, same reasoning as the season colouring below: this changes
         -- what every number on screen MEANS. Someone who sees their own 286 go
         -- from orange to green and is not told why will file it as a bug.
