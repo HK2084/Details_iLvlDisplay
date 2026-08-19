@@ -101,6 +101,17 @@ local resizeStats = {
     field = nil,        -- which field resolved last: "baseframe" / "baseFrame" / "frame"
 }
 local barCleanText = {}    -- fontString -> last clean text set by Details! (never our injected text)
+-- fontString -> the last SECRET name string Details! passed to SetText for this
+-- bar. Blizzard seals the name of every player outside our own group, and after
+-- a fight the segment is static, so Details! never rewrites those rows again and
+-- the clean text never comes back. We may not READ this value (GetText carries
+-- SecretReturnsForAspect = {Text}) and any comparison, concatenation or use as a
+-- table KEY throws -- but holding one as a table VALUE is safe, and Details!
+-- itself parks the same secret on the row (Details/classes/class_damage.lua:3128)
+-- and formats with it (:3199). The key here is the FontString, never the secret.
+-- Written and cleared in lockstep with barCleanText so a bar can never re-emit
+-- the previous occupant's name.
+local barSecretText = {}
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- true only once C_Timer.NewTicker actually returned (what /dilvl debug reports)
@@ -991,6 +1002,11 @@ local function HookBarTextIfNeeded(bar)
             -- Details! Itemlevelfinder passes "secret string" values to SetText.
             if isSecretValue(text) then
                 barCleanText[self] = nil
+                -- Keep it, unopened. This is the ONLY writer of barSecretText, and
+                -- our own re-emission runs with isOurSetText true (guard at the top
+                -- of this hook), so our tagged line can never be captured as
+                -- Details!' original and the tag can never double.
+                barSecretText[self] = text
                 if db.layout == "columns" then
                     local cols = barColumns[bar]
                     if cols then
@@ -1002,6 +1018,12 @@ local function HookBarTextIfNeeded(bar)
                 end
                 return
             end
+            -- A non-secret string arrived: this row is not sealed any more. This
+            -- MUST sit above the two guards below. Details! blanks a row with
+            -- SetText("") when it reuses it, and that empty string returns early;
+            -- clearing after the guards would strand the previous occupant's
+            -- secret and repaint their name onto a row Details! just emptied.
+            barSecretText[self] = nil
             if not text or type(text) ~= "string" or text:match("^%s*$") then return end
             if text:find("%[%d+%]") then return end
 
@@ -1051,6 +1073,7 @@ local function HookBarTextIfNeeded(bar)
     if fontString.ClearText then
         hooksecurefunc(fontString, "ClearText", function(self)
             barCleanText[self] = nil
+            barSecretText[self] = nil
         end)
     end
 end
@@ -1103,6 +1126,61 @@ local function HookAllBars()
 end
 
 ---------------------------------------------------------------
+-- EmitSealedTag -- the only path that can tag a row whose name Blizzard sealed.
+--
+-- We never author a name. The secret string Details! wrote is handed straight
+-- back and our tag is spliced on inside the C formatter, so the rank, the name,
+-- realm handling, transliteration, any custom left-text template and any
+-- role/faction icon survive byte-for-byte -- we never decompose them. Details!
+-- itself proves the primitive on this build: it runs format("%d. %s", rank,
+-- secretName) and SetText on the result for exactly these rows on every refresh
+-- (Details/classes/class_damage.lua:3199) and passes a bare secret to SetText at
+-- :3204.
+--
+-- Identity comes off the ROW, never out of the text. bar.actorGUID is written by
+-- the same UpdateBarApocalypseWow call that writes lineText1
+-- (class_damage.lua:3129 vs :3199), so the GUID and the sealed string can never
+-- describe different actors. It is declared on Details!' line class
+-- (Details/frames/window_main.lua:4266, "can be secret while in combat") -- which
+-- is why the isSecretValue guard is mandatory, not decorative: GetIlvlForGuid
+-- compares the GUID (core.lua:305) and uses it as a table key (:306, :318), and
+-- both throw on a secret. No GUID, a secret GUID, or no cached iLvl means no tag.
+--
+-- Only append/prepend is possible: splitting the secret to insert between rank
+-- and name would throw. In "left" mode the tag therefore lands BEFORE the rank
+-- ("[272] 3. Name"). A different position is not a wrong value; inventing the
+-- rank in order to rebuild the line would be.
+---------------------------------------------------------------
+local function EmitSealedTag(fontString, secret, bar, isLeft)
+    local guid = bar and bar.actorGUID
+    if not guid or isSecretValue(guid) then return end
+
+    local ilvl = GetIlvlForGuid(guid)
+    if not ilvl then return end
+
+    local tag
+    if db.colorIlvl then
+        tag = GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r"
+    else
+        tag = "[" .. ilvl .. "]"
+    end
+    if db.showSetBonus then
+        local sbTag = SetBonusTag(setBonusCache[guid])
+        if sbTag then
+            tag = tag .. " " .. sbTag
+        end
+    end
+
+    -- Tag always travels as a %s ARGUMENT, never inside the format string, so a
+    -- stray %-sign in a colour code or set-bonus mark cannot misformat the line.
+    if isLeft then
+        fontString:SetText(string.format("%s %s", tag, secret))
+    else
+        fontString:SetText(string.format("%s %s", secret, tag))
+    end
+end
+
+---------------------------------------------------------------
 -- Force-update bar texts that are already visible but missing iLvl
 -- Needed when inspect data arrives after Details already drew the bars
 ---------------------------------------------------------------
@@ -1144,6 +1222,17 @@ local function RefreshAllBarTexts()
                             fontString:SetText(text .. tag)
                         end
                     end
+                end
+            else
+                -- No clean text. Either Blizzard sealed this row (we kept the
+                -- secret) or Details! has not drawn it yet (we did not). Only the
+                -- first can be tagged, and barSecretText is exactly that test.
+                -- SafeCall, not a bare call: this runs on the 2s ticker, and an
+                -- uncaught throw would both spam the error and leave isOurSetText
+                -- stuck true, silently killing the SetText hook for the session.
+                local secret = barSecretText[fontString]
+                if secret then
+                    SafeCall(EmitSealedTag, fontString, secret, ownBar, isLeft)
                 end
             end
         end
@@ -2032,6 +2121,16 @@ local function ClearAllBarTags()
             fontString:SetText(cleanText)
         end
     end
+    -- Sealed rows: put Details!' untouched secret back. Without this, turning the
+    -- feature off would strand our tag on screen forever -- the segment is static
+    -- after a fight, so nothing else will ever repaint those rows. pcall, not a
+    -- bare call: a throw here would leave isOurSetText stuck true and silently
+    -- kill the SetText hook for the rest of the session.
+    for fontString, secretText in pairs(barSecretText) do
+        if fontString:IsShown() then
+            pcall(fontString.SetText, fontString, secretText)
+        end
+    end
     isOurSetText = false
     ClearAllColumns()
 end
@@ -2447,11 +2546,32 @@ SlashCmdList["DILVL"] = function(msg)
         end
         print(string.format("|cFF00FF00Details! iLvl Display:|r %d cached, %d expired", count, expired))
 
-    elseif msg == "map" then
-        print("|cFF00FF00Details! iLvl Display:|r Name->iLvl map (" .. (next(nameToIlvl) and "" or "empty") .. "):")
-        for name, ilvl in pairs(nameToIlvl) do
-            print(string.format("  %s: |cFFFFD900%d|r", name, ilvl))
+    elseif msg == "map" or msg:match("^map%s+") then
+        -- Optional filter: /dilvl map atro  shows only matching names.
+        -- Two reasons this is not decoration. A well-used cache runs to several
+        -- hundred entries and the chat frame silently drops the top of the dump,
+        -- so the unfiltered form is least readable exactly when it matters. And
+        -- the question this command answers is almost always "does the SHORT form
+        -- exist for this player" — Details! bars show "Name", the cache stores
+        -- "Name-Realm", and a missing short form means a missing tag. Sorting puts
+        -- the two forms on adjacent lines so the answer is one glance.
+        -- The summary prints LAST so it survives the scrollback.
+        local filter = msg:match("^map%s+(.+)$")
+        local names = {}
+        for n in pairs(nameToIlvl) do names[#names + 1] = n end
+        table.sort(names)
+        local shown = 0
+        for i = 1, #names do
+            local n = names[i]
+            if not filter or n:lower():find(filter:lower(), 1, true) then
+                shown = shown + 1
+                local sb = nameToSetBonus[n]
+                print(string.format("  %s: |cFFFFD900%d|r%s", n, nameToIlvl[n],
+                    sb and (" [" .. sb .. "]") or ""))
+            end
         end
+        print(string.format("|cFF00FF00Details! iLvl Display:|r name map: %d shown of %d%s",
+            shown, #names, filter and (" matching '" .. filter .. "'") or ""))
 
     elseif msg == "debug" then
         -- Full bug-report output — also shown in scrollable popup for easy copy-paste.

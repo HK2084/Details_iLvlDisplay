@@ -16,6 +16,14 @@
 
 *   **The public API no longer throws on input it did not produce.** The colour helpers raised an error on anything that was not a number, and two lookups could throw inside restricted instances. Other addons reading item levels from this one no longer see errors carrying its name.
 
+*   **Item levels come back after a boss fight.** Inside a raid or dungeon, Blizzard seals the
+    names of players outside your own group: they still render on screen, but an addon can no
+    longer read them, and once the fight ends Details! never rewrites those rows — so the tag
+    stayed missing for the rest of the session. The row is now identified by the character ID
+    Details! attaches to it rather than by its text, and the tag is spliced onto the sealed name
+    without ever opening it, so the name, its rank, icons and any custom formatting stay exactly
+    as Details! wrote them.
+
 ### Changed
 
 *   **`/dilvl debug` reports outcomes instead of preconditions.** The old report could not tell "everyone is already cached" apart from "every request failed" — both printed the same line. It now shows how many inspects were sent, answered, timed out, retried, and harvested from other addons' requests, plus how many item levels LibOpenRaid actually delivered.
