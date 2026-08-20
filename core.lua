@@ -3476,7 +3476,7 @@ local function PrintDebugReport()
 
 end
 
-SlashCmdList["DILVL"] = function(msg)
+local function SlashBody(msg)
     msg = msg:lower():trim()
 
     if msg == "" then
@@ -3905,6 +3905,58 @@ SlashCmdList["DILVL"] = function(msg)
         print("  /dilvl sets [from] [to] — List item-set IDs (find a new season's tier sets)")
         print("  /dilvl auras           — Show own auras (spellID debug)")
         print("  /dilvl taint           — BlizzDM taint-safety self-test (run in a restricted instance)")
+    end
+end
+
+---------------------------------------------------------------
+-- Every slash command routes its change through the settings router.
+--
+-- The branches above set db directly and then call the Details!-side refresh
+-- they happen to need. That worked while Details! was the only surface. It is
+-- wrong now: the router is what tells the OTHER renderers a setting moved, and
+-- the slash path never reached it. So `/dilvl off` cleared the Details! bars and
+-- the unit-frame surfaces, and left every tag standing on Blizzard's meter --
+-- while the same toggle in the options panel, which does go through the router,
+-- cleaned up properly. Reported live 20.08.2026. `/dilvl blizzdm` had the same
+-- hole.
+--
+-- Fixed here rather than at the twenty assignment sites, because a fix per site
+-- is a fix that the twenty-first site will not get. Snapshot the keys, run the
+-- command, forward whatever actually changed. A future command is covered by
+-- construction.
+--
+-- The inline refreshes above are left alone. Re-running one costs a redundant
+-- pass on a command the user typed by hand, which is nothing, and removing them
+-- would mean re-testing twenty branches for a saving nobody can measure.
+---------------------------------------------------------------
+local ROUTED_KEYS = {
+    "enabled", "colorIlvl", "showSetBonus", "showInDetails", "detailsFontSize",
+    "detailsWindowId", "layout", "ilvlPosition", "elvuiTag", "grid2Status",
+    "dandersText", "dandersPos", "dandersFontSize", "blizzDM",
+}
+
+SlashCmdList["DILVL"] = function(msg)
+    local before = {}
+    if db then
+        for i = 1, #ROUTED_KEYS do
+            local k = ROUTED_KEYS[i]
+            -- blizzDM is a tristate where nil, true and false all mean
+            -- something different. No stand-in value is needed for that: `~=`
+            -- already separates nil from false, and a key that was absent is
+            -- simply absent here too. A sentinel was tried and its own control
+            -- proved it guarded nothing.
+            before[k] = db[k]
+        end
+    end
+
+    SlashBody(msg)
+
+    if not db or not ns.ApplySettingChangeSafe then return end
+    for i = 1, #ROUTED_KEYS do
+        local k = ROUTED_KEYS[i]
+        if db[k] ~= before[k] then
+            ns.ApplySettingChangeSafe(k)
+        end
     end
 end
 
