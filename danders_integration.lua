@@ -175,7 +175,11 @@ local function updateFrame(frame)
     if not db then return end
     -- Lazy default: existing users with db.dandersText=true but no pos.
     if not db.dandersPos then db.dandersPos = DEFAULT_POS end
-    if not db.dandersText then clearText(frame) return end
+    -- db.enabled is the master switch and was never read here, so /dilvl off
+    -- left the overlay standing on every frame. Same class of gap as the
+    -- Blizzard meter's: an integration that only watches its OWN toggle keeps
+    -- rendering after the addon has been switched off.
+    if not db.enabled or not db.dandersText then clearText(frame) return end
 
     local unit = SafeCall("frame.unit", function() return frame.unit end)
     if not unit then clearText(frame) return end

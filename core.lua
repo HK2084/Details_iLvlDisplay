@@ -2640,6 +2640,16 @@ end
 
 ns.ApplySettingChange = function(key)
     if not db then return end
+    -- Every key goes to the Blizzard meter, which decides for itself what the
+    -- change means over there. Forwarding unconditionally instead of adding
+    -- calls inside individual branches is the point: the branches below are
+    -- organised around Details!-only concepts like db.layout, and anything
+    -- parked inside one of them silently inherits a guard that has no meaning
+    -- for the other renderer. That is how a Position change came to reach
+    -- Details! and nothing else for four minor versions.
+    if Details_iLvlDisplay_BlizzDMApplySetting then
+        pcall(Details_iLvlDisplay_BlizzDMApplySetting, key)
+    end
     if key == "enabled" then
         if db.enabled then
             RefreshAllBarTexts()

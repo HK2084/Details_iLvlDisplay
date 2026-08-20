@@ -136,6 +136,19 @@ local blizzDMState = { errors = 0, lastError = nil, disabled = false, priorDb = 
 -- working as intended (no invented names), not a fault.
 local unverifiedNameSkips = 0
 
+-- Forward-declared for disableBlizzDMSelf, for the same reason ScheduleRefresh
+-- is forward-declared further down: the auto-disable sets db.blizzDM = false,
+-- and from that instant RefreshAllFrames early-returns, so no row is ever
+-- written again. Whatever tags are on screen at that moment would stay there
+-- for the rest of the session.
+local StripAllTags
+-- Same reason, one line further: IsGroupInCombat is defined ~230 lines below.
+-- A Lua closure binds its upvalues where it is CREATED, so without this
+-- declaration the call inside disableBlizzDMSelf would compile as a global read,
+-- resolve to nil at runtime and throw — inside the very handler whose job is to
+-- shut things down cleanly after a throw.
+local IsGroupInCombat
+
 local function disableBlizzDMSelf(reason)
     if blizzDMState.disabled then return end
     blizzDMState.disabled = true
@@ -143,6 +156,13 @@ local function disableBlizzDMSelf(reason)
     if db then
         blizzDMState.priorDb = db.blizzDM -- preserve nil (auto) / true / false
         db.blizzDM = false
+    end
+    -- Leave no orphans behind. We are shutting down because something threw, so
+    -- the cleanup is itself pcall'd — a second throw here must not recurse into
+    -- the kill-switch. In combat there is nothing to strip: PLAYER_REGEN_DISABLED
+    -- already did it, and writing then would be the taint we are avoiding.
+    if StripAllTags and IsGroupInCombat and not IsGroupInCombat() then
+        pcall(StripAllTags)
     end
     pcall(geterrorhandler(),
         "Details! iLvl Display: Blizzard DM integration auto-disabled after "
@@ -365,7 +385,7 @@ end
 -- members with UnitAffectingCombat blocked us permanently.
 -- Our own REGEN events + IsEncounterInProgress is sufficient:
 -- secrets on OUR frames unlock when WE leave combat.
-local function IsGroupInCombat()
+function IsGroupInCombat()
     if inCombat then return true end
     local eip = IsEncounterInProgress()
     -- IsEncounterInProgress() can return secret in instances — treat as false
@@ -630,7 +650,7 @@ end
 -- combat, SetToDefaults() clears the secret aspect so Blizzard's
 -- own text becomes visible again (even without our iLvl tag).
 ---------------------------------------------------------------
-local function StripAllTags()
+function StripAllTags()
     if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
     trace("StripAllTags")
     DamageMeter:ForEachSessionWindow(function(sw)
@@ -1611,6 +1631,56 @@ function StartPostCombatRefresh()
     refreshActive = true
     refreshStats.passes = 0
     ScheduleRefresh()
+end
+
+---------------------------------------------------------------
+-- Public: a setting this file renders from has changed.
+--
+-- core.lua's settings router forwards EVERY key here and this file decides what
+-- it means for a Blizzard-meter row. That direction is the whole point. The
+-- router's branches are written around db.layout, which is a DETAILS!-only
+-- concept, so any Blizzard-meter work parked inside one of them inherits a guard
+-- that means nothing here. That is exactly how ilvlPosition came to reach
+-- Details! and nothing else: the row keeps whatever placement it was drawn with,
+-- Blizzard never repaints it (its UpdateName only writes when the text differs
+-- from its own nameText field, which we deliberately never touch), and the meter
+-- sits there with the old layout until the next pull. Reported live 20.08.2026;
+-- the same branch is on master, so this has been broken since v1.3.5.
+--
+-- Redraw, never strip-then-redraw: InjectIlvl rebuilds each row from Blizzard's
+-- own name text, so re-running it over an already-tagged row yields the new
+-- placement by itself. A strip pass first would be churn, and it cannot help the
+-- rows that need it most — StripAllTags skips a frame whose text is secret.
+--
+-- The OFF transitions are the opposite case and the reason the strip branch
+-- exists at all. Once db.enabled or db.blizzDM says no, RefreshAllFrames returns
+-- before it touches a frame, so a redraw does nothing and every row keeps its
+-- tag forever. Turning the addon off has to take the tags with it.
+--
+-- No combat guard on the redraw path, deliberately: ScheduleRefresh only sets a
+-- dirty flag, and its OnUpdate refuses to run while the group is in combat. The
+-- options panel can be opened mid-pull, so deferring IS the guard. The strip
+-- branch writes immediately, so it takes the explicit check.
+---------------------------------------------------------------
+function Details_iLvlDisplay_BlizzDMApplySetting(key)
+    local db = API.GetDb()
+    if not db then return end
+
+    local on = db.enabled
+        and db.blizzDM ~= false
+        and not (db.blizzDM == nil and Details)
+
+    if key == "enabled" or key == "blizzDM" then
+        -- Switching ON needs nothing from us: the router already rings the cache
+        -- callback for these two, which lands on a full refresh. OFF is the gap.
+        if not on and not IsGroupInCombat() then
+            StripAllTags()
+        end
+    elseif key == "ilvlPosition" then
+        -- The one key this file renders from that nothing else announces.
+        -- colorIlvl and showSetBonus already arrive over the cache callback.
+        if on and not blizzDMState.disabled then ScheduleRefresh() end
+    end
 end
 
 ---------------------------------------------------------------
