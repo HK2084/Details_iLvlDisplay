@@ -1,106 +1,120 @@
 # -*- coding: utf-8 -*-
-"""Lua 5.1 refuses a closure with more than 60 upvalues and a chunk with more
-than 200 file-scope locals. luacheck does not model either, and lupa ships Lua
-5.5 where the ceilings are far higher -- so a file can pass every offline check
-here and still be rejected by the game client with
+"""Compile every Lua file with a REAL Lua 5.1, exactly as the game client does.
 
-    core.lua:1 core.lua:NNNN: function at line NNNN has more than 60 upvalues
+WoW runs Lua 5.1, which refuses AT COMPILE TIME any closure with more than 60
+upvalues or any chunk with more than 200 locals. Nothing else in this repo models
+that: luacheck does not know the limits, and the runtime the behaviour suites use
+is Lua 5.5, where the ceilings are far higher. On 20.08.2026 core.lua passed every
+offline check and the client rejected it with
 
-which is exactly what happened on 20.08.2026 after the slash handler grew.
+    core.lua:1 core.lua:3753: function at line 2741 has more than 60 upvalues
 
-Counting is deliberately pessimistic: every file-scope local NAME appearing
-anywhere in a function's text, comments included. The real upvalue count is the
-same or lower, so a pass here is a genuine pass.
+so the addon was, briefly, entirely dead.
 
-Functions are delimited by indentation rather than token matching. Lua's `end`
-closes if/for/while/do/function alike, `elseif` takes none, and one-line
-`if x then y end` nets to zero -- a depth counter gets all of that wrong. Every
-Lua file in this addon indents consistently, so a function opened at column 0 is
-closed by the next line that begins with `end` at column 0.
+TWO PARTS, AND THE DIFFERENCE MATTERS.
+
+The COMPILE is the gate: exact, because it is the same compiler the client runs.
+If loadstring succeeds under Lua 5.1 the file is safe, full stop.
+
+The upvalue figure is an UPPER BOUND, not a measurement, and it exists only to
+warn before the next helper pushes a function over. It counts every file-scope
+name appearing anywhere inside a top-level function, comments included, so it
+reads high on purpose -- an earlier version of this script reported 53 for
+functions the compiler puts at 45. Never quote it as a fact; quote the compiler.
 """
 import io, os, re, sys
 
-LIMIT_UP = 60
-LIMIT_LOCALS = 200
-MIN_LINES = 40          # smaller functions cannot plausibly reach 60
+try:
+    from lupa import lua51
+except ImportError:
+    sys.exit("needs lupa with a Lua 5.1 runtime: pip install lupa")
+
+MAX_UPVALUES = 60
+WARN_AT = 45
 
 
-def strip_noise(line):
-    line = re.sub(r'--.*$', ' ', line)
-    line = re.sub(r'"(\\.|[^"\\])*"', '""', line)
-    line = re.sub(r"'(\\.|[^'\\])*'", "''", line)
-    return line
+def upper_bound_upvalues(path):
+    """Deliberate over-estimate of the worst closure in a file. Reads high.
 
+    Function extent comes from indentation, not token matching: `end` closes
+    if/for/while/do/function alike, `elseif` closes nothing, and a one-line
+    `if x then y end` nets to zero, so a depth counter gets all of it wrong.
+    Every Lua file here is consistently indented, so a function opened at column
+    0 is closed by the next line starting with `end` at column 0.
+    """
+    lines = io.open(path, "rb").read().decode("utf-8").replace("\r\n", "\n").split("\n")
 
-def file_scope_locals(lines):
-    names = set()
+    scope = set()
     for line in lines:
         if not line.startswith("local"):
             continue
-        m = re.match(r'^local\s+function\s+(\w+)', line)
+        m = re.match(r"^local\s+function\s+(\w+)", line)
         if m:
-            names.add(m.group(1))
+            scope.add(m.group(1))
             continue
-        m = re.match(r'^local\s+([^=]+)', line)
+        m = re.match(r"^local\s+([^=]+)", line)
         if m:
-            for part in m.group(1).split(','):
-                part = part.strip().split('--')[0].strip()
-                if re.match(r'^\w+$', part):
-                    names.add(part)
-    return names
+            for part in m.group(1).split(","):
+                part = part.strip().split("--")[0].strip()
+                if re.match(r"^\w+$", part):
+                    scope.add(part)
 
-
-def top_level_functions(lines):
-    out = []
+    worst_n, worst_line = 0, 0
     for i, raw in enumerate(lines):
-        clean = strip_noise(raw)
-        if not clean[:1].strip():
-            continue                      # indented -> nested, skip
-        if 'function' not in clean:
+        clean = re.sub(r"--.*$", " ", raw)
+        if not clean[:1].strip() or "function" not in clean:
             continue
-        end = len(lines) - 1
+        stop = len(lines) - 1
         for j in range(i + 1, len(lines)):
-            if re.match(r'^end\b|^end\)', lines[j]):
-                end = j
+            if re.match(r"^end\b|^end\)", lines[j]):
+                stop = j
                 break
-        out.append((i, end, raw.strip()[:64]))
-    return out
+        if stop - i < 40:
+            continue
+        body = "\n".join(lines[i:stop + 1])
+        n = len(set(re.findall(r"\b([A-Za-z_]\w*)\b", body)) & scope)
+        if n > worst_n:
+            worst_n, worst_line = n, i + 1
+    return worst_n, worst_line
 
 
 def check(path):
-    lines = io.open(path, "rb").read().decode("utf-8").replace("\r\n", "\n").split("\n")
-    scope = file_scope_locals(lines)
-    print("%s" % os.path.basename(path))
-    over = 0
-    if len(scope) > LIMIT_LOCALS:
-        print("  !! Datei-Ebene locals: %d / %d" % (len(scope), LIMIT_LOCALS))
-        over += 1
-    else:
-        print("  Datei-Ebene locals: %d / %d" % (len(scope), LIMIT_LOCALS))
+    src = io.open(path, "rb").read()
+    name = os.path.basename(path)
+    # encoding=None keeps Lua strings as raw bytes: an error message may contain
+    # anything, and decoding it eagerly can fail on a file we are trying to
+    # report an error about.
+    L = lua51.LuaRuntime(encoding=None, unpack_returned_tuples=True)
+    compile_only = L.eval(
+        b'function(s, n) local f, err = loadstring(s, n)'
+        b' if f then return true end return false, err end')
+    res = compile_only(src, name.encode("utf-8"))
+    ok, err = res if isinstance(res, tuple) else (res, None)
+    if not ok:
+        print("  %-26s !! COMPILE-FEHLER, wortgleich zum Client:" % name)
+        print("     %s" % (err or b"?").decode("utf-8", "replace"))
+        return 1
 
-    ranked = []
-    for a, b, head in top_level_functions(lines):
-        if b - a < MIN_LINES:
-            continue
-        body = "\n".join(lines[a:b + 1])
-        used = set(re.findall(r'\b([A-Za-z_]\w*)\b', body)) & scope
-        ranked.append((len(used), a + 1, b + 1, head))
-    ranked.sort(reverse=True)
-    for n, a, b, head in ranked[:6]:
-        bad = n > LIMIT_UP
-        over += 1 if bad else 0
-        print("  %s%3d Upvalues  Zeile %5d-%-5d  %s" % ("!! " if bad else "   ", n, a, b, head))
-    return over
+    n, line = upper_bound_upvalues(path)
+    if n >= WARN_AT:
+        print("  %-26s uebersetzt   ~ hoechstens %d Upvalues ab Zeile %d (Grenze %d)"
+              % (name, n, line, MAX_UPVALUES))
+    else:
+        print("  %-26s uebersetzt" % name)
+    return 0
 
 
 if __name__ == "__main__":
-    os.chdir(r"e:/dev/gaming/wow-addons/Details_iLvlDisplay")
-    targets = sys.argv[1:] or ["core.lua", "blizzdm.lua", "util.lua", "init.lua",
-                               "danders_integration.lua", "elvui_tags.lua",
-                               "grid2_status.lua", "secrets.lua"]
-    total = 0
-    for t in targets:
-        total += check(t)
-        print()
-    print("UEBER DEM LIMIT: %d" % total)
-    sys.exit(1 if total else 0)
+    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    targets = sys.argv[1:]
+    if not targets:
+        targets = sorted(f for f in os.listdir(".") if f.endswith(".lua"))
+        for sub in ("ui", "locales"):
+            if os.path.isdir(sub):
+                targets += [os.path.join(sub, f)
+                            for f in sorted(os.listdir(sub)) if f.endswith(".lua")]
+    bad = sum(check(t) for t in targets)
+    print()
+    print("ALLE %d DATEIEN UEBERSETZEN UNTER LUA 5.1" % len(targets) if not bad
+          else "%d DATEI(EN) WUERDEN VOM CLIENT ABGELEHNT" % bad)
+    sys.exit(1 if bad else 0)
