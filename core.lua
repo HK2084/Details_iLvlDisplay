@@ -3302,9 +3302,14 @@ local function PrintDebugReport()
                 -- stop, not a warning: it means the list moved under the frames
                 -- and every index in that window is a coin toss.
                 if (ci.ctrlWindows or 0) > 0 then
-                    print(string.format("    index-join: %d/%d windows licensed  control: %d ok  %d mismatch (%d class)",
+                    -- "class ok" is the number of class comparisons actually
+                    -- PERFORMED. Without it "0 mismatch" reads the same whether
+                    -- every row agreed or the check never ran once, and the class
+                    -- veto skips silently on exactly the rows it exists for.
+                    print(string.format("    index-join: %d/%d windows licensed  control: %d ok  %d mismatch  (class: %d ok, %d mismatch)",
                         ci.ctrlTrusted or 0, ci.ctrlWindows or 0,
-                        ci.ctrlOk or 0, ci.ctrlBad or 0, ci.ctrlClassBad or 0))
+                        ci.ctrlOk or 0, ci.ctrlBad or 0,
+                        ci.ctrlClassOk or 0, ci.ctrlClassBad or 0))
                 else
                     -- Printed even at zero. An absent line reads as "nothing
                     -- happened" when it just as easily means "it ran and

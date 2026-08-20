@@ -52,6 +52,7 @@ for needle, why in [
     ("_dilvlGUIDBound", "der Provenienz-Merker"),
     ("ctrlComplete", "die Abbruch-Erkennung der Kontrolle"),
     ("pinnedInKey", "die Gruppen-Fixierung"),
+    ("ctrlClassOk", "der Zaehler tatsaechlich durchgefuehrter Klassenvergleiche"),
     ("GetLocalPlayerEntry", "die angeheftete Eigen-Zeile als Zeuge"),
 ]:
     if needle not in BACKFILL:
@@ -88,7 +89,8 @@ local bfWhy = {
     noSources = 0, noIndex = 0, noSrc = 0, classSecret = 0, classDiff = 0,
     specDiff = 0, ambiguous = 0, noLicence = 0, guidNil = 0, guidSecret = 0,
 }
-local bfCtrl = {ok = 0, bad = 0, classBad = 0, windows = 0, trusted = 0}
+local bfCtrl = {ok = 0, bad = 0, classBad = 0, classOk = 0,
+                windows = 0, trusted = 0}
 
 __SET_GUID__
 
@@ -160,7 +162,7 @@ local R = {}
 local function run(frames, sources, opts)
     opts = opts or {}
     inCombat = opts.combat or false
-    bfCtrl.ok, bfCtrl.bad, bfCtrl.classBad = 0, 0, 0
+    bfCtrl.ok, bfCtrl.bad, bfCtrl.classBad, bfCtrl.classOk = 0, 0, 0, 0
     bfCtrl.windows, bfCtrl.trusted = 0, 0
     WINDOW = MakeWindow(frames, sources, opts.throwAt, opts.sticky)
     BackfillIdentity()
@@ -444,7 +446,7 @@ controls = [
     ("Lizenz-Bedingung entfernt (jede Reihenfolge gilt als bewiesen)",
      chunk.replace(
          "local orderTrusted = (ctrlComplete and ctrlBad == 0\n"
-         "                and ctrlClassBad == 0 and ctrlOk > 0)",
+         "                and ctrlClassBad == 0 and ctrlOk > 0 and ctrlClassOk > 0)",
          "local orderTrusted = true"),
      lambda r: r["licenceOnly"][1] == "-,-,FALSCH"),
     ("Spezialisierungs-Vergleich entfernt",

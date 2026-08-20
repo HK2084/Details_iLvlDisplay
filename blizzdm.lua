@@ -13,6 +13,24 @@
 --   - Uses DamageMeter:ForEachSessionWindow to iterate visible frames
 --   - READ-ONLY: never modifies Blizzard frame fields (nameText etc.)
 --   - Never calls frame:UpdateName() — avoids taint + stack overflow
+--   - Never asks Blizzard's meter to redraw. SETTLED 20.08.2026, do not try a
+--     third time: DamageMeterEntry.lua:104 is `if text ~= self.nameText then`
+--     inside UpdateName, whose only caller is Init (:481). Blizzard's own code
+--     may compare a secret there; the same code under our taint may not, so
+--     EVERY route that reaches Init throws identically — Refresh, SetSession,
+--     SetDamageMeterType, SetBarHeight, ShowLocalPlayerEntry,
+--     UpdateExistingDataProvider, and the ScrollBox's Rebuild/SetDataProvider/
+--     ReinitializeFrames. There is no elevation door: taint elevation is the XML
+--     `secureMixin` attribute and all seven DamageMeter templates declare plain
+--     `mixin=` only. C_DamageMeter has eight functions; seven are getters with no
+--     UI effect, and ResetAllCombatSessions deletes the session before it
+--     refreshes. Proven live: driving Refresh threw at :104, aborted Blizzard's
+--     redraw mid-flight and left the meter frozen with one row showing another
+--     player's name until /reload.
+--     What DOES work is Blizzard refreshing on its own — a damage event, the
+--     A/G toggle, scrolling a row into view — and our own ScheduleRefresh,
+--     which re-runs OUR tagging over existing frames but cannot make Blizzard
+--     re-read anything.
 --   - Never calls C_DamageMeter APIs directly
 --   - When the native FontString is locked by secret text we leave it alone
 --     and skip the tag; there is no overlay FontString (an earlier design
@@ -1191,7 +1209,12 @@ local bfWhy = {
 -- not just the result. `ok` are rows whose owner Blizzard bound to the frame
 -- itself and that sit at the index they claim, `bad` are rows that do not. A
 -- window is trusted only with at least one ok and no bad at all.
-local bfCtrl = {ok = 0, bad = 0, classBad = 0, windows = 0, trusted = 0}
+-- classOk counts comparisons PERFORMED, not comparisons passed. Without it,
+-- "0 mismatch" reads the same whether every row agreed or the check never ran
+-- once — and the class veto skips silently whenever either side is nil or
+-- secret, which is precisely the state the sealed rows are in. A guard that
+-- cannot say whether it looked is not a guard.
+local bfCtrl = {ok = 0, bad = 0, classBad = 0, classOk = 0, windows = 0, trusted = 0}
 
 -- Blizzard's own frame-to-data mapping, and the reason none of the guesswork
 -- below should normally be needed.
@@ -1292,7 +1315,7 @@ local function BackfillIdentity()
             -- almost every time: isLocalPlayer is NeverSecret
             -- (DamageMeterDocumentation.lua:206) and UnitGUID("player") needs no
             -- list to answer.
-            local ctrlOk, ctrlBad, ctrlClassBad = 0, 0, 0
+            local ctrlOk, ctrlBad, ctrlClassBad, ctrlClassOk = 0, 0, 0, 0
             local ctrlComplete = false
             -- Which indices a verified witness is sitting on. Used below to pin
             -- a class+spec group: see the fourth decision rule.
@@ -1319,9 +1342,12 @@ local function BackfillIdentity()
                     -- business and stays a per-row refusal further down.
                     local fc, sc = frame.classFilename, s.classFilename
                     if fc ~= nil and sc ~= nil
-                        and not isSecret(fc) and not isSecret(sc)
-                        and fc ~= sc then
-                        ctrlClassBad = ctrlClassBad + 1
+                        and not isSecret(fc) and not isSecret(sc) then
+                        if fc ~= sc then
+                            ctrlClassBad = ctrlClassBad + 1
+                        else
+                            ctrlClassOk = ctrlClassOk + 1
+                        end
                     end
 
                     local sg = s.sourceGUID
@@ -1372,11 +1398,17 @@ local function BackfillIdentity()
             -- TRUE. A fault that grants the licence instead of withholding it is
             -- the one direction this addon does not accept, and SafeBlizzCall
             -- cannot report it: every one of its exits returns nil.
+            -- ctrlClassOk > 0 for the same reason as ctrlOk > 0: a clean sheet is
+            -- only evidence if something was actually checked. The class veto is
+            -- the only witness that covers rows we cannot name, so a licence
+            -- granted while it never compared once rests on the local player
+            -- alone — which is exactly the thin evidence the review rejected.
             local orderTrusted = (ctrlComplete and ctrlBad == 0
-                and ctrlClassBad == 0 and ctrlOk > 0)
+                and ctrlClassBad == 0 and ctrlOk > 0 and ctrlClassOk > 0)
             bfCtrl.ok = bfCtrl.ok + ctrlOk
             bfCtrl.bad = bfCtrl.bad + ctrlBad + ctrlClassBad
             bfCtrl.classBad = bfCtrl.classBad + ctrlClassBad
+            bfCtrl.classOk = bfCtrl.classOk + ctrlClassOk
             bfCtrl.windows = bfCtrl.windows + 1
             if orderTrusted then bfCtrl.trusted = bfCtrl.trusted + 1 end
 
@@ -1452,6 +1484,24 @@ local function BackfillIdentity()
                             or isSecret(class) or isSecret(fClass)
                             or isSecret(spec) or isSecret(fSpec) then
                             why = "classSecret"
+                            -- WHICH of the four, on the row itself. The counter
+                            -- lumps all four together, and the four have opposite
+                            -- meanings: both class fields are documented
+                            -- NeverSecret and non-nilable
+                            -- (DamageMeterDocumentation.lua:202-203), so if the
+                            -- FRAME side reads secret then NeverSecret does not
+                            -- survive onto a frame filled during combat and this
+                            -- whole comparison is dead code on sealed rows. If it
+                            -- reads nil the frame never went through a source
+                            -- Init. Order: src.class / frame.class / src.spec /
+                            -- frame.spec, "." plain, "S" secret, "-" absent.
+                            local function mark(v)
+                                if v == nil then return "-" end
+                                if isSecret(v) then return "S" end
+                                return "."
+                            end
+                            frame._dilvlClassSig = mark(class) .. mark(fClass)
+                                .. mark(spec) .. mark(fSpec)
                         elseif class ~= fClass then
                             why = "classDiff"
                         elseif spec ~= fSpec then
@@ -1547,6 +1597,9 @@ local function BackfillIdentity()
                         if owner ~= nil and isSecret(owner) then owner = nil end
                         SetFrameGUID(frame, guid, true, owner)
                         frame._dilvlBfWhy = nil
+                        -- Cleared with the reason it belongs to, so a reading can
+                        -- never be a fossil from an earlier occupant of the row.
+                        frame._dilvlClassSig = nil
                         claimed[guid] = true
                         identityBackfills = identityBackfills + 1
                         table.remove(pending, i)
@@ -1898,6 +1951,11 @@ function StartPostCombatRefresh()
     -- this number, so from the second fight on it held the FIRST fight's high
     -- water mark and the catch-up gave up after a single pass.
     refreshStats.tagged = 0
+    -- And the throttle with it. Without this the first pass runs at t=0 and the
+    -- first COUNT happens at t~0.5 — straddling the moment Blizzard unlocks the
+    -- names. A pass that tagged nothing yet fails `tagged > prevTagged`, and the
+    -- catch-up gives up after a single attempt at exactly the wrong moment.
+    refreshThrottle = 0
     -- #6: per-fight, not per-session. One bad window in the first pull otherwise
     -- printed "1 mismatch" for the rest of the evening, next to a report line
     -- that tells the reader to treat any mismatch as a hard stop.
@@ -2234,6 +2292,7 @@ API.GetBlizzDMDebug = function()
         ctrlOk = bfCtrl.ok,
         ctrlBad = bfCtrl.bad,
         ctrlClassBad = bfCtrl.classBad,
+        ctrlClassOk = bfCtrl.classOk,
         ctrlWindows = bfCtrl.windows,
         ctrlTrusted = bfCtrl.trusted,
     }
@@ -2345,6 +2404,9 @@ API.GetBlizzDMDebug = function()
                     -- deliberately refused, and those need opposite responses.
                     local bw = frame._dilvlBfWhy
                     path = bw and ("NO-GUID:" .. tostring(bw)) or "NO-GUID"
+                    if bw == "classSecret" and frame._dilvlClassSig then
+                        path = path .. "(" .. frame._dilvlClassSig .. ")"
+                    end
                 end
             elseif not API.GetCacheData(guid) or not API.GetCacheData(guid).ilvl then
                 path = "NO-CACHE"

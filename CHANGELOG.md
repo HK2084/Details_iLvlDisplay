@@ -24,16 +24,18 @@
 
 *   **A tier set bonus is no longer guessed on first contact.** When a player's gear had not finished loading, whatever pieces were readable at that moment were counted and stored as final — so someone wearing four tier pieces could be recorded as `[2P]`, and it stuck. An incomplete reading now shows no tag at all and schedules another look. A missing tag is fine; a wrong one is not.
 
-*   **Blizzard's own damage meter stayed half-empty after a boss fight.** Rows for players
-    outside your group kept no item level once the fight ended — sometimes for minutes, sometimes
-    until a `/reload`, and then filling in by themselves when some unrelated event happened to
-    come along. Blizzard's meter only rebuilds a row while damage is still coming in, so after
-    the last hit every row keeps the sealed name it was drawn with and there is nothing left to
-    trigger a second look. The addon now reads the finished fight back from the game directly,
-    where the names are readable again, and matches it to the rows on screen — but only after
-    proving the match is sound: the rows whose owner the game states outright must each land on
-    the line they claim. If a single one does not, that window is left alone. Roughly nineteen
-    out of twenty rows in a full raid were affected.
+*   **More rows on Blizzard's damage meter keep their item level after a fight.** Blizzard only
+    rebuilds a row while damage is still coming in, so once the last hit lands every row holds on
+    to the sealed name it was drawn with, and there is nothing left to trigger a second look —
+    measured in one raid, twelve of twenty-five rows sat blank until something unrelated came
+    along or the interface was reloaded. The addon now reads the finished fight back from the
+    game itself, where the names are readable again, and matches it to the rows on screen.
+    It does so only where the match can be proven: every row whose owner the game states outright
+    must land on the line it claims, no row may sit on a source of another class, and a player
+    is only identified this way when every other player of that class and specialisation is
+    already pinned to a confirmed line. Where that proof is not available the row stays blank,
+    which in a raid full of one specialisation is still the common case. A missing tag is fine;
+    another player's name is not.
 
 *   **The public API no longer throws on input it did not produce.** The colour helpers raised an error on anything that was not a number, and two lookups could throw inside restricted instances. Other addons reading item levels from this one no longer see errors carrying its name.
 
