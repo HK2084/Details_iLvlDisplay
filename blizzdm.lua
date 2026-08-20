@@ -169,15 +169,25 @@ local function disableBlizzDMSelf(reason)
         .. BLIZZDM_ERROR_LIMIT .. " errors. Recovery: /dilvl blizzdm. Last: " .. tostring(reason))
 end
 
+-- Depth, because these calls NEST: BackfillIdentity wraps a ForEachSessionWindow
+-- which wraps a ForEachEntryFrame which wraps InjectIlvl. The success reset below
+-- is meant for "five CONSECUTIVE failures", but an inner call that failed was
+-- immediately forgiven by its own parent returning successfully — so the
+-- kill-switch could never trip for anything nested, which is nearly everything.
+-- Only the outermost success may clear the count.
+local safeBlizzDepth = 0
+
 local function SafeBlizzCall(label, fn, ...)
     if blizzDMState.disabled then return nil end
     if blizzDMState.errors >= BLIZZDM_ERROR_LIMIT then return nil end
+    safeBlizzDepth = safeBlizzDepth + 1
     local ok, a, b, c = pcall(fn, ...)
+    safeBlizzDepth = safeBlizzDepth - 1
     if ok then
         -- Success clears accumulated errors: the kill-switch should trip on 5
         -- CONSECUTIVE failures (a persistently broken integration), not on 5
         -- transient errors spread across a long session.
-        blizzDMState.errors = 0
+        if safeBlizzDepth == 0 then blizzDMState.errors = 0 end
         return a, b, c
     end
     blizzDMState.errors = blizzDMState.errors + 1
@@ -1149,9 +1159,12 @@ local ScheduleRefresh, StartPostCombatRefresh
 -- The index alone is NOT proof. The list can be reordered between a frame's
 -- last Init and now, and trusting it blindly would hand one player's identity
 -- to another player's row — the exact failure this addon refuses to produce.
--- So every match is confirmed against two fields that Blizzard guarantees are
--- never secret and that Init copied from that same source: the damage total
--- (:473) and the class (:496). Both must agree, or we take nothing.
+-- So every match is confirmed against the two fields Blizzard marks NeverSecret
+-- and that Init copied from that same source: classFilename and specIconID
+-- (DamageMeterDocumentation.lua:202-203). The damage total is NOT one of them —
+-- it carries no annotation at all, exactly like sourceGUID (:199, :204), so it is
+-- unreadable on a sealed row and only ever serves as a bonus confirmation when
+-- it happens to be available.
 --
 -- Out of combat only: GetCombatSessionFromType is SecretWhenInCombat
 -- (DamageMeterDocumentation.lua:39-41).
@@ -1280,8 +1293,11 @@ local function BackfillIdentity()
             -- (DamageMeterDocumentation.lua:206) and UnitGUID("player") needs no
             -- list to answer.
             local ctrlOk, ctrlBad, ctrlClassBad = 0, 0, 0
-            SafeBlizzCall("BackfillControl", sw.ForEachEntryFrame, sw,
-                function(frame)
+            local ctrlComplete = false
+            -- Which indices a verified witness is sitting on. Used below to pin
+            -- a class+spec group: see the fourth decision rule.
+            local pinnedIdx = {}
+            local function ControlFrame(frame)
                     if frame.spellID ~= nil then return end
                     local idx = frame.index
                     if not idx or isSecret(idx) then return end
@@ -1322,11 +1338,42 @@ local function BackfillIdentity()
 
                     if known == sg then
                         ctrlOk = ctrlOk + 1
+                        pinnedIdx[idx] = true
                     else
                         ctrlBad = ctrlBad + 1
                     end
-                end)
-            local orderTrusted = (ctrlBad == 0 and ctrlClassBad == 0 and ctrlOk > 0)
+            end
+
+            SafeBlizzCall("BackfillControl", function()
+                sw:ForEachEntryFrame(ControlFrame)
+                -- Blizzard keeps the local player pinned above the list on a
+                -- frame of its own (MinimizeContainer.LocalPlayerEntry,
+                -- DamageMeterSessionWindow.lua:143 / .xml:109) that the ScrollBox
+                -- never enumerates. In a 20-man raid the default window shows
+                -- about six rows, so your own bar is usually scrolled out and
+                -- THAT frame is the only place it exists — which left the window
+                -- with no witness at all and the join permanently shut in exactly
+                -- the case it was written for. It goes through the same InitEntry
+                -- (:662), so it carries a valid index.
+                if sw.GetLocalPlayerEntry then
+                    local lpe = sw:GetLocalPlayerEntry()
+                    if lpe and lpe.IsShown and lpe:IsShown() then
+                        ControlFrame(lpe)
+                    end
+                end
+                -- Last statement on purpose: reached only if nothing above threw.
+                ctrlComplete = true
+            end)
+
+            -- ctrlComplete is not decoration. The counters live outside the
+            -- callback, so a throw part way through leaves whatever it had
+            -- counted so far standing — and an abort after the first agreement
+            -- but before the disagreeing witness would flip this from false to
+            -- TRUE. A fault that grants the licence instead of withholding it is
+            -- the one direction this addon does not accept, and SafeBlizzCall
+            -- cannot report it: every one of its exits returns nil.
+            local orderTrusted = (ctrlComplete and ctrlBad == 0
+                and ctrlClassBad == 0 and ctrlOk > 0)
             bfCtrl.ok = bfCtrl.ok + ctrlOk
             bfCtrl.bad = bfCtrl.bad + ctrlBad + ctrlClassBad
             bfCtrl.classBad = bfCtrl.classBad + ctrlClassBad
@@ -1361,6 +1408,15 @@ local function BackfillIdentity()
                         end
                     end
                 end
+            end
+
+            -- How many members of each class+spec group sit on an index a
+            -- verified witness confirmed. This is what makes the fourth rule
+            -- below sound; see there.
+            local pinnedInKey = {}
+            for j in pairs(pinnedIdx) do
+                local k = srcKey[j]
+                if k then pinnedInKey[k] = (pinnedInKey[k] or 0) + 1 end
             end
 
             -- `claimed` and `pending` are already filled by the direct pass above:
@@ -1444,20 +1500,38 @@ local function BackfillIdentity()
                                 and total == fTotal
                         end
 
-                        -- 4. The list is provably still in the order these rows
-                        --    were filled from, so the index IS the binding rather
-                        --    than a guess about it. Last of the four because the
-                        --    three above decide a row on its own evidence and
-                        --    this one leans on the window as a whole; the claimed
-                        --    check still keeps two rows from taking one player.
+                        -- 4. Every OTHER source of this class and spec sits on
+                        --    an index a verified witness confirmed, so this row
+                        --    is the only place left this one can be.
                         --
-                        --    Without it the raid case had no way through at all:
-                        --    half a dozen players share a class and spec, so (1)
-                        --    and (2) never fire, and (3) needs damage totals that
-                        --    stay secret for good once they were recorded in
-                        --    restricted combat. 1456 refusals in one evening, on
-                        --    rows whose item level was sitting in the cache.
-                        if not decided and orderTrusted and not claimed[guid] then
+                        --    The window-wide licence alone is NOT enough here,
+                        --    and that was a real defect rather than a theoretical
+                        --    one. orderTrusted is raised by two signals: verified
+                        --    rows landing on the index they claim, and no class
+                        --    disagreeing with its source anywhere. A swap of two
+                        --    players who share class AND spec emits NEITHER — the
+                        --    class string at every index is unchanged, and unless
+                        --    one of the two swapped rows happens to be a witness
+                        --    itself, no witness moves. After a fight the only
+                        --    witness is usually your own row, so a single unmoved
+                        --    sample would have licensed two dozen others. Rules 1
+                        --    to 3 all decline for exactly that population, so
+                        --    this rule was the one deciding it, and it would have
+                        --    written the other player's name AND item level onto
+                        --    the row, under a class icon that still matched.
+                        --    Nothing on screen would have contradicted it, and
+                        --    the direct pass skips rows that already carry an
+                        --    API identity, so no later pass repairs it.
+                        --
+                        --    Counting pinned positions closes it: a class-
+                        --    preserving permutation has to move at least two
+                        --    members of one group, and if every other member is
+                        --    pinned there is no second one left to move.
+                        local key = srcKey[idx]
+                        local grp = key and groups[key]
+                        if not decided and orderTrusted and not claimed[guid]
+                            and grp and key
+                            and (grp.n - (pinnedInKey[key] or 0)) == 1 then
                             decided = true
                         end
 
@@ -1819,6 +1893,16 @@ end
 function StartPostCombatRefresh()
     refreshActive = true
     refreshStats.passes = 0
+    -- #7: tagged is the previous pass's score and the loop stops when a pass
+    -- fails to beat it. PLAYER_REGEN_DISABLED strips every tag without touching
+    -- this number, so from the second fight on it held the FIRST fight's high
+    -- water mark and the catch-up gave up after a single pass.
+    refreshStats.tagged = 0
+    -- #6: per-fight, not per-session. One bad window in the first pull otherwise
+    -- printed "1 mismatch" for the rest of the evening, next to a report line
+    -- that tells the reader to treat any mismatch as a hard stop.
+    bfCtrl.ok, bfCtrl.bad, bfCtrl.classBad = 0, 0, 0
+    bfCtrl.windows, bfCtrl.trusted = 0, 0
     ScheduleRefresh()
 end
 

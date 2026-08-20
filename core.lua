@@ -3221,10 +3221,21 @@ local function PrintDebugReport()
                     -- Printed even at zero. An absent line reads as "nothing
                     -- happened" when it just as easily means "it ran and
                     -- correctly did nothing", and this report has already been
-                    -- caught out by that twice. Zero windows is the GOOD state:
-                    -- no row needed the join. The backfill line above says which
-                    -- of the reasons it was.
-                    print("    index-join: not reached — no window needed it")
+                    -- caught out by that twice.
+                    --
+                    -- Zero windows has TWO meanings and they are opposites: no
+                    -- row needed the join, or a window needed it and could not
+                    -- run it at all. bfCtrl.windows is only counted past those
+                    -- early returns, so the reasons on the backfill line above
+                    -- are what separates them.
+                    if bfReason and bfReason:find("noSession")
+                        or bfReason and bfReason:find("secretSession")
+                        or bfReason and bfReason:find("noSources")
+                        or bfReason and bfReason:find("noApi") then
+                        print("    index-join: could not run — see backfill line above")
+                    else
+                        print("    index-join: not reached — no window needed it")
+                    end
                 end
                 print(string.format("    combat: group=%s  self=%s  ICL=%s  encounter=%s%s  unitFlags=%s  members=%d",
                     ci.groupCombat and "YES" or "no",

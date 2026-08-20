@@ -8,11 +8,23 @@ something happens to refresh it -- which may be minutes later, or a /reload.
 Live 20.08.2026: half the raid stood untagged after a boss died and filled in on
 its own several minutes later, with nobody touching anything.
 
-The addon reads the session fresh from C_DamageMeter itself, where names and
-GUIDs ARE readable out of combat, and joins it to the rows by index. What that
-join needs is proof the list has not been re-sorted since the rows were drawn:
-rows whose owner Blizzard bound to the frame itself must land on the index they
-claim. This drives the REAL BackfillIdentity extracted from blizzdm.lua.
+The addon reads the finished session back from C_DamageMeter itself, where names
+and GUIDs ARE readable out of combat, and joins it to the rows by index. What
+that join needs is proof the list has not been re-sorted since the rows were
+drawn. Two things supply it, and the difference between them is the point of
+this suite:
+
+  * a WINDOW-wide licence -- verified rows land on the index they claim, and no
+    class disagrees with its source anywhere
+  * a PER-GROUP pin -- every other source sharing this class and spec sits on an
+    index a verified witness confirmed
+
+The licence alone is not enough, and that was a real defect rather than a
+theoretical one: a swap of two players who share class AND spec emits neither
+signal, so one unmoved witness would have licensed two dozen rows and written
+another player's name and item level onto one of them.
+
+This drives the REAL BackfillIdentity extracted from blizzdm.lua.
 """
 import io, os, re, sys
 import lupa
@@ -35,10 +47,16 @@ def extract(name):
 
 ELEMENT_DATA = extract("ElementDataOf")
 BACKFILL = extract("BackfillIdentity")
-assert "orderTrusted" in BACKFILL, "die Ordnungs-Kontrolle fehlt in BackfillIdentity"
-assert "_dilvlGUIDBound" in BACKFILL, "der Provenienz-Merker fehlt in BackfillIdentity"
+for needle, why in [
+    ("orderTrusted", "die Ordnungs-Kontrolle"),
+    ("_dilvlGUIDBound", "der Provenienz-Merker"),
+    ("ctrlComplete", "die Abbruch-Erkennung der Kontrolle"),
+    ("pinnedInKey", "die Gruppen-Fixierung"),
+    ("GetLocalPlayerEntry", "die angeheftete Eigen-Zeile als Zeuge"),
+]:
+    if needle not in BACKFILL:
+        sys.exit("%s fehlt in BackfillIdentity" % why)
 
-# SetFrameGUID kommt im Original aus einer frueheren Stelle der Datei.
 m = re.search(r"^local function SetFrameGUID\(.*?\n^end$", SRC, re.M | re.S)
 if not m:
     sys.exit("SetFrameGUID nicht gefunden")
@@ -56,29 +74,42 @@ local function IsGroupInCombat() return inCombat end
 local PLAYER = "Player-Quinroth"
 local function SafeUnitGUID(unit) if unit == "player" then return PLAYER end end
 
-local function SafeBlizzCall(label, fn, ...) return fn(...) end
+-- pcall like the original: a throw inside must be CONTAINED, not propagated,
+-- otherwise the test cannot see what the addon does after one.
+local function SafeBlizzCall(label, fn, ...)
+    local ok, a, b, c = pcall(fn, ...)
+    if ok then return a, b, c end
+    return nil
+end
 
 local identityBackfills = 0
 local bfWhy = {
     direct = 0, combat = 0, noApi = 0, noSession = 0, secretSession = 0,
     noSources = 0, noIndex = 0, noSrc = 0, classSecret = 0, classDiff = 0,
-    specDiff = 0, ambiguous = 0, guidNil = 0, guidSecret = 0,
+    specDiff = 0, ambiguous = 0, noLicence = 0, guidNil = 0, guidSecret = 0,
 }
 local bfCtrl = {ok = 0, bad = 0, classBad = 0, windows = 0, trusted = 0}
 
 __SET_GUID__
 
--- Blizzards Fenster: ForEachEntryFrame + GetCombatSession, wie im Original.
 local WINDOW, SOURCES
 local DamageMeter = {}
 function DamageMeter:ForEachSessionWindow(fn) fn(WINDOW) end
 
-local function MakeWindow(frames, sources)
+-- throwAt: raise inside the row walk once that many rows have been handed out,
+-- to model a Blizzard API that fails part way through.
+-- sticky: a local-player entry that lives OUTSIDE the ScrollBox, exactly as
+-- Blizzard pins it (MinimizeContainer.LocalPlayerEntry).
+local function MakeWindow(frames, sources, throwAt, sticky)
     SOURCES = sources
     return {
         ForEachEntryFrame = function(self, fn)
-            for _, f in ipairs(frames) do fn(f) end
+            for i, f in ipairs(frames) do
+                if throwAt and i > throwAt then error("blizzard blew up") end
+                fn(f)
+            end
         end,
+        GetLocalPlayerEntry = function(self) return sticky end,
         GetCombatSession = function(self)
             return {combatSources = SOURCES}
         end,
@@ -86,13 +117,9 @@ local function MakeWindow(frames, sources)
     }
 end
 
-__ELEMENT_DATA__
-
-__BACKFILL__
-
 -- ---------------------------------------------------------------- Faelle
--- Eine Reihe, wie Blizzard sie nach dem Kampf hinterlaesst: Name geheim, keine
--- Identitaet, aber classFilename/specIconID bleiben lesbar (NeverSecret).
+-- A row as Blizzard leaves it after a fight: name sealed, no identity, but
+-- classFilename/specIconID still readable (both NeverSecret).
 local function Row(index, class, spec, opts)
     opts = opts or {}
     local f = {
@@ -105,6 +132,10 @@ local function Row(index, class, spec, opts)
     }
     if opts.boundGuid then
         SetFrameGUID(f, opts.boundGuid, true, opts.owner, true)
+    end
+    if opts.inferredGuid then
+        -- fromAPI, but NOT bound: this is what the index join itself produces.
+        SetFrameGUID(f, opts.inferredGuid, true, opts.owner, nil)
     end
     if opts.elementData then
         f.GetElementData = function() return opts.elementData end
@@ -121,12 +152,17 @@ local function Source(guid, class, spec, opts)
     }
 end
 
+__ELEMENT_DATA__
+
+__BACKFILL__
+
 local R = {}
-local function run(frames, sources, combat)
-    inCombat = combat or false
+local function run(frames, sources, opts)
+    opts = opts or {}
+    inCombat = opts.combat or false
     bfCtrl.ok, bfCtrl.bad, bfCtrl.classBad = 0, 0, 0
     bfCtrl.windows, bfCtrl.trusted = 0, 0
-    WINDOW = MakeWindow(frames, sources)
+    WINDOW = MakeWindow(frames, sources, opts.throwAt, opts.sticky)
     BackfillIdentity()
     inCombat = false
     local out = {}
@@ -134,8 +170,7 @@ local function run(frames, sources, combat)
     return table.concat(out, ","), bfCtrl.trusted, bfCtrl.ok, bfCtrl.bad
 end
 
--- Der Live-Fall: vier Jaeger derselben Spezialisierung, Schadenszahlen geheim.
--- Ohne bewiesene Reihenfolge kommt hier kein einziger durch.
+-- Four hunters of one spec, damage totals sealed. Two of them are witnesses.
 local function raid(shift, opts)
     opts = opts or {}
     local frames = {
@@ -154,10 +189,8 @@ local function raid(shift, opts)
     return frames, sources
 end
 
--- Eine einzige Reihe, deren Klasse nicht zu ihrer Quelle passt: eine Klasse
--- aendert sich nicht, also hat sich die Liste bewegt -- und dann taugt kein
--- Index in diesem Fenster mehr. Ohne dieses Veto haengt der Nachweis nach einem
--- Kampf oft am eigenen Charakter allein.
+-- One row whose class does not match its source: a class cannot change, so the
+-- list moved, and then no index in this window is worth anything.
 local function raidWithStranger()
     local frames = {
         Row(1, "HUNTER", 11, {isLocalPlayer = true}),
@@ -177,10 +210,64 @@ R.classVeto      = {run(raidWithStranger())}
 R.reordered      = {run(raid(true))}
 R.noControl      = {run(raid(false, {stripBound = true, stripPlayer = true}))}
 R.playerOnly     = {run(raid(false, {stripBound = true}))}
-R.inCombat       = {run(raid(false), nil, true)}
+R.inCombat       = {run(raid(false), nil, {combat = true})}
 
--- Ein Bound-Treffer stimmt, einer nicht: ein einziger Fehlschlag schliesst das
--- ganze Fenster, auch wenn die Mehrheit passt.
+-- THE ONE THIS SUITE EXISTS FOR. Two mages of the same spec change places in
+-- the list; the local player at the top does not move. No witness moves, and the
+-- class string at every index is unchanged, so the window-wide licence is
+-- granted -- and it must still decide nothing here.
+do
+    local frames = {
+        Row(1, "HUNTER", 11, {isLocalPlayer = true}),
+        Row(2, "MAGE", 62),
+        Row(3, "MAGE", 62),
+    }
+    local sources = {Source(PLAYER, "HUNTER", 11),
+                     Source("Y", "MAGE", 62), Source("X", "MAGE", 62)}
+    R.transposed = {run(frames, sources)}
+end
+
+-- The same shape with one member pinned: now the remaining row is the only
+-- place its source can be, and it resolves.
+do
+    local frames = {
+        Row(1, "HUNTER", 11, {isLocalPlayer = true}),
+        Row(2, "MAGE", 62, {boundGuid = "X"}),
+        Row(3, "MAGE", 62),
+    }
+    local sources = {Source(PLAYER, "HUNTER", 11),
+                     Source("X", "MAGE", 62), Source("Y", "MAGE", 62)}
+    R.lastOne = {run(frames, sources)}
+end
+
+-- Blizzard pins the local player on a frame outside the ScrollBox. With your
+-- own bar scrolled out that frame is the only place it exists, and without it
+-- the window has no witness at all.
+do
+    local sticky = Row(1, "HUNTER", 11, {isLocalPlayer = true})
+    sticky.IsShown = function() return true end
+    -- Nur versiegelte Reihen in der ScrollBox: ohne die angeheftete Zeile hat
+    -- dieses Fenster ueberhaupt keinen Zeugen.
+    local frames = {Row(2, "HUNTER", 11)}
+    local sources = {Source(PLAYER, "HUNTER", 11), Source("A", "HUNTER", 11)}
+    R.stickyWitness = {run(frames, sources, {sticky = sticky})}
+end
+
+-- The row walk throws after the first agreement and before the disagreeing
+-- witness. The counters live outside the callback, so without an explicit
+-- completion flag this is the case that turns a fault INTO a licence.
+do
+    local frames = {
+        Row(1, "HUNTER", 11, {isLocalPlayer = true}),
+        Row(2, "MAGE", 62, {boundGuid = "FALSCH"}),
+        Row(3, "MAGE", 62),
+    }
+    local sources = {Source(PLAYER, "HUNTER", 11),
+                     Source("X", "MAGE", 62), Source("Y", "MAGE", 62)}
+    R.ctrlThrow = {run(frames, sources, {throwAt = 1})}
+end
+
+-- One bound witness agrees, one does not: a single failure shuts the window.
 do
     local frames = {
         Row(1, "HUNTER", 11, {isLocalPlayer = true}),
@@ -192,9 +279,8 @@ do
     R.oneMismatch = {run(frames, sources)}
 end
 
--- Gleiche Klasse, andere Spezialisierung: ein Spieler darf umskillen, also ist
--- das die Sache dieser einen Reihe und kein Beweis fuer eine verrutschte Liste.
--- Das Fenster bleibt lizenziert, die Reihe bekommt trotzdem nichts.
+-- Same class, different spec: a player may respec, so that is this one row's
+-- business and no evidence the list moved. The window stays licensed.
 do
     local frames = {
         Row(1, "HUNTER", 11, {isLocalPlayer = true}),
@@ -204,7 +290,7 @@ do
     R.specDiff = {run(frames, sources)}
 end
 
--- Zwei Reihen, eine Quelle: der Zweite darf den Spieler nicht auch bekommen.
+-- Two rows, one source: the second must not get the same player.
 do
     local frames = {
         Row(1, "HUNTER", 11, {isLocalPlayer = true}),
@@ -214,7 +300,7 @@ do
     R.doubleClaim = {run(frames, sources)}
 end
 
--- Der frische Lesevorgang liefert selbst noch Geheimnisse.
+-- The fresh read still hands back secrets of its own.
 do
     local frames = {Row(1, "HUNTER", 11, {isLocalPlayer = true}),
                     Row(2, "HUNTER", 11)}
@@ -222,29 +308,37 @@ do
     R.secretGuid = {run(frames, sources)}
 end
 
--- Der direkte Weg schlaegt alles: GetElementData bindet die Reihe an ihr
--- Element, unabhaengig von jeder Sortierung.
+-- GetElementData binds a row to its element and no re-sort can move it, so the
+-- direct path needs neither index nor licence.
 do
     local ed = {sourceGUID = "GD", classFilename = "HUNTER", specIconID = 11}
     local frames = {Row(9, "HUNTER", 11, {elementData = ed})}
     R.direct = {run(frames, {})}
 end
 
--- Zwei Laeufe hintereinander auf denselben Reihen. Im ersten lizenziert der
--- eigene Charakter das Fenster und zwei Reihen bekommen ihre Identitaet aus dem
--- Index. Im zweiten ist die Kontrolle weg -- und die abgeleiteten Identitaeten
--- duerfen sich nicht selbst die Erlaubnis ausstellen, aus der sie entstanden
--- sind. Genau daran haengt der Unterschied zwischen _dilvlGUIDBound und
--- _dilvlGUIDFromAPI.
+-- An identity the join itself produced is fromAPI, but it is NOT evidence about
+-- the ordering -- that is the thing it assumed. It must not count as a witness.
 do
-    local p1 = Row(1, "HUNTER", 11, {isLocalPlayer = true})
-    local r2 = Row(2, "HUNTER", 11)
-    local r3 = Row(3, "HUNTER", 11)
-    local r4 = Row(4, "HUNTER", 11)
+    local frames = {Row(2, "HUNTER", 11, {inferredGuid = "G2"}),
+                    Row(3, "PRIEST", 258)}
     local sources = {Source(PLAYER, "HUNTER", 11), Source("G2", "HUNTER", 11),
-                     Source("G3", "HUNTER", 11),   Source("G4", "HUNTER", 11)}
-    R.lauf1 = {run({p1, r2, r3}, sources)}
-    R.selfLicense = {run({r2, r3, r4}, sources)}
+                     Source("G3", "PRIEST", 258)}
+    R.selfLicense = {run(frames, sources)}
+end
+
+-- Nur die Lizenz entscheidet hier. Die Gruppe WARRIOR/71 hat zwei Mitglieder,
+-- eines davon durch die eigene Zeile fixiert -- die Fixierung allein wuerde die
+-- andere aufloesen, und die Ausschluss-Regel greift nicht, weil beide GUIDs noch
+-- frei sind. Ein widersprechender Zeuge im selben Fenster nimmt die Erlaubnis.
+do
+    local frames = {
+        Row(1, "WARRIOR", 71, {isLocalPlayer = true}),
+        Row(2, "WARRIOR", 71),
+        Row(3, "MAGE", 62, {boundGuid = "FALSCH"}),
+    }
+    local sources = {Source(PLAYER, "WARRIOR", 71), Source("Y", "WARRIOR", 71),
+                     Source("A", "MAGE", 62)}
+    R.licenceOnly = {run(frames, sources)}
 end
 
 R.backfills = identityBackfills
@@ -267,39 +361,67 @@ def lic(key):
     return R[key][2]
 
 
+def ctrl_ok(key):
+    return R[key][3]
+
+
 checks = [
-    ("bewiesene Reihenfolge loest alle vier Jaeger auf",
-     guids("trusted") == "Player-Quinroth,G2,G3,G4"),
+    # --- the blocking case
+    ("zwei vertauschte Spieler gleicher Klasse UND Spezialisierung werden nicht"
+     " aufgeloest", guids("transposed") == "Player-Quinroth,-,-"),
+    ("das Fenster gilt dabei trotzdem als lizenziert (Lizenz allein reicht nicht)",
+     lic("transposed") == 1),
+    ("ist jeder andere der Gruppe fixiert, loest die letzte Reihe auf",
+     guids("lastOne") == "Player-Quinroth,X,Y"),
+
+    # --- the licence itself
+    # Die eigene Zeile bleibt hier absichtlich offen: ihre Gruppe hat zwei
+    # Unbekannte. Auf dem Bildschirm fehlt sie trotzdem nie, weil
+    # ResolveFrameGUID sie ueber UnitGUID("player") beantwortet, ganz ohne Liste.
+    ("nur fixierte Gruppen kommen durch, der Rest bleibt leer",
+     guids("trusted") == "-,G2,-,-"),
     ("dabei ist genau ein Fenster lizenziert", lic("trusted") == 1),
     ("umsortierte Liste loest nichts auf", guids("reordered") == "-,G2,-,-"),
     ("und lizenziert kein Fenster", lic("reordered") == 0),
     ("ohne jede Kontrolle wird nichts aufgeloest",
      guids("noControl") == "-,-,-,-" and lic("noControl") == 0),
-    ("der eigene Charakter allein reicht als Kontrolle",
-     guids("playerOnly") == "Player-Quinroth,G2,G3,G4" and lic("playerOnly") == 1),
-    ("im Kampf laeuft der Abgleich gar nicht erst",
-     guids("inCombat") == "-,G2,-,-"),
+    ("ein einzelner Zeuge lizenziert, entscheidet aber keine Gruppe mit mehreren"
+     " Unbekannten", guids("playerOnly") == "-,-,-,-"
+     and lic("playerOnly") == 1),
     ("eine einzige Abweichung schliesst das ganze Fenster",
      guids("oneMismatch") == "-,FALSCH,-" and lic("oneMismatch") == 0),
+    ("eine unpassende Klasse schliesst das ganze Fenster",
+     guids("classVeto") == "-,-,-,-" and lic("classVeto") == 0),
+
+    # --- failing closed
+    # Reihe 1 ist die einzige ihrer Klasse und faellt deshalb ueber Regel 1,
+    # unabhaengig von jeder Lizenz. Reihe 3 braucht die Lizenz -- und bekommt sie
+    # nicht, weil die Kontrolle nicht durchgelaufen ist.
+    ("ein Abbruch mitten in der Kontrolle entzieht die Lizenz",
+     guids("ctrlThrow") == "Player-Quinroth,FALSCH,-" and lic("ctrlThrow") == 0),
+    ("im Kampf laeuft der Abgleich gar nicht erst",
+     guids("inCombat") == "-,G2,-,-"),
+    ("geheime GUID in der frischen Liste wird nicht verwendet",
+     guids("secretGuid") == "Player-Quinroth,-"),
+
+    # --- witnesses
+    ("die angeheftete Eigen-Zeile zaehlt als Zeuge",
+     guids("stickyWitness") == "A" and lic("stickyWitness") == 1),
+    ("abgeleitete Identitaet zaehlt nicht als Zeuge",
+     ctrl_ok("selfLicense") == 0 and lic("selfLicense") == 0),
+
+    # --- per-row rules
     ("andere Spezialisierung blockt nur die Reihe, nicht das Fenster",
      guids("specDiff") == "Player-Quinroth,-" and lic("specDiff") == 1),
-    # Welche der beiden Reihen den Zuschlag bekommt, legt die Reihenfolge des
-    # Fixpunkts fest und ist nicht die Zusage. Die Zusage ist: genau eine.
+    # Which of the two rows wins is the fixpoint's iteration order and not the
+    # promise. The promise is: exactly one.
     ("zwei Reihen bekommen nicht denselben Spieler",
      guids("doubleClaim").split(",").count("G2") == 1
      and guids("doubleClaim").startswith("Player-Quinroth,")),
-    ("geheime GUID in der frischen Liste wird nicht verwendet",
-     guids("secretGuid") == "Player-Quinroth,-"),
     ("der direkte Weg braucht weder Index noch Lizenz",
      guids("direct") == "GD"),
-    # Ohne das Veto wuerden die drei Jaeger ueber den Index durchgehen, obwohl
-    # eine Reihe im selben Fenster beweist, dass die Liste verrutscht ist.
-    ("eine unpassende Klasse schliesst das ganze Fenster",
-     guids("classVeto") == "-,-,-,-" and lic("classVeto") == 0),
-    ("erster Lauf loest per Index auf",
-     guids("lauf1") == "Player-Quinroth,G2,G3"),
-    ("abgeleitete Identitaet lizenziert sich nicht selbst",
-     guids("selfLicense") == "G2,G3,-" and lic("selfLicense") == 0),
+    ("ein widersprechender Zeuge blockt auch eine fixierte Gruppe",
+     guids("licenceOnly") == "-,-,FALSCH" and lic("licenceOnly") == 0),
 ]
 
 print()
@@ -310,27 +432,36 @@ for n, ok in checks:
 
 print()
 controls = [
+    ("Gruppen-Fixierung entfernt (Lizenz allein entscheidet wieder)",
+     chunk.replace(
+         "and grp and key\n                            and (grp.n - (pinnedInKey[key] or 0)) == 1 then",
+         "and grp and key then"),
+     lambda r: r["transposed"][1] == "Player-Quinroth,-,-"),
+    ("Abbruch-Erkennung entfernt",
+     chunk.replace("local orderTrusted = (ctrlComplete and ctrlBad == 0",
+                   "local orderTrusted = (ctrlBad == 0"),
+     lambda r: r["ctrlThrow"][2] == 0),
     ("Lizenz-Bedingung entfernt (jede Reihenfolge gilt als bewiesen)",
      chunk.replace(
-         "local orderTrusted = (ctrlBad == 0 and ctrlClassBad == 0 and ctrlOk > 0)",
+         "local orderTrusted = (ctrlComplete and ctrlBad == 0\n"
+         "                and ctrlClassBad == 0 and ctrlOk > 0)",
          "local orderTrusted = true"),
-     lambda r: r["reordered"][1] == "-,G2,-,-" and r["noControl"][1] == "-,-,-,-"),
+     lambda r: r["licenceOnly"][1] == "-,-,FALSCH"),
     ("Spezialisierungs-Vergleich entfernt",
      chunk.replace('elseif spec ~= fSpec then\n                            why = "specDiff"',
                    'elseif false then\n                            why = "specDiff"'),
      lambda r: r["specDiff"][1] == "Player-Quinroth,-"),
     ("Doppelvergabe-Sperre entfernt",
-     chunk.replace("if not decided and orderTrusted and not claimed[guid] then",
-                   "if not decided and orderTrusted then"),
-     lambda r: r["doubleClaim"][1] == "-,G2,-"),
-    ("Klassen-Veto entfernt",
-     chunk.replace("local orderTrusted = (ctrlBad == 0 and ctrlClassBad == 0 and ctrlOk > 0)",
-                   "local orderTrusted = (ctrlBad == 0 and ctrlOk > 0)"),
-     lambda r: r["classVeto"][1] == "-,-,-,-"),
+     chunk.replace("if not decided and orderTrusted and not claimed[guid]",
+                   "if not decided and orderTrusted"),
+     lambda r: r["doubleClaim"][1].split(",").count("G2") == 1),
     ("Provenienz ignoriert (abgeleitete Identitaet dient als Kontrolle)",
      chunk.replace("elseif frame._dilvlGUIDBound then",
                    "elseif frame._dilvlGUID then"),
-     lambda r: r["selfLicense"][1] == "G2,G3,-"),
+     lambda r: r["selfLicense"][3] == 0),
+    ("angeheftete Eigen-Zeile nicht mehr befragt",
+     chunk.replace("ControlFrame(lpe)", ""),
+     lambda r: r["stickyWitness"][1] == "A"),
 ]
 bad += run_controls(chunk, controls)
 
