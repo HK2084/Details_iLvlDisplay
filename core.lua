@@ -2738,151 +2738,19 @@ end
 -- Slash command
 ---------------------------------------------------------------
 SLASH_DILVL1 = "/dilvl"
-SlashCmdList["DILVL"] = function(msg)
-    msg = msg:lower():trim()
-
-    if msg == "" then
-        -- Bare /dilvl opens the Settings UI — the home for every option and the
-        -- What's New overview. All subcommands below still work; the full text
-        -- list is /dilvl help.
-        if ns.ui and ns.ui.slash then
-            ns.ui.slash.HandleSlash("")
-        else
-            print("|cFF00FF00Details! iLvl Display:|r Settings UI not loaded yet — try /reload.")
-        end
-        return
-    end
-
-    if msg == "on" then
-        db.enabled = true
-        RefreshAllBarTexts()
-        NotifyElvUI()
-        print("|cFF00FF00Details! iLvl Display:|r Enabled")
-    elseif msg == "off" then
-        db.enabled = false
-        ClearAllBarTags()
-        NotifyElvUI()
-        print("|cFF00FF00Details! iLvl Display:|r Disabled")
-    elseif msg == "color" then
-        db.colorIlvl = not db.colorIlvl
-        RefreshAllBarTexts()
-        NotifyElvUI()
-        print("|cFF00FF00Details! iLvl Display:|r Color " .. (db.colorIlvl and "ON" or "OFF"))
-    elseif msg == "setbonus" then
-        db.showSetBonus = not db.showSetBonus
-        RefreshAllBarTexts()
-        NotifyElvUI()
-        print("|cFF00FF00Details! iLvl Display:|r Set Bonus " .. (db.showSetBonus and "ON" or "OFF"))
-    elseif msg:match("^details size") then
-        local arg = msg:match("^details size%s+(%S+)")
-        local n = arg and tonumber(arg)
-        if n and (n == 0 or (n >= DETAILS_FONT_MIN and n <= DETAILS_FONT_MAX)) then
-            n = math.floor(n + 0.5)  -- round, matching the VALIDATORS.detailsFontSize rule
-            db.detailsFontSize = n
-            if ns.ApplySettingChange then ns.ApplySettingChange("detailsFontSize") end
-            if n == 0 then
-                print("|cFF00FF00Details! iLvl Display:|r Details text size: auto (matches Details' font)")
-            else
-                print(string.format("|cFF00FF00Details! iLvl Display:|r Details text size: %d (Columns layout)", n))
-            end
-        else
-            local cur = db.detailsFontSize or 0
-            print("|cFF00FF00Details! iLvl Display:|r Current Details text size: " .. ((cur == 0) and "auto" or tostring(cur)))
-            print(string.format("  Usage: /dilvl details size <0|%d-%d>  (0 = match Details' font; Columns layout)", DETAILS_FONT_MIN, DETAILS_FONT_MAX))
-        end
-
-    elseif msg:match("^details window") then
-        local arg = msg:match("^details window%s+(%S+)")
-        if arg == "all" or arg == "0" then
-            db.detailsWindowId = 0
-            if ns.ApplySettingChange then ns.ApplySettingChange("detailsWindowId") end
-            print("|cFF00FF00Details! iLvl Display:|r Details window: all windows")
-        else
-            local n = arg and tonumber(arg)
-            if n and n >= 1 and n <= 10 then
-                db.detailsWindowId = math.floor(n)
-                if ns.ApplySettingChange then ns.ApplySettingChange("detailsWindowId") end
-                print(string.format("|cFF00FF00Details! iLvl Display:|r Details window: only window %d", math.floor(n)))
-            else
-                local cur = db.detailsWindowId or 0
-                print("|cFF00FF00Details! iLvl Display:|r Current Details window: " .. ((cur == 0) and "all windows" or ("window " .. cur)))
-                print("  Usage: /dilvl details window <all|1-10>")
-            end
-        end
-
-    elseif msg == "details" then
-        db.showInDetails = not db.showInDetails
-        if not db.showInDetails then
-            ClearAllBarTags()
-        else
-            -- Reset the hook-error counter so the user gets a fresh
-            -- 5-error budget after toggling back on. Otherwise a prior
-            -- auto-disable would remain at 5/5 and re-trip on the very
-            -- next error.
-            detailsBarErrors = 0
-            RefreshAllBarTexts()
-        end
-        print("|cFF00FF00Details! iLvl Display:|r Details bars " .. (db.showInDetails and "ON" or "OFF"))
-    elseif msg == "inspect" then
-        print("|cFF00FF00Details! iLvl Display:|r Inspecting group...")
-        QueueGroupInspect()
-    elseif msg == "cache" then
-        local count, expired = 0, 0
-        local now = time()
-        for guid, data in pairs(ilvlCache) do
-            local name = data.name or "Unknown"
-            if guid == SafeUnitGUID("player") then
-                name = SafeUnitName("player") or name
-            end
-            if name == "Unknown" and Details and Details.item_level_pool and Details.item_level_pool[guid] then
-                name = Details.item_level_pool[guid].name or name
-            end
-            local age = now - data.time
-            local sbTag = SetBonusTag(setBonusCache[guid])
-            local sb = sbTag and (sbTag .. " ") or ""
-            -- `stale` = explicitly flagged for re-inspect (boss kill, gear change).
-            -- The old marker was time = 0, which the load purge read as an age of
-            -- ~1.79 billion seconds and deleted. Age and "needs refresh" are now
-            -- separate facts, so both can be shown honestly.
-            local ageStr = (age .. "s ago") .. (data.stale and " (flagged)" or "")
-            local isExpired = data.stale or age >= CACHE_REFRESH
-            local ageColor = isExpired and "|cFFFF4444" or "|cFF888888"
-            local expiredNote = isExpired and " |cFFFF4444[EXPIRED]|r" or ""
-            print(string.format("  %s: %s|cFFFFD900%d|r iLvl %s(%s)%s",
-                name, sb, data.ilvl, ageColor, ageStr, expiredNote))
-            count = count + 1
-            if age >= CACHE_REFRESH then expired = expired + 1 end
-        end
-        print(string.format("|cFF00FF00Details! iLvl Display:|r %d cached, %d expired", count, expired))
-
-    elseif msg == "map" or msg:match("^map%s+") then
-        -- Optional filter: /dilvl map atro  shows only matching names.
-        -- Two reasons this is not decoration. A well-used cache runs to several
-        -- hundred entries and the chat frame silently drops the top of the dump,
-        -- so the unfiltered form is least readable exactly when it matters. And
-        -- the question this command answers is almost always "does the SHORT form
-        -- exist for this player" — Details! bars show "Name", the cache stores
-        -- "Name-Realm", and a missing short form means a missing tag. Sorting puts
-        -- the two forms on adjacent lines so the answer is one glance.
-        -- The summary prints LAST so it survives the scrollback.
-        local filter = msg:match("^map%s+(.+)$")
-        local names = {}
-        for n in pairs(nameToIlvl) do names[#names + 1] = n end
-        table.sort(names)
-        local shown = 0
-        for i = 1, #names do
-            local n = names[i]
-            if not filter or n:lower():find(filter:lower(), 1, true) then
-                shown = shown + 1
-                local sb = nameToSetBonus[n]
-                print(string.format("  %s: |cFFFFD900%d|r%s", n, nameToIlvl[n],
-                    sb and (" [" .. sb .. "]") or ""))
-            end
-        end
-        print(string.format("|cFF00FF00Details! iLvl Display:|r name map: %d shown of %d%s",
-            shown, #names, filter and (" matching '" .. filter .. "'") or ""))
-
-    elseif msg == "debug" then
+---------------------------------------------------------------
+-- /dilvl debug — the full report.
+--
+-- Lifted out of the slash handler because that closure crossed Lua 5.1's hard
+-- ceiling of 60 upvalues and the client refused to load the file: "function at
+-- line 2741 has more than 60 upvalues". Six hundred lines of diagnostics
+-- reaching into every counter in the addon is most of what that closure was
+-- capturing, and none of it belongs to command parsing. Splitting it gives each
+-- function its own upvalue budget.
+--
+-- Nothing here reads the command text, so it takes no argument.
+---------------------------------------------------------------
+local function PrintDebugReport()
         -- Full bug-report output — also shown in scrollable popup for easy copy-paste.
         -- Temporarily wrap print() to capture all output into a buffer.
         --
@@ -3518,6 +3386,154 @@ SlashCmdList["DILVL"] = function(msg)
         end
         ShowDebugWindow(table.concat(debugBuf, "\n"))
 
+end
+
+SlashCmdList["DILVL"] = function(msg)
+    msg = msg:lower():trim()
+
+    if msg == "" then
+        -- Bare /dilvl opens the Settings UI — the home for every option and the
+        -- What's New overview. All subcommands below still work; the full text
+        -- list is /dilvl help.
+        if ns.ui and ns.ui.slash then
+            ns.ui.slash.HandleSlash("")
+        else
+            print("|cFF00FF00Details! iLvl Display:|r Settings UI not loaded yet — try /reload.")
+        end
+        return
+    end
+
+    if msg == "on" then
+        db.enabled = true
+        RefreshAllBarTexts()
+        NotifyElvUI()
+        print("|cFF00FF00Details! iLvl Display:|r Enabled")
+    elseif msg == "off" then
+        db.enabled = false
+        ClearAllBarTags()
+        NotifyElvUI()
+        print("|cFF00FF00Details! iLvl Display:|r Disabled")
+    elseif msg == "color" then
+        db.colorIlvl = not db.colorIlvl
+        RefreshAllBarTexts()
+        NotifyElvUI()
+        print("|cFF00FF00Details! iLvl Display:|r Color " .. (db.colorIlvl and "ON" or "OFF"))
+    elseif msg == "setbonus" then
+        db.showSetBonus = not db.showSetBonus
+        RefreshAllBarTexts()
+        NotifyElvUI()
+        print("|cFF00FF00Details! iLvl Display:|r Set Bonus " .. (db.showSetBonus and "ON" or "OFF"))
+    elseif msg:match("^details size") then
+        local arg = msg:match("^details size%s+(%S+)")
+        local n = arg and tonumber(arg)
+        if n and (n == 0 or (n >= DETAILS_FONT_MIN and n <= DETAILS_FONT_MAX)) then
+            n = math.floor(n + 0.5)  -- round, matching the VALIDATORS.detailsFontSize rule
+            db.detailsFontSize = n
+            if ns.ApplySettingChange then ns.ApplySettingChange("detailsFontSize") end
+            if n == 0 then
+                print("|cFF00FF00Details! iLvl Display:|r Details text size: auto (matches Details' font)")
+            else
+                print(string.format("|cFF00FF00Details! iLvl Display:|r Details text size: %d (Columns layout)", n))
+            end
+        else
+            local cur = db.detailsFontSize or 0
+            print("|cFF00FF00Details! iLvl Display:|r Current Details text size: " .. ((cur == 0) and "auto" or tostring(cur)))
+            print(string.format("  Usage: /dilvl details size <0|%d-%d>  (0 = match Details' font; Columns layout)", DETAILS_FONT_MIN, DETAILS_FONT_MAX))
+        end
+
+    elseif msg:match("^details window") then
+        local arg = msg:match("^details window%s+(%S+)")
+        if arg == "all" or arg == "0" then
+            db.detailsWindowId = 0
+            if ns.ApplySettingChange then ns.ApplySettingChange("detailsWindowId") end
+            print("|cFF00FF00Details! iLvl Display:|r Details window: all windows")
+        else
+            local n = arg and tonumber(arg)
+            if n and n >= 1 and n <= 10 then
+                db.detailsWindowId = math.floor(n)
+                if ns.ApplySettingChange then ns.ApplySettingChange("detailsWindowId") end
+                print(string.format("|cFF00FF00Details! iLvl Display:|r Details window: only window %d", math.floor(n)))
+            else
+                local cur = db.detailsWindowId or 0
+                print("|cFF00FF00Details! iLvl Display:|r Current Details window: " .. ((cur == 0) and "all windows" or ("window " .. cur)))
+                print("  Usage: /dilvl details window <all|1-10>")
+            end
+        end
+
+    elseif msg == "details" then
+        db.showInDetails = not db.showInDetails
+        if not db.showInDetails then
+            ClearAllBarTags()
+        else
+            -- Reset the hook-error counter so the user gets a fresh
+            -- 5-error budget after toggling back on. Otherwise a prior
+            -- auto-disable would remain at 5/5 and re-trip on the very
+            -- next error.
+            detailsBarErrors = 0
+            RefreshAllBarTexts()
+        end
+        print("|cFF00FF00Details! iLvl Display:|r Details bars " .. (db.showInDetails and "ON" or "OFF"))
+    elseif msg == "inspect" then
+        print("|cFF00FF00Details! iLvl Display:|r Inspecting group...")
+        QueueGroupInspect()
+    elseif msg == "cache" then
+        local count, expired = 0, 0
+        local now = time()
+        for guid, data in pairs(ilvlCache) do
+            local name = data.name or "Unknown"
+            if guid == SafeUnitGUID("player") then
+                name = SafeUnitName("player") or name
+            end
+            if name == "Unknown" and Details and Details.item_level_pool and Details.item_level_pool[guid] then
+                name = Details.item_level_pool[guid].name or name
+            end
+            local age = now - data.time
+            local sbTag = SetBonusTag(setBonusCache[guid])
+            local sb = sbTag and (sbTag .. " ") or ""
+            -- `stale` = explicitly flagged for re-inspect (boss kill, gear change).
+            -- The old marker was time = 0, which the load purge read as an age of
+            -- ~1.79 billion seconds and deleted. Age and "needs refresh" are now
+            -- separate facts, so both can be shown honestly.
+            local ageStr = (age .. "s ago") .. (data.stale and " (flagged)" or "")
+            local isExpired = data.stale or age >= CACHE_REFRESH
+            local ageColor = isExpired and "|cFFFF4444" or "|cFF888888"
+            local expiredNote = isExpired and " |cFFFF4444[EXPIRED]|r" or ""
+            print(string.format("  %s: %s|cFFFFD900%d|r iLvl %s(%s)%s",
+                name, sb, data.ilvl, ageColor, ageStr, expiredNote))
+            count = count + 1
+            if age >= CACHE_REFRESH then expired = expired + 1 end
+        end
+        print(string.format("|cFF00FF00Details! iLvl Display:|r %d cached, %d expired", count, expired))
+
+    elseif msg == "map" or msg:match("^map%s+") then
+        -- Optional filter: /dilvl map atro  shows only matching names.
+        -- Two reasons this is not decoration. A well-used cache runs to several
+        -- hundred entries and the chat frame silently drops the top of the dump,
+        -- so the unfiltered form is least readable exactly when it matters. And
+        -- the question this command answers is almost always "does the SHORT form
+        -- exist for this player" — Details! bars show "Name", the cache stores
+        -- "Name-Realm", and a missing short form means a missing tag. Sorting puts
+        -- the two forms on adjacent lines so the answer is one glance.
+        -- The summary prints LAST so it survives the scrollback.
+        local filter = msg:match("^map%s+(.+)$")
+        local names = {}
+        for n in pairs(nameToIlvl) do names[#names + 1] = n end
+        table.sort(names)
+        local shown = 0
+        for i = 1, #names do
+            local n = names[i]
+            if not filter or n:lower():find(filter:lower(), 1, true) then
+                shown = shown + 1
+                local sb = nameToSetBonus[n]
+                print(string.format("  %s: |cFFFFD900%d|r%s", n, nameToIlvl[n],
+                    sb and (" [" .. sb .. "]") or ""))
+            end
+        end
+        print(string.format("|cFF00FF00Details! iLvl Display:|r name map: %d shown of %d%s",
+            shown, #names, filter and (" matching '" .. filter .. "'") or ""))
+
+    elseif msg == "debug" then
+        PrintDebugReport()
     elseif msg == "auras" then
         print("|cFF00FF00Details! iLvl Display:|r Player auras (looking for tier bonus):")
         local found = 0
