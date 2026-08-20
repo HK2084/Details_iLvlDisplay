@@ -20,19 +20,28 @@ local isSecretValue = ns.secrets.isSecretValue
 ----------------------------------------------------------------
 -- Strip a realm suffix: "Fhina-Thrall" -> "Fhina".
 --
--- WHY THIS EXISTS: we used to call Ambiguate(name, "none") directly and
--- rely on it stripping the realm. In 12.1 it returns the string UNCHANGED.
--- Proven in-game 2026-08-13: /dilvl map held 51 entries, every one a full
--- "Name-Realm" string and not a single short name, because the usual guard
---     local short = Ambiguate(name, "none"); if short ~= name then ...
--- never fired. Details! bars show only "Fhina", so nothing matched and no
--- item level appeared — while Blizzard's meter (which shows "Fhina-Thrall")
--- kept working. Nothing in Blizzard_APIDocumentationGenerated changed for
--- Ambiguate between 12.0.7 and 12.1; only the behaviour did.
+-- WHY THIS EXISTS: we used to call Ambiguate(name, "none") and rely on it
+-- stripping the realm. It never did, and it never was going to. The second
+-- argument names the CONTEXT to ambiguate for, and "none" means exactly what
+-- it says — do not ambiguate, hand the full name back. Blizzard's own code
+-- uses "none" when it wants the untouched name (ChatFrameUtil.lua:1014,
+-- TextToSpeechFrame.lua:971) and "short" when it wants the realm gone
+-- (LFGList.lua:2038). We were asking for the opposite of what we wanted.
 --
--- Ambiguate is still TRIED FIRST on purpose: it is the sanctioned API, it
--- handles cases a plain match may not, and if Blizzard restores the old
--- behaviour this silently goes back to using it. The match is the fallback.
+-- The symptom was recorded in-game 2026-08-13: /dilvl map held 51 entries,
+-- every one a full "Name-Realm" string and not one short form, because
+--     local short = Ambiguate(name, "none"); if short ~= name then ...
+-- can never fire. Details! bars show only "Fhina", so nothing matched and no
+-- item level appeared, while Blizzard's meter (which shows "Fhina-Thrall")
+-- kept working. That was read at the time as a 12.1 behaviour change, and the
+-- note here said so. It was not: the documentation did not change because the
+-- function did not change. We had the wrong argument from the start, and the
+-- fallback below hid it well enough that the bug looked like Blizzard's.
+--
+-- Corrected 2026-08-20 to "short", the context Blizzard uses for display
+-- names. Ambiguate stays FIRST on purpose: it is the sanctioned API and knows
+-- about name forms a plain match does not. The match remains the fallback, so
+-- a client where Ambiguate is missing or answers oddly still gets short names.
 -- Realm names cannot contain "-", so the first segment is the character name.
 ----------------------------------------------------------------
 -- SECRET SAFETY: type() cannot detect a secret — a secret string still reports
@@ -48,7 +57,7 @@ function U.StripRealm(name)
     if not name or type(name) ~= "string" then return name end
     if issecretvalue and issecretvalue(name) then return name end
     if Ambiguate then
-        local short = Ambiguate(name, "none")
+        local short = Ambiguate(name, "short")
         -- Secret check BEFORE the comparison: Lua evaluates `and` left to
         -- right, so `short ~= name` ran first and would have thrown on a
         -- secret — the guard sat behind the operation it was meant to protect.

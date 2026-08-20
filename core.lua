@@ -1338,6 +1338,11 @@ local function RefreshAllBarTexts()
                     -- emits inline: a row hooked AFTER Details! last wrote it (window
                     -- resize, a window opened later) has a stored secret that no
                     -- SetText call is going to arrive for on its own.
+                    --
+                    -- Counted as an ATTEMPT, like the inline one: both are incremented
+                    -- before EmitSealedTag has decided anything, so inline + ticker is
+                    -- how often we tried and `emitted` is how often it worked. The
+                    -- report spells that out rather than inviting the sum.
                     sealedStats.ticker = sealedStats.ticker + 1
                     SafeCall(EmitSealedTag, fontString, secret, ownBar, isLeft)
                 end
@@ -2871,8 +2876,9 @@ SlashCmdList["DILVL"] = function(msg)
         -- the flicker-free path, the ticker is only the safety net for rows hooked
         -- after their last redraw.
         if sealedStats.inline > 0 or sealedStats.ticker > 0 then
-            print(string.format("  Sealed-row tags: %d emitted (%d inline, %d ticker)  skipped: %d no-GUID  %d secret-GUID  %d no-iLvl",
-                sealedStats.emitted, sealedStats.inline, sealedStats.ticker,
+            print(string.format("  Sealed-row tags: %d emitted of %d tried (%d inline, %d ticker)  refused: %d no-GUID  %d secret-GUID  %d no-iLvl",
+                sealedStats.emitted, sealedStats.inline + sealedStats.ticker,
+                sealedStats.inline, sealedStats.ticker,
                 sealedStats.noGuid, sealedStats.secretGuid, sealedStats.noIlvl))
         end
         -- Read the emit count above against THIS line, never on its own. Both
