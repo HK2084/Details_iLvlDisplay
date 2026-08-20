@@ -10,6 +10,7 @@ Positive controls at the bottom restore the old behaviour and must fail.
 """
 import io, os, re, sys
 import lupa
+from control_harness import run_controls
 
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 SRC = io.open("core.lua", encoding="utf-8").read().replace("\r\n", "\n")
@@ -110,15 +111,7 @@ controls = [
                    "                return nil\n            end"),
      lambda r: r["staleStalePool"] == 266),
 ]
-for name, broken, still_ok in controls:
-    if broken == chunk:
-        print("  WARN  Kontrolle '%s' konnte nichts entfernen" % name)
-        continue
-    try:
-        held = still_ok(lupa.LuaRuntime(unpack_returned_tuples=False).execute(broken))
-    except Exception:
-        held = False
-    print("  %s  Positivkontrolle: %s" % ("OK  " if not held else "VERDAECHTIG", name))
+bad += run_controls(chunk, controls)
 
 print("\n%s" % ("ALLE %d PRUEFUNGEN GRUEN" % len(checks) if not bad else "%d FEHLER" % bad))
 sys.exit(1 if bad else 0)

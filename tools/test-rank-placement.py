@@ -7,6 +7,7 @@ rules. Positive controls prove each assertion can fail.
 """
 import io, os, re, sys
 import lupa
+from control_harness import run_controls
 
 os.chdir(r"e:/dev/gaming/wow-addons/Details_iLvlDisplay")
 SRC = io.open("core.lua", encoding="utf-8").read().replace("\r\n", "\n")
@@ -286,15 +287,7 @@ controls = [
      chunk.replace("barRankInfo[fontString] = {rank = rank, name = name, numbered = numbered, guid = guid}", ""),
      lambda r: r["tickerText"] == "3. " + TAG + " Littlemaxxis"),
 ]
-for name, broken, still_ok in controls:
-    if broken == chunk:
-        print("  WARN  Kontrolle '%s' konnte nichts entfernen" % name); continue
-    try:
-        r2 = lupa.LuaRuntime(unpack_returned_tuples=False).execute(broken)
-        held = still_ok(r2)
-    except Exception:
-        held = False
-    print("  %s  Positivkontrolle: %s" % ("OK  " if not held else "VERDAECHTIG", name))
+bad += run_controls(chunk, controls)
 
 print("\n%s" % ("ALLE %d PRUEFUNGEN GRUEN" % len(checks) if bad == 0 else "%d FEHLER" % bad))
 sys.exit(1 if bad else 0)

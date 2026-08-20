@@ -16,6 +16,7 @@ claim. This drives the REAL BackfillIdentity extracted from blizzdm.lua.
 """
 import io, os, re, sys
 import lupa
+from control_harness import run_controls
 
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 SRC = io.open("blizzdm.lua", encoding="utf-8").read().replace("\r\n", "\n")
@@ -63,7 +64,7 @@ local bfWhy = {
     noSources = 0, noIndex = 0, noSrc = 0, classSecret = 0, classDiff = 0,
     specDiff = 0, ambiguous = 0, guidNil = 0, guidSecret = 0,
 }
-local bfCtrl = {ok = 0, bad = 0, windows = 0, trusted = 0}
+local bfCtrl = {ok = 0, bad = 0, classBad = 0, windows = 0, trusted = 0}
 
 __SET_GUID__
 
@@ -123,7 +124,8 @@ end
 local R = {}
 local function run(frames, sources, combat)
     inCombat = combat or false
-    bfCtrl.ok, bfCtrl.bad, bfCtrl.windows, bfCtrl.trusted = 0, 0, 0, 0
+    bfCtrl.ok, bfCtrl.bad, bfCtrl.classBad = 0, 0, 0
+    bfCtrl.windows, bfCtrl.trusted = 0, 0
     WINDOW = MakeWindow(frames, sources)
     BackfillIdentity()
     inCombat = false
@@ -152,7 +154,26 @@ local function raid(shift, opts)
     return frames, sources
 end
 
+-- Eine einzige Reihe, deren Klasse nicht zu ihrer Quelle passt: eine Klasse
+-- aendert sich nicht, also hat sich die Liste bewegt -- und dann taugt kein
+-- Index in diesem Fenster mehr. Ohne dieses Veto haengt der Nachweis nach einem
+-- Kampf oft am eigenen Charakter allein.
+local function raidWithStranger()
+    local frames = {
+        Row(1, "HUNTER", 11, {isLocalPlayer = true}),
+        Row(2, "HUNTER", 11),
+        Row(3, "HUNTER", 11),
+        Row(4, "MAGE", 62),
+    }
+    local sources = {
+        Source(PLAYER, "HUNTER", 11), Source("G2", "HUNTER", 11),
+        Source("G3", "HUNTER", 11),   Source("G4", "WARRIOR", 71),
+    }
+    return frames, sources
+end
+
 R.trusted        = {run(raid(false))}
+R.classVeto      = {run(raidWithStranger())}
 R.reordered      = {run(raid(true))}
 R.noControl      = {run(raid(false, {stripBound = true, stripPlayer = true}))}
 R.playerOnly     = {run(raid(false, {stripBound = true}))}
@@ -171,15 +192,16 @@ do
     R.oneMismatch = {run(frames, sources)}
 end
 
--- Klasse/Spezialisierung widersprechen: die Reihenfolge mag bewiesen sein, die
--- Reihe selbst passt nicht zu ihrer Quelle.
+-- Gleiche Klasse, andere Spezialisierung: ein Spieler darf umskillen, also ist
+-- das die Sache dieser einen Reihe und kein Beweis fuer eine verrutschte Liste.
+-- Das Fenster bleibt lizenziert, die Reihe bekommt trotzdem nichts.
 do
     local frames = {
         Row(1, "HUNTER", 11, {isLocalPlayer = true}),
-        Row(2, "MAGE", 62),
+        Row(2, "HUNTER", 62),
     }
-    local sources = {Source(PLAYER, "HUNTER", 11), Source("G2", "PRIEST", 258)}
-    R.classDiff = {run(frames, sources)}
+    local sources = {Source(PLAYER, "HUNTER", 11), Source("G2", "HUNTER", 258)}
+    R.specDiff = {run(frames, sources)}
 end
 
 -- Zwei Reihen, eine Quelle: der Zweite darf den Spieler nicht auch bekommen.
@@ -259,8 +281,8 @@ checks = [
      guids("inCombat") == "-,G2,-,-"),
     ("eine einzige Abweichung schliesst das ganze Fenster",
      guids("oneMismatch") == "-,FALSCH,-" and lic("oneMismatch") == 0),
-    ("widersprechende Klasse blockt die Reihe trotz Lizenz",
-     guids("classDiff") == "Player-Quinroth,-" and lic("classDiff") == 1),
+    ("andere Spezialisierung blockt nur die Reihe, nicht das Fenster",
+     guids("specDiff") == "Player-Quinroth,-" and lic("specDiff") == 1),
     # Welche der beiden Reihen den Zuschlag bekommt, legt die Reihenfolge des
     # Fixpunkts fest und ist nicht die Zusage. Die Zusage ist: genau eine.
     ("zwei Reihen bekommen nicht denselben Spieler",
@@ -270,6 +292,10 @@ checks = [
      guids("secretGuid") == "Player-Quinroth,-"),
     ("der direkte Weg braucht weder Index noch Lizenz",
      guids("direct") == "GD"),
+    # Ohne das Veto wuerden die drei Jaeger ueber den Index durchgehen, obwohl
+    # eine Reihe im selben Fenster beweist, dass die Liste verrutscht ist.
+    ("eine unpassende Klasse schliesst das ganze Fenster",
+     guids("classVeto") == "-,-,-,-" and lic("classVeto") == 0),
     ("erster Lauf loest per Index auf",
      guids("lauf1") == "Player-Quinroth,G2,G3"),
     ("abgeleitete Identitaet lizenziert sich nicht selbst",
@@ -285,34 +311,28 @@ for n, ok in checks:
 print()
 controls = [
     ("Lizenz-Bedingung entfernt (jede Reihenfolge gilt als bewiesen)",
-     chunk.replace("local orderTrusted = (ctrlBad == 0 and ctrlOk > 0)",
-                   "local orderTrusted = true"),
+     chunk.replace(
+         "local orderTrusted = (ctrlBad == 0 and ctrlClassBad == 0 and ctrlOk > 0)",
+         "local orderTrusted = true"),
      lambda r: r["reordered"][1] == "-,G2,-,-" and r["noControl"][1] == "-,-,-,-"),
-    ("Klassen-Vergleich entfernt",
-     chunk.replace('elseif class ~= fClass then\n                            why = "classDiff"',
-                   'elseif false then\n                            why = "classDiff"'),
-     lambda r: r["classDiff"][1] == "-,-"),
+    ("Spezialisierungs-Vergleich entfernt",
+     chunk.replace('elseif spec ~= fSpec then\n                            why = "specDiff"',
+                   'elseif false then\n                            why = "specDiff"'),
+     lambda r: r["specDiff"][1] == "Player-Quinroth,-"),
     ("Doppelvergabe-Sperre entfernt",
      chunk.replace("if not decided and orderTrusted and not claimed[guid] then",
                    "if not decided and orderTrusted then"),
      lambda r: r["doubleClaim"][1] == "-,G2,-"),
+    ("Klassen-Veto entfernt",
+     chunk.replace("local orderTrusted = (ctrlBad == 0 and ctrlClassBad == 0 and ctrlOk > 0)",
+                   "local orderTrusted = (ctrlBad == 0 and ctrlOk > 0)"),
+     lambda r: r["classVeto"][1] == "-,-,-,-"),
     ("Provenienz ignoriert (abgeleitete Identitaet dient als Kontrolle)",
      chunk.replace("elseif frame._dilvlGUIDBound then",
                    "elseif frame._dilvlGUID then"),
      lambda r: r["selfLicense"][1] == "G2,G3,-"),
 ]
-for name, broken, still_ok in controls:
-    if broken == chunk:
-        print("  WARN  Kontrolle '%s' konnte nichts entfernen" % name)
-        bad += 1
-        continue
-    try:
-        held = still_ok(lupa.LuaRuntime(unpack_returned_tuples=False).execute(broken))
-    except Exception:
-        held = False
-    print("  %s  Positivkontrolle: %s" % ("OK  " if not held else "VERDAECHTIG", name))
-    if held:
-        bad += 1
+bad += run_controls(chunk, controls)
 
 print("\n%s" % ("ALLE %d PRUEFUNGEN GRUEN" % len(checks) if not bad else "%d FEHLER" % bad))
 sys.exit(1 if bad else 0)

@@ -1113,7 +1113,7 @@ local bfWhy = {
 -- not just the result. `ok` are rows whose owner Blizzard bound to the frame
 -- itself and that sit at the index they claim, `bad` are rows that do not. A
 -- window is trusted only with at least one ok and no bad at all.
-local bfCtrl = {ok = 0, bad = 0, windows = 0, trusted = 0}
+local bfCtrl = {ok = 0, bad = 0, classBad = 0, windows = 0, trusted = 0}
 
 -- Blizzard's own frame-to-data mapping, and the reason none of the guesswork
 -- below should normally be needed.
@@ -1213,7 +1213,7 @@ local function BackfillIdentity()
             -- almost every time: isLocalPlayer is NeverSecret
             -- (DamageMeterDocumentation.lua:206) and UnitGUID("player") needs no
             -- list to answer.
-            local ctrlOk, ctrlBad = 0, 0
+            local ctrlOk, ctrlBad, ctrlClassBad = 0, 0, 0
             SafeBlizzCall("BackfillControl", sw.ForEachEntryFrame, sw,
                 function(frame)
                     if frame.spellID ~= nil then return end
@@ -1221,6 +1221,27 @@ local function BackfillIdentity()
                     if not idx or isSecret(idx) then return end
                     local s = sources[idx]
                     if not s or isSecret(s) then return end
+
+                    -- Every row is a witness to the ordering, named or not.
+                    -- classFilename is NeverSecret (DamageMeterDocumentation.lua
+                    -- :202) so it survives on the sealed rows too, and a
+                    -- character cannot change class — a row sitting on a
+                    -- source of another class means the list moved, not that this
+                    -- row is unusual. It matters because after a fight the named
+                    -- witnesses are often down to the local player alone, and a
+                    -- re-sort that leaves the top line where it was would walk
+                    -- past a single witness untouched.
+                    --
+                    -- Spec is deliberately NOT read this way: a player can respec
+                    -- mid-session, so a spec difference is that row's own
+                    -- business and stays a per-row refusal further down.
+                    local fc, sc = frame.classFilename, s.classFilename
+                    if fc ~= nil and sc ~= nil
+                        and not isSecret(fc) and not isSecret(sc)
+                        and fc ~= sc then
+                        ctrlClassBad = ctrlClassBad + 1
+                    end
+
                     local sg = s.sourceGUID
                     if not sg or isSecret(sg) then return end
 
@@ -1239,9 +1260,10 @@ local function BackfillIdentity()
                         ctrlBad = ctrlBad + 1
                     end
                 end)
-            local orderTrusted = (ctrlBad == 0 and ctrlOk > 0)
+            local orderTrusted = (ctrlBad == 0 and ctrlClassBad == 0 and ctrlOk > 0)
             bfCtrl.ok = bfCtrl.ok + ctrlOk
-            bfCtrl.bad = bfCtrl.bad + ctrlBad
+            bfCtrl.bad = bfCtrl.bad + ctrlBad + ctrlClassBad
+            bfCtrl.classBad = bfCtrl.classBad + ctrlClassBad
             bfCtrl.windows = bfCtrl.windows + 1
             if orderTrusted then bfCtrl.trusted = bfCtrl.trusted + 1 end
 
@@ -2052,6 +2074,7 @@ API.GetBlizzDMDebug = function()
         deferredRetry = deferredRetryPending, -- (#19)
         ctrlOk = bfCtrl.ok,
         ctrlBad = bfCtrl.bad,
+        ctrlClassBad = bfCtrl.classBad,
         ctrlWindows = bfCtrl.windows,
         ctrlTrusted = bfCtrl.trusted,
     }

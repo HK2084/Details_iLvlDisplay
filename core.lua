@@ -3214,9 +3214,17 @@ local function PrintDebugReport()
                 -- stop, not a warning: it means the list moved under the frames
                 -- and every index in that window is a coin toss.
                 if (ci.ctrlWindows or 0) > 0 then
-                    print(string.format("    index-join: %d/%d windows licensed  control: %d ok  %d mismatch",
+                    print(string.format("    index-join: %d/%d windows licensed  control: %d ok  %d mismatch (%d class)",
                         ci.ctrlTrusted or 0, ci.ctrlWindows or 0,
-                        ci.ctrlOk or 0, ci.ctrlBad or 0))
+                        ci.ctrlOk or 0, ci.ctrlBad or 0, ci.ctrlClassBad or 0))
+                else
+                    -- Printed even at zero. An absent line reads as "nothing
+                    -- happened" when it just as easily means "it ran and
+                    -- correctly did nothing", and this report has already been
+                    -- caught out by that twice. Zero windows is the GOOD state:
+                    -- no row needed the join. The backfill line above says which
+                    -- of the reasons it was.
+                    print("    index-join: not reached — no window needed it")
                 end
                 print(string.format("    combat: group=%s  self=%s  ICL=%s  encounter=%s%s  unitFlags=%s  members=%d",
                     ci.groupCombat and "YES" or "no",
