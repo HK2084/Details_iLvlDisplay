@@ -121,7 +121,7 @@ local EmitSealedTag
 -- that a sealed row carried no tag, never WHY. A row we cannot attribute is
 -- expected and correct; a path that never runs at all is a bug, and the two used
 -- to look identical from the outside.
-local sealedStats = {emitted = 0, noGuid = 0, secretGuid = 0, noIlvl = 0, inline = 0, ticker = 0}
+local sealedStats = {emitted = 0, noGuid = 0, secretGuid = 0, noIlvl = 0, inline = 0, ticker = 0, ranked = 0}
 -- How often Details! writes a bar text at all, split by whether the text was
 -- sealed. Without this, the emit count above is an absolute with nothing to
 -- compare it to: 160k looks like a runaway loop of ours, when it is simply how
@@ -138,6 +138,21 @@ local hookStats = {calls = 0, secret = 0, clean = 0, since = 0}
 -- that is Details!' own default, and because assuming a rank is the safe guess
 -- — it keeps the rank column aligned, which is the visible failure mode.
 local detailsShowsRank = true
+-- Per-FontString record of what Details! last drew there: the rank as a plain
+-- number and the display name on its own, BEFORE Details! welded them into one
+-- string. Written only by the UpdateBarApocalypseWow post-hook, which is handed
+-- both separately. This is what makes true "left" placement possible on a
+-- sealed row: the pieces exist for exactly one call, and afterwards there is
+-- only an opaque blob we may not cut.
+--
+-- The name half may be a secret. That is safe as a table VALUE (same as
+-- barSecretText) and it is only ever passed to string.format as a %s argument.
+-- Cleared in lockstep with barSecretText so a recycled row can never re-emit
+-- the previous occupant.
+local barRankInfo = {}
+local detailsMethodHooked = false
+-- Forward declaration: installed from HookAllBars, defined below EmitSealedTag.
+local TagRankedRow
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- true only once C_Timer.NewTicker actually returned (what /dilvl debug reports)
@@ -314,6 +329,9 @@ local MIDNIGHT_TIER_SETS = util.MIDNIGHT_TIER_SETS
 local SetBonusTag        = util.SetBonusTag
 -- Realm stripper. Never Ambiguate directly — see util.StripRealm.
 local StripRealm         = util.StripRealm
+-- Display-only shortener. Unlike StripRealm this one may return a secret, so its
+-- result must go straight into SetText and nowhere else (util.lua).
+local ShortenForDisplay  = util.ShortenForDisplay
 
 ---------------------------------------------------------------
 -- iLvl lookup by GUID
@@ -1078,6 +1096,13 @@ local function HookBarTextIfNeeded(bar)
                 if not IsDetailsWindowAllowed(bar.instance_id) then return end
                 -- Same combat rule as every other write to a Details! FontString.
                 if MayBeInCombat() then return end
+                -- The renderer hook runs a few instructions later in this same
+                -- call and will place the tag properly between rank and name.
+                -- Writing the suffix form first would be two writes per row per
+                -- repaint for a result that is immediately overwritten. Keyed on
+                -- the row having been handled before, so a row the renderer hook
+                -- cannot serve still gets its fallback tag from here.
+                if db.ilvlPosition == "left" and barRankInfo[self] then return end
                 sealedStats.inline = sealedStats.inline + 1
                 isOurSetText = true
                 SafeCall(EmitSealedTag, self, text, bar, db.ilvlPosition == "left")
@@ -1090,6 +1115,7 @@ local function HookBarTextIfNeeded(bar)
             -- clearing after the guards would strand the previous occupant's
             -- secret and repaint their name onto a row Details! just emptied.
             barSecretText[self] = nil
+            barRankInfo[self] = nil
             hookStats.clean = hookStats.clean + 1
             if not text or type(text) ~= "string" or text:match("^%s*$") then return end
             if text:find("%[%d+%]") then return end
@@ -1148,6 +1174,7 @@ local function HookBarTextIfNeeded(bar)
         hooksecurefunc(fontString, "ClearText", function(self)
             barCleanText[self] = nil
             barSecretText[self] = nil
+            barRankInfo[self] = nil
         end)
     end
 end
@@ -1197,6 +1224,21 @@ local function HookAllBars()
     for i = 1, #instances do
         HookOneInstance(instances[i])
     end
+
+    -- Install the renderer hook once, from here, because this runs on the ticker
+    -- and therefore also catches a Details! that loaded after us.
+    --
+    -- The type check is a version canary, not a formality: this is an internal
+    -- renderer with an era-branded name, and Details! reworked its bar text on
+    -- 2026-08-14. If a future build renames or removes it we simply never hook,
+    -- and every sealed row keeps the suffix tag from EmitSealedTag instead of
+    -- silently losing its item level. hooksecurefunc cannot be undone, so the
+    -- decision is made once and the guard inside TagRankedRow does the rest.
+    if not detailsMethodHooked and type(Details.UpdateBarApocalypseWow) == "function" then
+        detailsMethodHooked = true
+        local hooked = pcall(hooksecurefunc, Details, "UpdateBarApocalypseWow", TagRankedRow)
+        if not hooked then detailsMethodHooked = false end
+    end
 end
 
 ---------------------------------------------------------------
@@ -1225,6 +1267,29 @@ end
 -- ("[272] 3. Name"). A different position is not a wrong value; inventing the
 -- rank in order to rebuild the line would be.
 ---------------------------------------------------------------
+-- Does Details! put a rank in front of its rows right now?
+--
+-- This used to be inferred from whatever readable row was written last, and that
+-- is wrong in a way that only shows up in a raid: Details! draws a Total bar
+-- that is readable AND rank-less (class_damage.lua:1921/2000, class_heal.lua:444
+-- /513, class_resources.lua:534/594). One pass over that row taught us "no
+-- ranks", and every sealed row then took the prefix form that pushes the rank
+-- column out of line — the exact fault the placement logic exists to prevent.
+--
+-- Ask Details! instead. row_info.textL_show_number is the flag its own renderer
+-- branches on at class_damage.lua:3197, reached through the public
+-- Details:GetInstance (same pcall pattern as the window gate above). The
+-- observed value stays as the fallback for the moment before Details! is ready.
+local function DetailsNumbersRows(bar)
+    if Details and bar and bar.instance_id then
+        local ok, inst = pcall(Details.GetInstance, Details, bar.instance_id)
+        if ok and inst and inst.row_info and inst.row_info.textL_show_number ~= nil then
+            return inst.row_info.textL_show_number and true or false
+        end
+    end
+    return detailsShowsRank
+end
+
 EmitSealedTag = function(fontString, secret, bar, isLeft)
     -- Each bail is counted separately. "No GUID" and "GUID is itself secret" are
     -- different facts about Blizzard's restrictions, and "no cached iLvl" is not a
@@ -1270,16 +1335,138 @@ EmitSealedTag = function(fontString, secret, bar, isLeft)
     -- and in a raid nearly every row is sealed, so the list stops lining up.
     -- Reported live 20.08.2026.
     --
-    -- So prefix only when there is no rank to push: then "left" is exactly what
-    -- it says. With a rank present, suffix instead — the tag moves to the far
-    -- side of the name, which is not where it was asked to be, but the numbered
-    -- list stays a numbered list. Placement is cosmetic; a broken column is not.
-    if isLeft and not detailsShowsRank then
+    -- BEST CASE FIRST. If the renderer hook has been here, the rank and the name
+    -- were recorded separately before Details! welded them together, and we can
+    -- put the tag exactly where it was asked to go — between them. This is the
+    -- same composition Blizzard's own meter performs
+    -- (Blizzard_DamageMeter/DamageMeterEntry.lua:550 and :568) and the same one
+    -- Details! performs (class_damage.lua:3199): a plain number, plain text, and
+    -- a secret name, all as %s arguments to one format. We invent nothing.
+    local info = isLeft and barRankInfo[fontString]
+    if info then
+        if info.numbered then
+            fontString:SetText(string.format("%d. %s %s", info.rank, tag, info.name))
+        else
+            fontString:SetText(string.format("%s %s", tag, info.name))
+        end
+        sealedStats.emitted = sealedStats.emitted + 1
+        return
+    end
+
+    -- FALLBACK, for a row the renderer hook has not reached: Details! on a build
+    -- whose renderer we no longer recognise, or a row drawn before we hooked.
+    -- Here the rank is welded into the secret and cutting it out would throw, so
+    -- the tag can only go in front of the whole string or behind it.
+    --
+    -- Prefix only when there is no rank to push: then "left" is exactly what it
+    -- says. With a rank present, suffix instead — the tag lands on the far side
+    -- of the name, which is not where it was asked to be, but the numbered list
+    -- stays a numbered list. Placement is cosmetic; a broken column is not.
+    if isLeft and not DetailsNumbersRows(bar) then
         fontString:SetText(string.format("%s %s", tag, secret))
     else
         fontString:SetText(string.format("%s %s", secret, tag))
     end
     sealedStats.emitted = sealedStats.emitted + 1
+end
+
+---------------------------------------------------------------
+-- TagRankedRow — post-hook on Details!' row renderer.
+--
+-- WHY A SECOND HOOK EXISTS AT ALL. Our SetText hook sees the finished line,
+-- "1. Playername", as one sealed string. Blizzard permits us to pass that string
+-- back through string.format, but not to cut it, so from there the tag can only
+-- go in front of the rank or behind the name — never between them, which is
+-- where "left" is supposed to put it. Details:UpdateBarApocalypseWow is handed
+-- the two halves separately (class_damage.lua:3106, writes at :3199), so hooking
+-- the renderer instead of the text is the only way to honour the setting.
+--
+-- SAFETY OF THE COMPOSITION. Not a loophole: SimpleFontString:SetText is
+-- annotated SecretArguments = "AllowedWhenTainted" with SecretArgumentsAddAspect
+-- = {Enum.SecretAspect.Text} — the only setter family on that widget that has the
+-- grant. Blizzard's own damage meter builds a row the same way, nesting
+-- string.format over a ConditionalSecret name
+-- (Blizzard_DamageMeter/DamageMeterEntry.lua:550, :568). Details! reached the
+-- same conclusion: its secret and non-secret branches at class_damage.lua:3197
+-- are byte-identical, both plain format.
+--
+-- WHY POST-HOOK IS ENOUGH. hooksecurefunc runs after the function body, and
+-- nothing else writes lineText1 for this row afterwards: there is no second
+-- write in the remainder of UpdateBarApocalypseWow, and the legacy renderer that
+-- would call FitNameText is unreachable on 12.1 (Details:IsUsingBlizzardAPI
+-- returns a hardcoded true, class_damage.lua:2117-2125). The old second writer
+-- in core/parser_nocleu1.lua:2884 sits behind an unconditional "do return end"
+-- at :2755. So our write is the final state of the row for this refresh, and it
+-- lands in the same call — no frame ever shows the untagged version.
+--
+-- RANK IS TAKEN FROM THE END, NOT BY POSITION. The signature already moved once:
+-- totalValue was inserted ahead of rank in May 2026, shifting it from argument 5
+-- to 6. A positional read would have silently started formatting a damage total
+-- as a rank. The last argument plus a type check survives that; if a future
+-- change appends something else, the type check fails and we fall back to the
+-- suffix form rather than printing nonsense.
+---------------------------------------------------------------
+TagRankedRow = function(instanceLine, source, ...)
+    if not db or not db.enabled or not db.showInDetails then return end
+    if db.layout ~= "inline" then return end
+    -- Only "left" needs this path. "right" is a plain append, which the SetText
+    -- hook already does correctly and more cheaply.
+    if db.ilvlPosition ~= "left" then return end
+    if MayBeInCombat() then return end
+    if not instanceLine or not source then return end
+
+    local fontString = instanceLine.lineText1
+    if not fontString or not hookedFontStrings[fontString] then return end
+    if not IsDetailsWindowAllowed(instanceLine.instance_id) then return end
+
+    -- Readable rows are left alone on purpose. The SetText hook already splits
+    -- "1. " off and inserts, which preserves Details!' own text byte for byte.
+    -- Rebuilding one would gain nothing and risk changing what it shows.
+    local name = source.name
+    if name == nil or not isSecretValue(name) then return end
+
+    local n = select("#", ...)
+    local rank = n > 0 and select(n, ...) or nil
+    if type(rank) ~= "number" then return end
+
+    local guid = instanceLine.actorGUID
+    if not guid or isSecretValue(guid) then return end
+    local ilvl = GetIlvlForGuid(guid)
+    if not ilvl then return end
+
+    -- Reproduce Details!' own shortening for a sealed name, or the realm suffix
+    -- would appear on rows where Details! had removed it (class_damage.lua:3182
+    -- -3193: Ambiguate short when the source carries a spec icon, raw otherwise).
+    if source.specIconID then
+        name = ShortenForDisplay(name)
+    end
+
+    local tag
+    if db.colorIlvl then
+        tag = GetIlvlColor(ilvl) .. "[" .. ilvl .. "]|r"
+    else
+        tag = "[" .. ilvl .. "]"
+    end
+    if db.showSetBonus then
+        local sbTag = SetBonusTag(setBonusCache[guid])
+        if sbTag then tag = tag .. " " .. sbTag end
+    end
+
+    local numbered = DetailsNumbersRows(instanceLine)
+    -- Recorded so the 2s ticker can reproduce this exact layout. Without it,
+    -- every tick would revert an idle window to the fallback suffix form and the
+    -- tag would jump back and forth.
+    barRankInfo[fontString] = {rank = rank, name = name, numbered = numbered}
+
+    isOurSetText = true
+    if numbered then
+        fontString:SetText(string.format("%d. %s %s", rank, tag, name))
+    else
+        fontString:SetText(string.format("%s %s", tag, name))
+    end
+    isOurSetText = false
+    sealedStats.emitted = sealedStats.emitted + 1
+    sealedStats.ranked = (sealedStats.ranked or 0) + 1
 end
 
 ---------------------------------------------------------------
@@ -2880,6 +3067,9 @@ SlashCmdList["DILVL"] = function(msg)
                 sealedStats.emitted, sealedStats.inline + sealedStats.ticker,
                 sealedStats.inline, sealedStats.ticker,
                 sealedStats.noGuid, sealedStats.secretGuid, sealedStats.noIlvl))
+            print(string.format("  Rank-aware placement: %s  %d rows placed between rank and name",
+                detailsMethodHooked and "renderer hook ON" or "renderer hook OFF (fallback)",
+                sealedStats.ranked))
         end
         -- Read the emit count above against THIS line, never on its own. Both
         -- numbers are driven by how often Details! redraws, which is none of our

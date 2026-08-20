@@ -53,6 +53,39 @@ local isSecretValue = ns.secrets.isSecretValue
 -- `nameToIlvl[shortName] = ilvl` in core.lua, and a secret table key throws.
 -- Returning the input unchanged is the safe answer — callers already treat "no
 -- short form" as normal.
+----------------------------------------------------------------
+-- Shorten a name FOR DISPLAY ONLY, and unlike StripRealm this one is allowed
+-- to hand back a secret.
+--
+-- StripRealm refuses to touch a secret on purpose: its result feeds
+-- nameToIlvl[shortName], and a secret table key throws. That guard is right for
+-- every caller it has. It is wrong for exactly one job — composing a string we
+-- are only ever going to pass to FontString:SetText, never compare, never key.
+--
+-- Blizzard grants precisely that. Ambiguate is SecretArguments =
+-- "AllowedWhenTainted" (PlayerScriptDocumentation.lua:22-30, `fullName`
+-- unrestricted, `context` NeverSecret), and SimpleFontString:SetText carries
+-- SecretArgumentsAddAspect = {Enum.SecretAspect.Text} with the same
+-- AllowedWhenTainted grant — the only setter family on that widget that has it.
+-- Secret in, secret out, and the secret never leaves the C boundary.
+--
+-- Why it must exist at all: Details! shortens a sealed name itself when the
+-- source carries a spec icon (class_damage.lua:3182-3193). If we rebuild a row
+-- without doing the same, every cross-realm player in a raid would suddenly
+-- render "Name-Realm" where Details! showed "Name". Not a wrong name, but a
+-- visible regression on most rows of a raid.
+--
+-- The RESULT MUST NOT be stored, compared or used as a key by any caller.
+-- If you need a name to look something up, you want StripRealm.
+----------------------------------------------------------------
+function U.ShortenForDisplay(name)
+    if name == nil then return nil end
+    if not Ambiguate then return name end
+    local ok, short = pcall(Ambiguate, name, "short")
+    if ok and short ~= nil then return short end
+    return name
+end
+
 function U.StripRealm(name)
     if not name or type(name) ~= "string" then return name end
     if issecretvalue and issecretvalue(name) then return name end
