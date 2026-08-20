@@ -2534,8 +2534,15 @@ local EM_DASH = "\226\128\148"  -- U+2014, written as bytes so the file stays AS
 local function ShowDebugWindow(text)
     if not DILvlDebugFrame then
         local f = CreateFrame("Frame", "DILvlDebugFrame", UIParent, "BackdropTemplate")
-        f:SetSize(700, 500)
+        f:SetSize(900, 640)
         f:SetPoint("CENTER")
+        -- Draggable was never the problem; not being able to make it BIGGER was.
+        f:SetResizable(true)
+        if f.SetResizeBounds then
+            f:SetResizeBounds(420, 240)
+        elseif f.SetMinResize then
+            f:SetMinResize(420, 240)
+        end
         f:SetBackdrop({
             bgFile = "Interface/Tooltips/UI-Tooltip-Background",
             edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
@@ -2560,15 +2567,24 @@ local function ShowDebugWindow(text)
         local eb = CreateFrame("EditBox", nil, scroll)
         eb:SetMultiLine(true)
         eb:SetFontObject(GameFontHighlightSmall)
-        eb:SetWidth(650)
         eb:SetAutoFocus(false)
-        -- No cap. Without this the box carries whatever default it was born
-        -- with, and a report that outgrows it is simply refused — no error,
-        -- no text, an empty window. The options page has always set this; this
-        -- one never did, and the report has since grown past 30 000 characters.
         eb:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
         scroll:SetScrollChild(eb)
         f.editBox = eb
+        f.scroll = scroll
+
+        -- Grip, and the text follows the width. Without the second part a wider
+        -- window just adds empty space to the right of the same narrow column.
+        local grip = CreateFrame("Button", nil, f)
+        grip:SetSize(16, 16)
+        grip:SetPoint("BOTTOMRIGHT", -4, 4)
+        grip:SetNormalTexture("Interface/ChatFrame/UI-ChatIM-SizeGrabber-Up")
+        grip:SetHighlightTexture("Interface/ChatFrame/UI-ChatIM-SizeGrabber-Highlight")
+        grip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
+        grip:SetScript("OnMouseUp", function() f:StopMovingOrSizing() end)
+        f:SetScript("OnSizeChanged", function(self)
+            self.editBox:SetWidth(self.scroll:GetWidth() - 8)
+        end)
     end
 
     -- Returns true only if the text is actually IN the box afterwards. The
@@ -2576,38 +2592,51 @@ local function ShowDebugWindow(text)
     -- outcome worse than no window.
     local eb = DILvlDebugFrame.editBox
     local body = text or ""
-    -- A scroll child needs a height of its own, or a long report renders as
-    -- nothing at all. Derived from the line count, the same way the options
-    -- page does it.
-    -- Applied on every show, not once at creation: the guarantee "no cap" has to
-    -- hold for this box whoever made it, and setting it again costs nothing.
+
+    -- Shown BEFORE the text goes in. A widget that has never been laid out can
+    -- answer GetText() with nothing regardless of what SetText was given, and
+    -- this function's whole contract is that its answer means something.
+    DILvlDebugFrame:Show()
+    eb:SetWidth(DILvlDebugFrame.scroll:GetWidth() - 8)
+
+    -- BOTH caps. Letters and bytes are separate limits on an EditBox
+    -- (SimpleEditBoxAPIDocumentation.lua:758-777) and either one silently
+    -- refuses the text; only SetMaxLetters was lifted, and a 6 808-character
+    -- report was still turned away.
     eb:SetMaxLetters(0)
+    eb:SetMaxBytes(0)
+
+    -- A scroll child needs a height of its own, or a long report renders as
+    -- nothing at all. Derived from the line count, the same way the options page
+    -- does it.
     local lineCount = 1
     for _ in body:gmatch("\n") do lineCount = lineCount + 1 end
     local _, fontHeight = eb:GetFont()
     eb:SetHeight(lineCount * ((fontHeight or 12) * 1.25) + 20)
 
     eb:SetText(body)
-    if body ~= "" and (eb:GetText() or "") == "" then
-        -- It refused the whole thing. Show as much as it will take and name the
-        -- shortfall, so the window is never silently blank.
-        -- Give it less until it takes SOMETHING, and keep the explanation at the
+    local got = #(eb:GetText() or "")
+    if #body > 0 and got < #body then
+        -- Offer less until something sticks, and keep the explanation at the
         -- front of whatever survives. The last step carries the note alone,
         -- which always fits, so this cannot end in an empty window.
-        local note = "[window could not hold the full report (" .. #body
-            .. " characters) " .. EM_DASH .. " showing the start, "
+        --
+        -- Both figures on purpose. "Could not hold it" was true of a 32 000
+        -- character report and equally true of a 6 800 character one, which is
+        -- not a size problem but a bug in here -- and the report has to say
+        -- enough to tell those apart without another round trip.
+        local note = "[window took " .. got .. " of " .. #body
+            .. " characters " .. EM_DASH .. " showing the start, "
             .. "complete text printed to chat]\n\n"
         local steps = {20000, 5000, 1000, 0}
         for i = 1, #steps do
             eb:SetText(note .. body:sub(1, steps[i]))
-            if (eb:GetText() or "") ~= "" then break end
+            if #(eb:GetText() or "") > 0 then break end
         end
-        DILvlDebugFrame:Show()
         return false
     end
 
     eb:HighlightText()
-    DILvlDebugFrame:Show()
     return true
 end
 -- Expose for blizzdm.lua trace output

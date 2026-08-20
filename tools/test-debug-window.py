@@ -41,13 +41,15 @@ local EM_DASH = "-"
 -- Eine EditBox, die ab einer Grenze schweigend ablehnt -- genau das Verhalten,
 -- an dem das Fenster live leer blieb.
 LIMIT = nil
-local box = {text = "", height = 0, highlighted = false, maxLetters = nil}
+local box = {text = "", height = 0, highlighted = false, maxLetters = nil,
+             maxBytes = nil, width = 0}
 function box:SetMultiLine() end
 function box:SetFontObject() end
-function box:SetWidth() end
+function box:SetWidth(w) self.width = w end
 function box:SetAutoFocus() end
 function box:SetScript() end
 function box:SetMaxLetters(n) self.maxLetters = n end
+function box:SetMaxBytes(n) self.maxBytes = n end
 function box:GetFont() return "font", 12, "" end
 function box:SetHeight(h) self.height = h end
 function box:SetText(t)
@@ -59,6 +61,7 @@ function box:HighlightText() self.highlighted = true end
 SHOWN = 0
 DILvlDebugFrame = {
     editBox = box,
+    scroll = {GetWidth = function() return 800 end},
     Show = function() SHOWN = SHOWN + 1 end,
 }
 
@@ -85,6 +88,8 @@ R.okText      = box.text
 R.okHeight    = box.height
 R.okHighlight = box.highlighted
 R.okCap       = box.maxLetters
+R.okCapBytes  = box.maxBytes
+R.okWidth     = box.width
 
 -- 2) Die Box lehnt ab: Rueckgabe false, und im Fenster steht, was passiert ist
 LIMIT = 500
@@ -113,13 +118,15 @@ checks = [
      R["okHeight"] > 40 * 12),
     ("der Text ist vorausgewaehlt, Strg+C reicht", R["okHighlight"] is True),
     ("die Zeichenkappe ist aufgehoben", R["okCap"] == 0),
+    ("die Byte-Kappe ebenfalls", R["okCapBytes"] == 0),
+    ("die Textbreite folgt dem Fenster", R["okWidth"] == 800 - 8),
 
     ("eine ablehnende Box wird als Fehlschlag gemeldet", R["bigReturn"] is False),
     # Was die Box am Ende annimmt, haengt von ihrer Grenze ab -- die Zusage ist
     # nur, dass etwas drinsteht und dass es sich erklaert.
     ("das Fenster bleibt dabei NICHT leer", R["bigText"] != ""),
-    ("und nennt die Groesse, die nicht passte",
-     str(R["bigSize"]) in R["bigText"]),
+    ("und nennt beide Groessen: was ankam und was es haette sein sollen",
+     str(R["bigSize"]) in R["bigText"] and "took 0 of" in R["bigText"]),
 
     ("ein leerer Bericht gilt nicht als Fehlschlag", R["emptyReturn"] is True),
     ("das Fenster wird in jedem Fall gezeigt", R["shown"] == 3),
@@ -134,16 +141,21 @@ for n, ok in checks:
 print()
 controls = [
     ("Erfolgspruefung entfernt (Ablehnung faellt nicht mehr auf)",
-     chunk.replace('if body ~= "" and (eb:GetText() or "") == "" then',
-                   "if false then"),
+     chunk.replace("if #body > 0 and got < #body then", "if false then"),
      lambda r: r["bigReturn"] is False),
     ("Hoehe des Scroll-Kindes entfernt",
      chunk.replace("eb:SetHeight(lineCount * ((fontHeight or 12) * 1.25) + 20)", ""),
      lambda r: r["okHeight"] > 40 * 12),
     ("Zeichenkappe nicht mehr aufgehoben",
-     chunk.replace("    eb:SetMaxLetters(0)\n    local lineCount = 1",
-                   "    local lineCount = 1"),
+     chunk.replace("    eb:SetMaxLetters(0)\n    eb:SetMaxBytes(0)",
+                   "    eb:SetMaxBytes(0)"),
      lambda r: r["okCap"] == 0),
+    ("Byte-Kappe nicht mehr aufgehoben",
+     chunk.replace("    eb:SetMaxBytes(0)\n", "", 1),
+     lambda r: r["okCapBytes"] == 0),
+    ("Fenster erst nach dem Text gezeigt (Layout fehlt beim Schreiben)",
+     chunk.replace("    DILvlDebugFrame:Show()\n    eb:SetWidth(", "    eb:SetWidth("),
+     lambda r: r["shown"] == 3),
 ]
 bad += run_controls(chunk, controls)
 
