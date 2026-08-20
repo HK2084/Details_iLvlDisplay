@@ -10,6 +10,12 @@
 
 ### Fixed
 
+*   **“Item level left of the name” now actually puts it there.** On a row whose name the game hides, the rank and the name arrive welded into one piece that may not be taken apart, so the setting could only reach your own row and silently did nothing on everyone else’s. The tag now sits between the rank and the name on every row, hidden or not, by rebuilding the row from the pieces Details! hands out rather than trying to cut up the finished line. Where the game hides those pieces as well, the row keeps the old layout instead of losing its item level.
+
+*   **Changing that setting had no effect at all on Blizzard’s damage meter.** The change was only ever announced to the Details! side, and Blizzard’s meter has no reason to redraw a row on its own, so it kept the old layout until the next fight. Every setting is now delivered to both meters.
+
+*   **Switching the addon off left its item levels behind.** On Blizzard’s meter and on Danders Frames the text stayed on screen after `/dilvl off` — including when the Blizzard integration switched itself off after repeated errors. Turning it off now takes the text with it.
+
 *   **A closed Details! window could switch off item levels in every window.** The scan walked windows in order and stopped at the first one it could not read — and a closed window stays unreadable for the rest of the session. With window 1 closed and window 2 open, nothing was tagged anywhere. It now skips what it cannot use instead of giving up, and covers all thirty windows Details! allows rather than the first ten.
 
 *   **An inspect that timed out was never retried.** The player was dropped from the queue and, in a group where nothing else happened, carried no item level for the rest of the session. Timed-out players now get another turn, bounded so an unreachable one cannot spin forever.
