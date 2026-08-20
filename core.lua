@@ -122,6 +122,22 @@ local EmitSealedTag
 -- expected and correct; a path that never runs at all is a bug, and the two used
 -- to look identical from the outside.
 local sealedStats = {emitted = 0, noGuid = 0, secretGuid = 0, noIlvl = 0, inline = 0, ticker = 0}
+-- How often Details! writes a bar text at all, split by whether the text was
+-- sealed. Without this, the emit count above is an absolute with nothing to
+-- compare it to: 160k looks like a runaway loop of ours, when it is simply how
+-- often Details! redraws multiplied by the number of rows. `clean` is the same
+-- work the readable path has always done at the same rate, so if clean and
+-- secret run at a similar per-row rate, the sealed path costs nothing new.
+-- Our own writes never reach here (isOurSetText returns above), so these count
+-- Details! only.
+local hookStats = {calls = 0, secret = 0, clean = 0, since = 0}
+-- Does Details! prefix its rows with a rank ("1. Name") right now? Details!
+-- reads its own instance.row_info.textL_show_number for this, but that is its
+-- config table and none of our business, so we observe it instead: every row we
+-- CAN read tells us directly whether a rank is there. Defaults to true because
+-- that is Details!' own default, and because assuming a rank is the safe guess
+-- — it keeps the rank column aligned, which is the visible failure mode.
+local detailsShowsRank = true
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- true only once C_Timer.NewTicker actually returned (what /dilvl debug reports)
@@ -1008,9 +1024,12 @@ local function HookBarTextIfNeeded(bar)
         if isOurSetText then return end
         if not db or not db.enabled then return end
         if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
+        hookStats.calls = hookStats.calls + 1
+        if hookStats.since == 0 then hookStats.since = GetTime() end
         SafeCall(function()
             -- Details! Itemlevelfinder passes "secret string" values to SetText.
             if isSecretValue(text) then
+                hookStats.secret = hookStats.secret + 1
                 barCleanText[self] = nil
                 -- Keep it, unopened. This is the ONLY writer of barSecretText, and
                 -- our own re-emission runs with isOurSetText true (guard at the top
@@ -1071,13 +1090,21 @@ local function HookBarTextIfNeeded(bar)
             -- clearing after the guards would strand the previous occupant's
             -- secret and repaint their name onto a row Details! just emptied.
             barSecretText[self] = nil
+            hookStats.clean = hookStats.clean + 1
             if not text or type(text) ~= "string" or text:match("^%s*$") then return end
             if text:find("%[%d+%]") then return end
 
             -- Cache Details!'s clean text before we inject anything.
-            if text:match("^%d+%.%s") or not barCleanText[self] then
+            local hasRank = text:match("^%d+%.%s") ~= nil
+            if hasRank or not barCleanText[self] then
                 barCleanText[self] = text
             end
+            -- Learn the row layout from the rows we are allowed to read, so the
+            -- sealed rows can be placed to match. Only rows that carry OUR tag
+            -- already, or none, are evidence; a row we just wrote would report
+            -- our own formatting back to us, but those never reach here because
+            -- isOurSetText returns above.
+            detailsShowsRank = hasRank
 
             if not db.showInDetails then return end
             -- Per-window filter: this bar's window may be excluded (db.detailsWindowId).
@@ -1234,7 +1261,20 @@ EmitSealedTag = function(fontString, secret, bar, isLeft)
 
     -- Tag always travels as a %s ARGUMENT, never inside the format string, so a
     -- stray %-sign in a colour code or set-bonus mark cannot misformat the line.
-    if isLeft then
+    --
+    -- "left" cannot mean the same thing here as it does on a readable row. There
+    -- we split "1. " off the front and insert between rank and name; on a sealed
+    -- row that split would throw, so the tag can only go in front of the whole
+    -- string — rank included. When Details! is numbering its rows that shifts
+    -- every sealed rank to the right while the readable ones stay at the edge,
+    -- and in a raid nearly every row is sealed, so the list stops lining up.
+    -- Reported live 20.08.2026.
+    --
+    -- So prefix only when there is no rank to push: then "left" is exactly what
+    -- it says. With a rank present, suffix instead — the tag moves to the far
+    -- side of the name, which is not where it was asked to be, but the numbered
+    -- list stays a numbered list. Placement is cosmetic; a broken column is not.
+    if isLeft and not detailsShowsRank then
         fontString:SetText(string.format("%s %s", tag, secret))
     else
         fontString:SetText(string.format("%s %s", secret, tag))
@@ -2834,6 +2874,16 @@ SlashCmdList["DILVL"] = function(msg)
             print(string.format("  Sealed-row tags: %d emitted (%d inline, %d ticker)  skipped: %d no-GUID  %d secret-GUID  %d no-iLvl",
                 sealedStats.emitted, sealedStats.inline, sealedStats.ticker,
                 sealedStats.noGuid, sealedStats.secretGuid, sealedStats.noIlvl))
+        end
+        -- Read the emit count above against THIS line, never on its own. Both
+        -- numbers are driven by how often Details! redraws, which is none of our
+        -- doing — and the clean/secret split shows whether the sealed path
+        -- costs anything the readable path was not already costing.
+        if hookStats.calls > 0 then
+            local secs = math.max(1, GetTime() - hookStats.since)
+            print(string.format("  Details! bar writes: %d in %ds = %.0f/s  (%d secret, %d clean)  rows: %d",
+                hookStats.calls, math.floor(secs), hookStats.calls / secs,
+                hookStats.secret, hookStats.clean, hookCount))
         end
         -- Resize-hook health (v1.5.3). installed=0 with attempts>0 means the
         -- OnSizeChanged hook never attached — that was the pre-1.5.3 bug (we read
