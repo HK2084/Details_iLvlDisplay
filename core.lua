@@ -121,7 +121,8 @@ local EmitSealedTag
 -- that a sealed row carried no tag, never WHY. A row we cannot attribute is
 -- expected and correct; a path that never runs at all is a bug, and the two used
 -- to look identical from the outside.
-local sealedStats = {emitted = 0, noGuid = 0, secretGuid = 0, noIlvl = 0, inline = 0, ticker = 0, ranked = 0}
+local sealedStats = {emitted = 0, noGuid = 0, secretGuid = 0, noIlvl = 0, inline = 0,
+                     ticker = 0, ranked = 0, combatSkip = 0}
 -- How often Details! writes a bar text at all, split by whether the text was
 -- sealed. Without this, the emit count above is an absolute with nothing to
 -- compare it to: 160k looks like a runaway loop of ours, when it is simply how
@@ -1135,7 +1136,12 @@ local function HookBarTextIfNeeded(bar)
                 if not db.showInDetails then return end
                 if not IsDetailsWindowAllowed(bar.instance_id) then return end
                 -- Same combat rule as every other write to a Details! FontString.
-                if MayBeInCombat() then return end
+                -- Counted, because a raid produces thousands of these and the
+                -- report must be able to say "held back" rather than going silent.
+                if MayBeInCombat() then
+                    sealedStats.combatSkip = sealedStats.combatSkip + 1
+                    return
+                end
                 -- The renderer hook runs a few instructions later in this same
                 -- call and will place the tag properly between rank and name.
                 -- Writing the suffix form first would be two writes per row per
@@ -1471,7 +1477,10 @@ local function TagRankedRowBody(instanceLine, source, ...)
     -- Only "left" needs this path. "right" is a plain append, which the SetText
     -- hook already does correctly and more cheaply.
     if db.ilvlPosition ~= "left" then return end
-    if MayBeInCombat() then return end
+    if MayBeInCombat() then
+        sealedStats.combatSkip = sealedStats.combatSkip + 1
+        return
+    end
     if not instanceLine or not source then return end
 
     local fontString = instanceLine.lineText1
@@ -3023,16 +3032,24 @@ local function PrintDebugReport()
         -- hits. `inline` should dwarf `ticker` once Details! is drawing: inline is
         -- the flicker-free path, the ticker is only the safety net for rows hooked
         -- after their last redraw.
-        if sealedStats.inline > 0 or sealedStats.ticker > 0 then
-            print(string.format("  Sealed-row tags: %d emitted of %d tried (%d inline, %d ticker)  refused: %d no-GUID  %d secret-GUID  %d no-iLvl",
+        -- Printed as soon as Details! has written a single sealed row, not only
+        -- once we have written one back. A raid delivered 3608 sealed writes with
+        -- both of these lines absent, because every one arrived during combat
+        -- where we hold back on purpose — so their absence meant both "the path
+        -- never ran" and "the path ran and correctly did nothing". `held back in
+        -- combat` is what separates those two, and it is the expected state for
+        -- most of a fight.
+        if hookStats.secret > 0 or sealedStats.ticker > 0 then
+            print(string.format("  Sealed-row tags: %d emitted of %d tried (%d inline, %d ticker)  %d held back in combat",
                 sealedStats.emitted, sealedStats.inline + sealedStats.ticker,
-                sealedStats.inline, sealedStats.ticker,
+                sealedStats.inline, sealedStats.ticker, sealedStats.combatSkip))
+            print(string.format("    refused: %d no-GUID  %d secret-GUID  %d no-iLvl",
                 sealedStats.noGuid, sealedStats.secretGuid, sealedStats.noIlvl))
-            -- Separate counter from the fallback line above, on purpose. A high
-            -- no-iLvl figure up there next to a high figure here is normal, not a
-            -- fault: rows with no item level in the cache (pets, creatures) never
-            -- get a per-row record, so the hook retries them on every repaint and
-            -- correctly refuses every time.
+            -- Separate counter from the line above, on purpose. A high no-iLvl
+            -- figure next to a high figure here is normal, not a fault: rows with
+            -- no item level in the cache (pets, creatures) never get a per-row
+            -- record, so the hook retries them on every repaint and correctly
+            -- refuses every time.
             print(string.format("  Rank-aware placement: %s  %d rows placed between rank and name",
                 detailsMethodHooked and "renderer hook ON" or "renderer hook OFF (fallback)",
                 sealedStats.ranked))

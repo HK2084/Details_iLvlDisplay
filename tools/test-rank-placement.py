@@ -48,7 +48,7 @@ local function newFS(n)
 end
 
 local barRankInfo, hookedFontStrings, setBonusCache = {}, {}, {}
-local sealedStats = {emitted=0, noGuid=0, secretGuid=0, noIlvl=0, inline=0, ticker=0, ranked=0}
+local sealedStats = {emitted=0, noGuid=0, secretGuid=0, noIlvl=0, inline=0, ticker=0, ranked=0, combatSkip=0}
 local isOurSetText = false
 local detailsShowsRank = true
 local ILVL = {}
