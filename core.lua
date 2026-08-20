@@ -112,6 +112,16 @@ local barCleanText = {}    -- fontString -> last clean text set by Details! (nev
 -- Written and cleared in lockstep with barCleanText so a bar can never re-emit
 -- the previous occupant's name.
 local barSecretText = {}
+-- Forward declaration. The SetText hook has to emit the tag INSIDE Details!' own
+-- SetText call (see the long note at that site), and the hook is installed far
+-- above the definition of EmitSealedTag. Without this the closure would capture a
+-- global nil and the sealed path would silently never run.
+local EmitSealedTag
+-- Outcome counters for the sealed path. /dilvl debug could previously only say
+-- that a sealed row carried no tag, never WHY. A row we cannot attribute is
+-- expected and correct; a path that never runs at all is a bug, and the two used
+-- to look identical from the outside.
+local sealedStats = {emitted = 0, noGuid = 0, secretGuid = 0, noIlvl = 0, inline = 0, ticker = 0}
 local isOurSetText = false -- prevent recursion in SetText hook
 local mapDirty = false -- rebuild nameToIlvl only when new inspect data arrived
 local tickerStarted = false -- true only once C_Timer.NewTicker actually returned (what /dilvl debug reports)
@@ -1015,7 +1025,44 @@ local function HookBarTextIfNeeded(bar)
                         cols.tierFS:SetText("")
                         cols.tierFS:Hide()
                     end
+                    return
                 end
+                -- Tag the sealed row HERE, inside Details!' own SetText call —
+                -- not only from the 2s ticker.
+                --
+                -- This is the fix for the flicker reported live on 20.08.2026. A
+                -- row we CAN read is re-tagged synchronously on every redraw,
+                -- because this hook runs inside Details!' SetText and appends
+                -- before the frame is drawn; that path has never flickered. A
+                -- SEALED row used to be tagged only by the ticker, so every
+                -- Details! redraw left it bare until the next tick, up to two
+                -- seconds later. The tag appeared and vanished, and that is what
+                -- "Details blinkt" was. It also explains the apparent gaps: a
+                -- screenshot catches whichever half of the cycle is showing.
+                --
+                -- Note this does NOT depend on how often Details! redraws. Once
+                -- the tag is written in the same call as the text it belongs to,
+                -- there is no frame in which the untagged version is on screen.
+                --
+                -- Identity is BETTER here than on the ticker, not worse: Details!
+                -- assigns instanceLine.actorGUID at class_damage.lua:3129 and
+                -- writes lineText1 at :3199 — same function, same call, GUID
+                -- first. When we run, the GUID beside the secret is the one that
+                -- belongs to it, not one left over from a previous occupant.
+                --
+                -- isOurSetText is set around the call so our own SetText hits the
+                -- guard at the top of this hook: the tagged string can never be
+                -- captured as Details!' original, so the tag cannot double.
+                -- SafeCall keeps a throw from stranding isOurSetText as true,
+                -- which would kill tagging silently for the rest of the session.
+                if not db.showInDetails then return end
+                if not IsDetailsWindowAllowed(bar.instance_id) then return end
+                -- Same combat rule as every other write to a Details! FontString.
+                if MayBeInCombat() then return end
+                sealedStats.inline = sealedStats.inline + 1
+                isOurSetText = true
+                SafeCall(EmitSealedTag, self, text, bar, db.ilvlPosition == "left")
+                isOurSetText = false
                 return
             end
             -- A non-secret string arrived: this row is not sealed any more. This
@@ -1151,12 +1198,26 @@ end
 -- ("[272] 3. Name"). A different position is not a wrong value; inventing the
 -- rank in order to rebuild the line would be.
 ---------------------------------------------------------------
-local function EmitSealedTag(fontString, secret, bar, isLeft)
+EmitSealedTag = function(fontString, secret, bar, isLeft)
+    -- Each bail is counted separately. "No GUID" and "GUID is itself secret" are
+    -- different facts about Blizzard's restrictions, and "no cached iLvl" is not a
+    -- restriction at all — it just means we have never inspected this player.
+    -- Lumping them together is what made the sealed path impossible to diagnose.
     local guid = bar and bar.actorGUID
-    if not guid or isSecretValue(guid) then return end
+    if not guid then
+        sealedStats.noGuid = sealedStats.noGuid + 1
+        return
+    end
+    if isSecretValue(guid) then
+        sealedStats.secretGuid = sealedStats.secretGuid + 1
+        return
+    end
 
     local ilvl = GetIlvlForGuid(guid)
-    if not ilvl then return end
+    if not ilvl then
+        sealedStats.noIlvl = sealedStats.noIlvl + 1
+        return
+    end
 
     local tag
     if db.colorIlvl then
@@ -1178,6 +1239,7 @@ local function EmitSealedTag(fontString, secret, bar, isLeft)
     else
         fontString:SetText(string.format("%s %s", secret, tag))
     end
+    sealedStats.emitted = sealedStats.emitted + 1
 end
 
 ---------------------------------------------------------------
@@ -1232,6 +1294,11 @@ local function RefreshAllBarTexts()
                 -- stuck true, silently killing the SetText hook for the session.
                 local secret = barSecretText[fontString]
                 if secret then
+                    -- Still needed as a safety net even though the SetText hook now
+                    -- emits inline: a row hooked AFTER Details! last wrote it (window
+                    -- resize, a window opened later) has a stored secret that no
+                    -- SetText call is going to arrive for on its own.
+                    sealedStats.ticker = sealedStats.ticker + 1
                     SafeCall(EmitSealedTag, fontString, secret, ownBar, isLeft)
                 end
             end
@@ -2757,6 +2824,16 @@ SlashCmdList["DILVL"] = function(msg)
         if hookCount > cleanTextCount then
             print(string.format("  Bars without clean text: %d empty (reserve rows)  %d secret (Blizzard-protected)  %d already tagged (OUR bug)",
                 fsEmpty, fsSecret, fsTagged))
+        end
+        -- Read `emitted` first. Zero with attempts > 0 means the sealed path runs
+        -- but never produces a tag, and the three skip reasons say which wall it
+        -- hits. `inline` should dwarf `ticker` once Details! is drawing: inline is
+        -- the flicker-free path, the ticker is only the safety net for rows hooked
+        -- after their last redraw.
+        if sealedStats.inline > 0 or sealedStats.ticker > 0 then
+            print(string.format("  Sealed-row tags: %d emitted (%d inline, %d ticker)  skipped: %d no-GUID  %d secret-GUID  %d no-iLvl",
+                sealedStats.emitted, sealedStats.inline, sealedStats.ticker,
+                sealedStats.noGuid, sealedStats.secretGuid, sealedStats.noIlvl))
         end
         -- Resize-hook health (v1.5.3). installed=0 with attempts>0 means the
         -- OnSizeChanged hook never attached — that was the pre-1.5.3 bug (we read
