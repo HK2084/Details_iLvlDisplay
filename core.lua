@@ -1406,7 +1406,17 @@ end
 -- change appends something else, the type check fails and we fall back to the
 -- suffix form rather than printing nonsense.
 ---------------------------------------------------------------
-TagRankedRow = function(instanceLine, source, ...)
+-- SELF COMES FIRST. Details! declares the renderer with a colon
+-- (function Details:UpdateBarApocalypseWow) and every call site invokes it the
+-- same way, so the implicit `self` is a real argument and hooksecurefunc hands
+-- the post-hook the full list: (Details, instanceLine, source, instance,
+-- topValue, totalValue, rank). Taking the first parameter as the line silently
+-- shifts everything by one — instanceLine becomes the Details table, its
+-- lineText1 is nil, and the whole path bails on the very first guard. Live
+-- 20.08.2026 that read "renderer hook ON, 0 rows placed": hooked, running, and
+-- refusing every single row. The rank is still read from the END, so the extra
+-- argument at the front costs nothing there.
+TagRankedRow = function(_, instanceLine, source, ...)
     if not db or not db.enabled or not db.showInDetails then return end
     if db.layout ~= "inline" then return end
     -- Only "left" needs this path. "right" is a plain append, which the SetText
