@@ -3271,6 +3271,10 @@ local function PrintDebugReport()
                     if e.nativeTxt then extra = extra .. "native:" .. e.nativeTxt end
                     if e.cacheName then extra = extra .. "  cName:" .. e.cacheName end
                     if e.textColor then extra = extra .. "  color:" .. e.textColor end
+                    -- Size/flags/scale as rendered. A row that differs from its
+                    -- neighbours here is the one drawing bold, and the field that
+                    -- differs says which of the two causes it is at work.
+                    if e.fontDbg then extra = extra .. "  font:" .. e.fontDbg end
                     print(extra)
                 end
             end

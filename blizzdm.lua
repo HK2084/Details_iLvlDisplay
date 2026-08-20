@@ -1106,7 +1106,11 @@ local bfWhy = {
     direct = 0,
     combat = 0, noApi = 0, noSession = 0, secretSession = 0, noSources = 0,
     noIndex = 0, noSrc = 0, classSecret = 0, classDiff = 0, specDiff = 0,
-    ambiguous = 0, guidNil = 0, guidSecret = 0,
+    -- noLicence is NOT a weaker ambiguous, it is a different problem. ambiguous
+    -- means the row could be several players; noLicence means the window had
+    -- nothing to check its ordering against, so the index was never consulted.
+    -- One is fixed with better evidence about the row, the other with a witness.
+    ambiguous = 0, noLicence = 0, guidNil = 0, guidSecret = 0,
 }
 
 -- The index join's positive control, counted so the report shows the licence and
@@ -1173,6 +1177,7 @@ local function BackfillIdentity()
                         -- Bound: GetElementData is a closure over the element
                         -- this frame was filled with, so no re-sort can move it.
                         SetFrameGUID(frame, guid, true, owner, true)
+                        frame._dilvlBfWhy = nil
                         claimed[guid] = true
                         identityBackfills = identityBackfills + 1
                         bfWhy.direct = bfWhy.direct + 1
@@ -1395,7 +1400,9 @@ local function BackfillIdentity()
                             decided = true
                         end
 
-                        if not decided then why = "ambiguous" end
+                        if not decided then
+                            why = orderTrusted and "ambiguous" or "noLicence"
+                        end
                     end
 
                     if why then
@@ -1404,6 +1411,7 @@ local function BackfillIdentity()
                         local owner = src.name
                         if owner ~= nil and isSecret(owner) then owner = nil end
                         SetFrameGUID(frame, guid, true, owner)
+                        frame._dilvlBfWhy = nil
                         claimed[guid] = true
                         identityBackfills = identityBackfills + 1
                         table.remove(pending, i)
@@ -1417,6 +1425,11 @@ local function BackfillIdentity()
             for _, frame in ipairs(pending) do
                 local why = reason[frame]
                 if why then bfWhy[why] = (bfWhy[why] or 0) + 1 end
+                -- Kept on the row so the dump can name the reason for THIS row.
+                -- The session totals above cannot: they say 552 of one kind and
+                -- 345 of another across every pass, which is no help at all when
+                -- two specific rows are missing a tag and everything else worked.
+                frame._dilvlBfWhy = why
             end
         end)
 end
@@ -2151,7 +2164,12 @@ API.GetBlizzDMDebug = function()
                 if snDbg and nameResolveFails[snDbg] and nameResolveFails[snDbg] >= MAX_RESOLVE_FAILS then
                     path = "GAVE-UP(" .. snDbg:sub(1,10) .. ")"
                 else
-                    path = "NO-GUID"
+                    -- Carry the backfill's own verdict for this row. Without it
+                    -- NO-GUID says only "we do not know who this is", which is
+                    -- true of a row nobody ever looked at and of a row the join
+                    -- deliberately refused, and those need opposite responses.
+                    local bw = frame._dilvlBfWhy
+                    path = bw and ("NO-GUID:" .. tostring(bw)) or "NO-GUID"
                 end
             elseif not API.GetCacheData(guid) or not API.GetCacheData(guid).ilvl then
                 path = "NO-CACHE"
@@ -2197,7 +2215,23 @@ API.GetBlizzDMDebug = function()
                 end
             end
 
+            -- What the row is ACTUALLY rendered with right now, read back from
+            -- the live FontString rather than from our own cache -- the cache is
+            -- the suspect, so quoting it would prove nothing.
+            local fontDbg
+            if nameFS and type(nameFS) ~= "string" then
+                local okF, ff, fh, fl = pcall(nameFS.GetFont, nameFS)
+                local okS, ts = pcall(nameFS.GetTextScale, nameFS)
+                if okF and fh and not isSecret(fh) then
+                    fontDbg = format("%s%s x%s",
+                        tostring(fh),
+                        (fl and fl ~= "" and ("/" .. tostring(fl))) or "",
+                        (okS and ts and not isSecret(ts)) and tostring(ts) or "?")
+                end
+            end
+
             entries[#entries + 1] = {
+                fontDbg = fontDbg,
                 name = displayName,
                 isLocal = isLocal,
                 guid = guid ~= nil,
@@ -2246,7 +2280,7 @@ API.GetBlizzDMDebug = function()
     local bfOrder = {"direct",
         "combat", "noApi", "noSession", "secretSession", "noSources",
         "noIndex", "noSrc", "classSecret", "classDiff", "specDiff", "ambiguous",
-        "guidNil", "guidSecret"}
+        "noLicence", "guidNil", "guidSecret"}
     local bfReason = ""
     for _, k in ipairs(bfOrder) do
         if (bfWhy[k] or 0) > 0 then
