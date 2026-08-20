@@ -10,6 +10,8 @@
 
 ### Fixed
 
+*   **Item levels disappeared from the Details! bars two hours after a raid.** The lookup treated its two-hour re-inspect window as a display window too, so once an entry crossed it the tag was dropped rather than shown — even for players who had long left the group, where no newer reading was ever going to arrive. Blizzard’s meter reads the same cache without that filter, so it kept showing the numbers while the Details! bars beside it went blank. It now falls back to what was measured whenever nothing fresher exists; a fresher reading still wins, and re-inspection is unchanged.
+
 *   **“Item level left of the name” now actually puts it there.** On a row whose name the game hides, the rank and the name arrive welded into one piece that may not be taken apart, so the setting could only reach your own row and silently did nothing on everyone else’s. The tag now sits between the rank and the name on every row, hidden or not, by rebuilding the row from the pieces Details! hands out rather than trying to cut up the finished line. Where the game hides those pieces as well, the row keeps the old layout instead of losing its item level.
 
 *   **Changing that setting had no effect at all on Blizzard’s damage meter.** The change was only ever announced to the Details! side, and Blizzard’s meter has no reason to redraw a row on its own, so it kept the old layout until the next fight. Every setting is now delivered to both meters.

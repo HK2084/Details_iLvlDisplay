@@ -380,7 +380,10 @@ local function GetIlvlForGuid(guid)
             local poolTime = (type(data.time) == "number" and data.time > 0)
                              and data.time or nil
             if poolTime and (time() - poolTime) >= CACHE_REFRESH then
-                return nil
+                -- Details!' pool is no fresher than ours. Fall through to what
+                -- we measured ourselves rather than answering "nothing" -- see
+                -- the note at the end of this function.
+                return cached and cached.ilvl or nil
             end
             local ilvl = math.floor(data.ilvl)
             -- Enrich with Name-Realm via roster lookup so the post-disband
@@ -405,7 +408,29 @@ local function GetIlvlForGuid(guid)
         end
     end
 
-    return nil
+    -- LAST RESORT: the value we measured, however old it is.
+    --
+    -- CACHE_REFRESH is a RE-INSPECT horizon, not a display horizon. The comment
+    -- at its declaration says so: "re-inspect if we can reach them". Using it to
+    -- suppress the tag as well means the tag vanishes for anyone we can no
+    -- longer reach — someone who left the group, or a stored segment from an
+    -- earlier raid. No newer value is ever coming for them, so "wait for
+    -- something fresher" is a promise that cannot be kept.
+    --
+    -- It also made the two renderers disagree about the same data.
+    -- API.GetCacheData, which the Blizzard-meter path uses, reads ilvlCache with
+    -- no age filter at all, so a two-hour-old entry tagged every row over there
+    -- while these rows went blank. Live on 20.08.2026 that showed up as Details!
+    -- losing its tags an hour after a raid: 35385 refusals for "no item level"
+    -- against a cache that held every one of them. Nothing had broken; the
+    -- entries had simply crossed 7200 seconds.
+    --
+    -- This does not weaken the freshness rule. Everything above still prefers a
+    -- fresher source and the inspect pipeline still re-inspects on its own
+    -- schedule. It only stops us throwing the answer away when no fresher one
+    -- exists. What we measured is attributable; showing nothing while the meter
+    -- beside it shows the number is just inconsistent.
+    return cached and cached.ilvl or nil
 end
 
 ---------------------------------------------------------------
