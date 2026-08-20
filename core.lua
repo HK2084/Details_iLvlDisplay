@@ -1475,8 +1475,11 @@ TagRankedRow = function(_, instanceLine, source, ...)
         fontString:SetText(string.format("%s %s", tag, name))
     end
     isOurSetText = false
-    sealedStats.emitted = sealedStats.emitted + 1
-    sealedStats.ranked = (sealedStats.ranked or 0) + 1
+    -- Bewusst NICHT in sealedStats.emitted: das zaehlt den Rueckfallweg, dessen
+    -- Versuche in inline+ticker stehen. Beides in einen Topf zu werfen ergab
+    -- live "28874 emitted of 3082 tried" — mehr Treffer als Versuche, was
+    -- niemand mehr lesen kann. Zwei Wege, zwei Zeilen.
+    sealedStats.ranked = sealedStats.ranked + 1
 end
 
 ---------------------------------------------------------------
@@ -2955,6 +2958,11 @@ local function PrintDebugReport()
                 sealedStats.emitted, sealedStats.inline + sealedStats.ticker,
                 sealedStats.inline, sealedStats.ticker,
                 sealedStats.noGuid, sealedStats.secretGuid, sealedStats.noIlvl))
+            -- Der Rueckfallweg darueber und dieser hier sind getrennte Zaehler.
+            -- Ein hoher no-iLvl-Wert oben bei hoher Zahl hier ist normal: Zeilen
+            -- ohne Item Level im Cache (Begleiter, Kreaturen) bekommen nie einen
+            -- Eintrag, also versucht der Hook sie bei jedem Neuzeichnen erneut
+            -- und lehnt sie jedes Mal korrekt ab.
             print(string.format("  Rank-aware placement: %s  %d rows placed between rank and name",
                 detailsMethodHooked and "renderer hook ON" or "renderer hook OFF (fallback)",
                 sealedStats.ranked))
