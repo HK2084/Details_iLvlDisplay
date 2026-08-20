@@ -2323,6 +2323,35 @@ API.GetBlizzDMDebug = function()
             local tagged = false
             local txtSecret = false
             local alphaHidden = false
+            -- Foreign text, shortened for the report -- and shortened SAFELY.
+            --
+            -- Blizzard's row text carries escape sequences: a class atlas as
+            -- |A:...|a and a colour as |cAARRGGBB ... |r. Cutting it at a fixed
+            -- length lands inside one of them sooner or later, and a half
+            -- sequence is not a cosmetic problem: WoW's text renderer cannot
+            -- parse it, and ONE of them blanks the entire widget the text is
+            -- rendered in. That is what emptied this addon's debug window AND
+            -- the chat's own copy window -- the poison travelled with the text,
+            -- so it broke a window we do not own.
+            --
+            -- The proof is in the reports themselves: "|cFF9D9D9" on a row
+            -- numbered 1 and "|cFF9D9D" on one numbered 10, one character
+            -- shorter because the longer rank pushed the cut one earlier.
+            --
+            -- Doubling every bar makes the text literal (WoW draws "||" as one
+            -- bar), so the cut can then land anywhere -- except between the two
+            -- halves of a pair, which the trailing check below rules out.
+            local function SafeSnippet(s, n)
+                if s == nil then return nil end
+                s = tostring(s):gsub("|", "||")
+                if #s > n then
+                    s = s:sub(1, n)
+                    local trailing = #(s:match("|*$") or "")
+                    if trailing % 2 == 1 then s = s:sub(1, #s - 1) end
+                end
+                return s
+            end
+
             local nativeTxt = nil
             local nameFS = frame:GetName()
             local nameFSType = nameFS and type(nameFS) or "nil"
@@ -2334,7 +2363,7 @@ API.GetBlizzDMDebug = function()
                 end
                 local txt = nameFS:GetText()
                 if txt and not isSecret(txt) then
-                    nativeTxt = tostring(txt):sub(1, 30)
+                    nativeTxt = SafeSnippet(txt, 30)
                     if type(txt) == "string" and txt:find("%[%d+%]") then
                         tagged = true
                         hasTag = hasTag + 1
@@ -2348,7 +2377,7 @@ API.GetBlizzDMDebug = function()
                 end
             elseif nameFS and type(nameFS) == "string" then
                 -- GetName() returned a string (frame name), not a FontString!
-                nativeTxt = "STR:" .. nameFS:sub(1, 20)
+                nativeTxt = "STR:" .. (SafeSnippet(nameFS, 20) or "")
             end
 
             -- Determine what path InjectIlvl would take

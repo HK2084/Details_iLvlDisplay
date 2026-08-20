@@ -40,12 +40,15 @@ local EM_DASH = "-"
 
 -- Eine EditBox, die ab einer Grenze schweigend ablehnt -- genau das Verhalten,
 -- an dem das Fenster live leer blieb.
+SCROLL_W = 800
 LIMIT = nil
 local box = {text = "", height = 0, highlighted = false, maxLetters = nil,
              maxBytes = nil, width = 0}
 function box:SetMultiLine() end
 function box:SetFontObject() end
 function box:SetWidth(w) self.width = w end
+function box:GetWidth() return self.width end
+function box:GetHeight() return self.height end
 function box:SetAutoFocus() end
 function box:SetScript() end
 function box:SetMaxLetters(n) self.maxLetters = n end
@@ -61,7 +64,8 @@ function box:HighlightText() self.highlighted = true end
 SHOWN = 0
 DILvlDebugFrame = {
     editBox = box,
-    scroll = {GetWidth = function() return 800 end},
+    scroll = {GetWidth = function() return SCROLL_W end},
+    GetWidth = function() return 900 end,
     Show = function() SHOWN = SHOWN + 1 end,
 }
 
@@ -99,7 +103,15 @@ R.bigReturn = ShowDebugWindow(big)
 R.bigText   = box.text
 R.bigSize   = #big
 
--- 3) Leerer Bericht ist kein Fehlschlag
+-- 3) Scroll-Frame noch nicht vermessen: die Breite muss trotzdem brauchbar sein
+SCROLL_W = 0
+LIMIT = nil
+box.text, box.width = "", 0
+R.unlaidReturn = ShowDebugWindow(build(40))
+R.unlaidWidth  = box.width
+SCROLL_W = 800
+
+-- 4) Leerer Bericht ist kein Fehlschlag
 LIMIT = nil
 box.text = ""
 R.emptyReturn = ShowDebugWindow("")
@@ -129,7 +141,9 @@ checks = [
      str(R["bigSize"]) in R["bigText"] and "took 0 of" in R["bigText"]),
 
     ("ein leerer Bericht gilt nicht als Fehlschlag", R["emptyReturn"] is True),
-    ("das Fenster wird in jedem Fall gezeigt", R["shown"] == 3),
+    ("ohne vermessenes Scroll-Frame bleibt die Breite brauchbar",
+     R["unlaidWidth"] > 100 and R["unlaidReturn"] is True),
+    ("das Fenster wird in jedem Fall gezeigt", R["shown"] == 4),
 ]
 
 print()
@@ -154,8 +168,13 @@ controls = [
      chunk.replace("    eb:SetMaxBytes(0)\n", "", 1),
      lambda r: r["okCapBytes"] == 0),
     ("Fenster erst nach dem Text gezeigt (Layout fehlt beim Schreiben)",
-     chunk.replace("    DILvlDebugFrame:Show()\n    eb:SetWidth(", "    eb:SetWidth("),
-     lambda r: r["shown"] == 3),
+     chunk.replace("    DILvlDebugFrame:Show()\n    -- Width from the scroll frame",
+                   "    -- Width from the scroll frame"),
+     lambda r: r["shown"] == 4),
+    ("Breiten-Rueckfall entfernt (0 - 8 ergibt eine negative Breite)",
+     chunk.replace("if scrollW < 100 then scrollW = 650 end", "")
+          .replace("if scrollW < 100 then scrollW = (DILvlDebugFrame:GetWidth() or 0) - 40 end", ""),
+     lambda r: r["unlaidWidth"] > 100),
 ]
 bad += run_controls(chunk, controls)
 

@@ -2597,7 +2597,15 @@ local function ShowDebugWindow(text)
     -- answer GetText() with nothing regardless of what SetText was given, and
     -- this function's whole contract is that its answer means something.
     DILvlDebugFrame:Show()
-    eb:SetWidth(DILvlDebugFrame.scroll:GetWidth() - 8)
+    -- Width from the scroll frame, but never a nonsense one. GetWidth can answer
+    -- 0 before layout has run, and `0 - 8` is a negative-width EditBox that
+    -- accepts no text at all -- which is exactly what "took 0 of 6813" looked
+    -- like. The fixed 650 this replaced never had that failure mode; the
+    -- fallbacks below keep the flexibility without reintroducing it.
+    local scrollW = DILvlDebugFrame.scroll:GetWidth() or 0
+    if scrollW < 100 then scrollW = (DILvlDebugFrame:GetWidth() or 0) - 40 end
+    if scrollW < 100 then scrollW = 650 end
+    eb:SetWidth(scrollW - 8)
 
     -- BOTH caps. Letters and bytes are separate limits on an EditBox
     -- (SimpleEditBoxAPIDocumentation.lua:758-777) and either one silently
@@ -2625,9 +2633,15 @@ local function ShowDebugWindow(text)
         -- character report and equally true of a 6 800 character one, which is
         -- not a size problem but a bug in here -- and the report has to say
         -- enough to tell those apart without another round trip.
-        local note = "[window took " .. got .. " of " .. #body
-            .. " characters " .. EM_DASH .. " showing the start, "
-            .. "complete text printed to chat]\n\n"
+        -- The box's own measurements travel with the complaint. Twice now the
+        -- number alone sent us after the wrong cause -- first the report's
+        -- length, then a character cap -- when the box was simply the wrong
+        -- shape to hold anything.
+        local note = string.format(
+            "[window took %d of %d characters (box %dx%d) %s showing the start, "
+            .. "complete text printed to chat]\n\n",
+            got, #body, math.floor(eb:GetWidth() or 0),
+            math.floor(eb:GetHeight() or 0), EM_DASH)
         local steps = {20000, 5000, 1000, 0}
         for i = 1, #steps do
             eb:SetText(note .. body:sub(1, steps[i]))
