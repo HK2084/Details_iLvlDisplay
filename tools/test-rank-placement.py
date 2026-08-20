@@ -25,7 +25,7 @@ def grab(start, end):
 
 NUMBERS = grab(r"^local function DetailsNumbersRows\(bar\)", r"\n    return detailsShowsRank\nend")
 EMIT = grab(r"^EmitSealedTag = function\(", r"\n    sealedStats\.emitted = sealedStats\.emitted \+ 1\nend")
-RANKED = grab(r"^TagRankedRow = function\(", r"\n    sealedStats\.ranked = sealedStats\.ranked \+ 1\nend")
+RANKED = grab(r"^local function TagRankedRowBody\(", r"\n    sealedStats\.ranked = sealedStats\.ranked \+ 1\nend")
 
 for nm, blob, must in (("DetailsNumbersRows", NUMBERS, "textL_show_number"),
                        ("EmitSealedTag", EMIT, "barRankInfo"),
@@ -109,6 +109,18 @@ __NUMBERS__
 __EMIT__
 __RANKED__
 
+-- Die ausgelieferte Huelle, nachgebaut: SafeCall plus Flag-Ruecksetzung. Der
+-- Test MUSS ueber sie laufen, denn hooksecurefunc ruft genau diese auf.
+local function SafeCall(fn, ...)
+  local ok, err = pcall(fn, ...)
+  if not ok then LAST_ERROR = err end
+  return ok
+end
+TagRankedRow = function(_, instanceLine, source, ...)
+  SafeCall(TagRankedRowBody, instanceLine, source, ...)
+  isOurSetText = false
+end
+
 -- ---------------- Szenario ----------------
 local R = {}
 local fs = newFS("row1")
@@ -186,6 +198,23 @@ Details:UpdateBarApocalypseWow(line8, source, {}, 100, 50, 6)
 R.rightText = fs8.text
 db.ilvlPosition = "left"
 
+-- 11) Die Zeile wird an einen anderen Spieler weitergereicht. Details! blankt
+-- dabei nichts, also ueberlebt die Aufzeichnung des Vorgaengers. Der Ticker
+-- darf dessen Namen NICHT neben das Item Level des Neuen setzen.
+local fs9 = newFS("row9"); hookedFontStrings[fs9] = true
+local line9 = {lineText1 = fs9, instance_id = 1, actorGUID = "Player-AAA"}
+Details:UpdateBarApocalypseWow(line9, source, {}, 100, 50, 4)
+R.beforeHandover = fs9.text
+ILVL["Player-BBB"] = 250
+setBonusCache["Player-BBB"] = nil
+line9.actorGUID = "Player-BBB"          -- neue Belegung, Aufzeichnung veraltet
+fs9.text = ""
+-- Details! haette laengst den Text des NEUEN Spielers geschrieben; genau den
+-- bekommt der Ticker als Secret zu sehen.
+local SEALED2 = mark("Neuling-Kazzak")
+EmitSealedTag(fs9, SEALED2, line9, true)
+R.afterHandover = fs9.text
+
 R.ourFlag = isOurSetText
 return R
 """
@@ -223,6 +252,10 @@ checks = [
     ("ohne Item Level kein Tag", "[" not in (R["noIlvlText"] or "").replace("5. ", "")),
     ("bei Position rechts haelt sich der Pfad raus", "[298]" not in (R["rightText"] or "")),
     ("isOurSetText haengt nicht fest", R["ourFlag"] is False),
+    ("vor der Weitergabe steht der richtige Name",
+     R["beforeHandover"] == "4. " + TAG + " Littlemaxxis"),
+    ("nach der Weitergabe wird die alte Aufzeichnung verworfen",
+     "Littlemaxxis" not in (R["afterHandover"] or "") and "Neuling" in (R["afterHandover"] or "")),
 ]
 
 print()
@@ -242,12 +275,15 @@ controls = [
     ("Realm-Kuerzung entfernt",
      chunk.replace("name = ShortenForDisplay(name)", "name = name"),
      lambda r: "Blackrock" not in (r["text6"] or "")),
+    ("Identitaetspruefung entfernt (Name des Vorgaengers)",
+     chunk.replace("if info and info.guid ~= guid then info = nil end", ""),
+     lambda r: "Littlemaxxis" not in (r["afterHandover"] or "")),
     ("self-Argument weggelassen (der Fehler vom 20.08.)",
      chunk.replace("TagRankedRow = function(_, instanceLine, source, ...)",
                    "TagRankedRow = function(instanceLine, source, ...)"),
      lambda r: r["text6"] == "3. " + TAG + " Littlemaxxis"),
     ("Aufzeichnung fuer den Ticker entfernt",
-     chunk.replace("barRankInfo[fontString] = {rank = rank, name = name, numbered = numbered}", ""),
+     chunk.replace("barRankInfo[fontString] = {rank = rank, name = name, numbered = numbered, guid = guid}", ""),
      lambda r: r["tickerText"] == "3. " + TAG + " Littlemaxxis"),
 ]
 for name, broken, still_ok in controls:

@@ -147,8 +147,23 @@ local detailsShowsRank = true
 --
 -- The name half may be a secret. That is safe as a table VALUE (same as
 -- barSecretText) and it is only ever passed to string.format as a %s argument.
--- Cleared in lockstep with barSecretText so a recycled row can never re-emit
--- the previous occupant.
+--
+-- CARRIES THE GUID IT WAS BUILT FROM, and every consumer must check it.
+--
+-- The note here used to claim the record was cleared in lockstep with
+-- barSecretText so a recycled row could never re-emit the previous occupant.
+-- That was wrong, and it is what hid the bug. A FontString is not a player, it
+-- is a row SLOT that Details! hands to a different actor on every re-sort, and
+-- Details! overwrites lineText1 in place (class_damage.lua:3199) without ever
+-- blanking it — `ClearText()` appears nowhere in its entire source. So on a
+-- sealed-to-sealed handover NEITHER clear site fires and the record survives
+-- into the next occupant.
+--
+-- What that produced: the tag is composed from the row's CURRENT actorGUID
+-- while the name and rank come from the record, so a row could render the
+-- departed player's name beside the arriving player's item level. A wrong name
+-- on screen is the one outcome this addon does not accept, so the guid travels
+-- with the record and a mismatch discards it.
 local barRankInfo = {}
 local detailsMethodHooked = false
 -- Forward declaration: installed from HookAllBars, defined below EmitSealedTag.
@@ -1368,6 +1383,15 @@ EmitSealedTag = function(fontString, secret, bar, isLeft)
     -- Details! performs (class_damage.lua:3199): a plain number, plain text, and
     -- a secret name, all as %s arguments to one format. We invent nothing.
     local info = isLeft and barRankInfo[fontString]
+    -- Only trust a record that describes THIS row's current occupant. Details!
+    -- reassigns a row slot to another actor without blanking it, so the record
+    -- outlives the player it was built for; see the note at its declaration.
+    -- Both sides are already proven non-secret before this point (the guard at
+    -- the top of this function, and the same guard in TagRankedRow), so the
+    -- comparison cannot throw. A mismatch simply falls through to the fallback
+    -- below, which hands Details!' own live text back: right data, second-choice
+    -- placement.
+    if info and info.guid ~= guid then info = nil end
     if info then
         if info.numbered then
             fontString:SetText(string.format("%d. %s %s", info.rank, tag, info.name))
@@ -1441,7 +1465,7 @@ end
 -- 20.08.2026 that read "renderer hook ON, 0 rows placed": hooked, running, and
 -- refusing every single row. The rank is still read from the END, so the extra
 -- argument at the front costs nothing there.
-TagRankedRow = function(_, instanceLine, source, ...)
+local function TagRankedRowBody(instanceLine, source, ...)
     if not db or not db.enabled or not db.showInDetails then return end
     if db.layout ~= "inline" then return end
     -- Only "left" needs this path. "right" is a plain append, which the SetText
@@ -1491,7 +1515,7 @@ TagRankedRow = function(_, instanceLine, source, ...)
     -- Recorded so the 2s ticker can reproduce this exact layout. Without it,
     -- every tick would revert an idle window to the fallback suffix form and the
     -- tag would jump back and forth.
-    barRankInfo[fontString] = {rank = rank, name = name, numbered = numbered}
+    barRankInfo[fontString] = {rank = rank, name = name, numbered = numbered, guid = guid}
 
     isOurSetText = true
     if numbered then
@@ -1500,11 +1524,29 @@ TagRankedRow = function(_, instanceLine, source, ...)
         fontString:SetText(string.format("%s %s", tag, name))
     end
     isOurSetText = false
-    -- Bewusst NICHT in sealedStats.emitted: das zaehlt den Rueckfallweg, dessen
-    -- Versuche in inline+ticker stehen. Beides in einen Topf zu werfen ergab
-    -- live "28874 emitted of 3082 tried" — mehr Treffer als Versuche, was
-    -- niemand mehr lesen kann. Zwei Wege, zwei Zeilen.
+    -- Deliberately NOT counted in sealedStats.emitted, which belongs to the
+    -- fallback path whose attempts are the inline+ticker pair. Sharing one
+    -- counter produced "28874 emitted of 3082 tried" in a live report — more
+    -- hits than attempts, which nobody can read. Two paths, two lines.
     sealedStats.ranked = sealedStats.ranked + 1
+end
+
+-- The wrapper exists because this is the only code we run inside Details!' own
+-- call stack, and it was the only write path in the addon without a net.
+-- Details! iterates its row list with no pcall of its own
+-- (class_damage.lua:1951), so a throw here would abandon the remaining rows and
+-- put our file in the traceback of somebody else's addon.
+--
+-- SafeCall also brings the error budget and the auto-disable that every sibling
+-- write path already has, so a persistent fault switches the Details! surface
+-- off instead of erroring once per row, several times a second.
+--
+-- isOurSetText is restored unconditionally: SafeCall catches the throw but does
+-- not unwind the flag, and a stranded `true` makes the SetText hook return early
+-- for every row until some later pass happens to clear it.
+TagRankedRow = function(_, instanceLine, source, ...)
+    SafeCall(TagRankedRowBody, instanceLine, source, ...)
+    isOurSetText = false
 end
 
 ---------------------------------------------------------------
@@ -2469,6 +2511,9 @@ local function ClearAllBarTags()
         end
     end
     isOurSetText = false
+    -- The per-row records describe rows we have just restored to Details!' own
+    -- text, so none of them is valid any more.
+    wipe(barRankInfo)
     ClearAllColumns()
 end
 
@@ -2983,11 +3028,11 @@ local function PrintDebugReport()
                 sealedStats.emitted, sealedStats.inline + sealedStats.ticker,
                 sealedStats.inline, sealedStats.ticker,
                 sealedStats.noGuid, sealedStats.secretGuid, sealedStats.noIlvl))
-            -- Der Rueckfallweg darueber und dieser hier sind getrennte Zaehler.
-            -- Ein hoher no-iLvl-Wert oben bei hoher Zahl hier ist normal: Zeilen
-            -- ohne Item Level im Cache (Begleiter, Kreaturen) bekommen nie einen
-            -- Eintrag, also versucht der Hook sie bei jedem Neuzeichnen erneut
-            -- und lehnt sie jedes Mal korrekt ab.
+            -- Separate counter from the fallback line above, on purpose. A high
+            -- no-iLvl figure up there next to a high figure here is normal, not a
+            -- fault: rows with no item level in the cache (pets, creatures) never
+            -- get a per-row record, so the hook retries them on every repaint and
+            -- correctly refuses every time.
             print(string.format("  Rank-aware placement: %s  %d rows placed between rank and name",
                 detailsMethodHooked and "renderer hook ON" or "renderer hook OFF (fallback)",
                 sealedStats.ranked))
@@ -3541,8 +3586,18 @@ SlashCmdList["DILVL"] = function(msg)
             local isExpired = data.stale or age >= CACHE_REFRESH
             local ageColor = isExpired and "|cFFFF4444" or "|cFF888888"
             local expiredNote = isExpired and " |cFFFF4444[EXPIRED]|r" or ""
-            print(string.format("  %s: %s|cFFFFD900%d|r iLvl %s(%s)%s",
-                name, sb, data.ilvl, ageColor, ageStr, expiredNote))
+            -- Where the value came from. Five shipped strings -- the login hint,
+            -- both locales, the README and the changelog -- tell people to look
+            -- for [LOR] in `/dilvl cache`, and until now that marker existed only
+            -- in `/dilvl debug`. Sending users to a command that cannot show what
+            -- was promised is a broken promise in five places at once.
+            --
+            -- source is only ever one of four literals this file writes itself,
+            -- never anything that arrives from the game, so it cannot be secret
+            -- and string.upper cannot throw on it.
+            local src = data.source and ("[" .. string.upper(data.source) .. "] ") or ""
+            print(string.format("  %s: %s%s|cFFFFD900%d|r iLvl %s(%s)%s",
+                name, src, sb, data.ilvl, ageColor, ageStr, expiredNote))
             count = count + 1
             if age >= CACHE_REFRESH then expired = expired + 1 end
         end
