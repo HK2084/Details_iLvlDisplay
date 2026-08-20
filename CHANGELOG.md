@@ -24,6 +24,17 @@
 
 *   **A tier set bonus is no longer guessed on first contact.** When a player's gear had not finished loading, whatever pieces were readable at that moment were counted and stored as final — so someone wearing four tier pieces could be recorded as `[2P]`, and it stuck. An incomplete reading now shows no tag at all and schedules another look. A missing tag is fine; a wrong one is not.
 
+*   **Blizzard's own damage meter stayed half-empty after a boss fight.** Rows for players
+    outside your group kept no item level once the fight ended — sometimes for minutes, sometimes
+    until a `/reload`, and then filling in by themselves when some unrelated event happened to
+    come along. Blizzard's meter only rebuilds a row while damage is still coming in, so after
+    the last hit every row keeps the sealed name it was drawn with and there is nothing left to
+    trigger a second look. The addon now reads the finished fight back from the game directly,
+    where the names are readable again, and matches it to the rows on screen — but only after
+    proving the match is sound: the rows whose owner the game states outright must each land on
+    the line they claim. If a single one does not, that window is left alone. Roughly nineteen
+    out of twenty rows in a full raid were affected.
+
 *   **The public API no longer throws on input it did not produce.** The colour helpers raised an error on anything that was not a number, and two lookups could throw inside restricted instances. Other addons reading item levels from this one no longer see errors carrying its name.
 
 *   **Item levels come back after a boss fight.** Inside a raid or dungeon, Blizzard seals the

@@ -3207,6 +3207,17 @@ local function PrintDebugReport()
                 if bfReason and bfReason ~= "" then
                     print("    backfill: " .. bfReason)
                 end
+                -- The index join's positive control. Rows Blizzard bound to a
+                -- frame itself are checked against the index they claim; only a
+                -- window where all of them land on themselves may have its
+                -- unreadable rows joined by index. Read `mismatch` as a hard
+                -- stop, not a warning: it means the list moved under the frames
+                -- and every index in that window is a coin toss.
+                if (ci.ctrlWindows or 0) > 0 then
+                    print(string.format("    index-join: %d/%d windows licensed  control: %d ok  %d mismatch",
+                        ci.ctrlTrusted or 0, ci.ctrlWindows or 0,
+                        ci.ctrlOk or 0, ci.ctrlBad or 0))
+                end
                 print(string.format("    combat: group=%s  self=%s  ICL=%s  encounter=%s%s  unitFlags=%s  members=%d",
                     ci.groupCombat and "YES" or "no",
                     ci.inCombat and "YES" or "no",

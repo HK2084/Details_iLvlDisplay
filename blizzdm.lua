@@ -467,10 +467,19 @@ end
 -- only way to tell later whether the row still belongs to that player: UpdateName
 -- fires from inside Init, so it sees the NEW sourceName while the stored GUID is
 -- still the previous occupant's.
-local function SetFrameGUID(frame, guid, fromAPI, ownerName)
+-- `bound` is narrower than `fromAPI`, and the difference is what makes the index
+-- join checkable. Both mean the GUID came from Blizzard, but bound means it came
+-- from a binding that CANNOT be re-sorted: the combatSource handed to this very
+-- frame's Init, or the ScrollBox's own GetElementData closure. An identity we
+-- inferred from a position in a list is fromAPI too — it is still Blizzard's
+-- GUID — but it is worthless as evidence that the list is in the right order,
+-- because that is the thing it assumed. Only bound identities may serve as
+-- controls.
+local function SetFrameGUID(frame, guid, fromAPI, ownerName, bound)
     frame._dilvlGUID = guid
     frame._dilvlGUIDFromAPI = (guid and fromAPI) or nil
     frame._dilvlGUIDOwner = (guid and ownerName) or nil
+    frame._dilvlGUIDBound = (guid and bound) or nil
     return guid
 end
 
@@ -1100,6 +1109,12 @@ local bfWhy = {
     ambiguous = 0, guidNil = 0, guidSecret = 0,
 }
 
+-- The index join's positive control, counted so the report shows the licence and
+-- not just the result. `ok` are rows whose owner Blizzard bound to the frame
+-- itself and that sit at the index they claim, `bad` are rows that do not. A
+-- window is trusted only with at least one ok and no bad at all.
+local bfCtrl = {ok = 0, bad = 0, windows = 0, trusted = 0}
+
 -- Blizzard's own frame-to-data mapping, and the reason none of the guesswork
 -- below should normally be needed.
 --
@@ -1155,7 +1170,9 @@ local function BackfillIdentity()
                     if guid and not isSecret(guid) then
                         local owner = src.name
                         if owner ~= nil and isSecret(owner) then owner = nil end
-                        SetFrameGUID(frame, guid, true, owner)
+                        -- Bound: GetElementData is a closure over the element
+                        -- this frame was filled with, so no re-sort can move it.
+                        SetFrameGUID(frame, guid, true, owner, true)
                         claimed[guid] = true
                         identityBackfills = identityBackfills + 1
                         bfWhy.direct = bfWhy.direct + 1
@@ -1180,6 +1197,53 @@ local function BackfillIdentity()
             if not sources or isSecret(sources) then
                 bfWhy.noSources = bfWhy.noSources + 1 return
             end
+
+            -- Is the fresh list still in the order the rows were drawn from?
+            -- Everything below joins a row to a source BY INDEX, and an index is
+            -- worth nothing unless that holds.
+            --
+            -- A positive control decides it, not an assumption. Rows whose owner
+            -- Blizzard bound to the frame itself are checked against the index
+            -- they claim. Land every one of them on itself and the list has not
+            -- moved, which licenses the same index for the rows we cannot read.
+            -- One landing elsewhere — or nothing to check with at all — and the
+            -- join stays shut for this window.
+            --
+            -- The local player is a control that costs nothing and is there
+            -- almost every time: isLocalPlayer is NeverSecret
+            -- (DamageMeterDocumentation.lua:206) and UnitGUID("player") needs no
+            -- list to answer.
+            local ctrlOk, ctrlBad = 0, 0
+            SafeBlizzCall("BackfillControl", sw.ForEachEntryFrame, sw,
+                function(frame)
+                    if frame.spellID ~= nil then return end
+                    local idx = frame.index
+                    if not idx or isSecret(idx) then return end
+                    local s = sources[idx]
+                    if not s or isSecret(s) then return end
+                    local sg = s.sourceGUID
+                    if not sg or isSecret(sg) then return end
+
+                    local known
+                    if frame.isLocalPlayer == true then
+                        known = SafeUnitGUID("player")
+                    elseif frame._dilvlGUIDBound then
+                        local g = frame._dilvlGUID
+                        if g and not isSecret(g) then known = g end
+                    end
+                    if not known then return end
+
+                    if known == sg then
+                        ctrlOk = ctrlOk + 1
+                    else
+                        ctrlBad = ctrlBad + 1
+                    end
+                end)
+            local orderTrusted = (ctrlBad == 0 and ctrlOk > 0)
+            bfCtrl.ok = bfCtrl.ok + ctrlOk
+            bfCtrl.bad = bfCtrl.bad + ctrlBad
+            bfCtrl.windows = bfCtrl.windows + 1
+            if orderTrusted then bfCtrl.trusted = bfCtrl.trusted + 1 end
 
             -- Group the sources by the two fields Blizzard marks NeverSecret
             -- (DamageMeterDocumentation.lua:202-203). They stay readable exactly
@@ -1292,6 +1356,23 @@ local function BackfillIdentity()
                                 and total == fTotal
                         end
 
+                        -- 4. The list is provably still in the order these rows
+                        --    were filled from, so the index IS the binding rather
+                        --    than a guess about it. Last of the four because the
+                        --    three above decide a row on its own evidence and
+                        --    this one leans on the window as a whole; the claimed
+                        --    check still keeps two rows from taking one player.
+                        --
+                        --    Without it the raid case had no way through at all:
+                        --    half a dozen players share a class and spec, so (1)
+                        --    and (2) never fire, and (3) needs damage totals that
+                        --    stay secret for good once they were recorded in
+                        --    restricted combat. 1456 refusals in one evening, on
+                        --    rows whose item level was sitting in the cache.
+                        if not decided and orderTrusted and not claimed[guid] then
+                            decided = true
+                        end
+
                         if not decided then why = "ambiguous" end
                     end
 
@@ -1353,8 +1434,18 @@ local function RefreshAllFrames()
             SafeBlizzCall("ForEachEntryFrame", sessionWindow.ForEachEntryFrame,
                 sessionWindow, function(frame)
                     SafeBlizzCall("InjectIlvl", InjectIlvl, frame)
+                    -- "Worth retrying" is about rows we cannot NAME, not rows
+                    -- whose sourceName is secret. Those two came apart once the
+                    -- identity stopped depending on the name: a frame keeps the
+                    -- secret string it was filled with during the fight for as
+                    -- long as the window lives, because Blizzard never rewrites
+                    -- it, so the old test stayed true forever and left deferRetry
+                    -- reading PENDING for the rest of the session while every row
+                    -- on screen was long since tagged.
                     if not hasRetriableSecret and frame.sourceName
-                        and isSecret(frame.sourceName) then
+                        and isSecret(frame.sourceName)
+                        and frame.isLocalPlayer ~= true
+                        and not frame._dilvlGUID then
                         hasRetriableSecret = true
                     end
                 end)
@@ -1410,7 +1501,9 @@ local function CaptureIdentityAndInject(frame, source)
             -- from "this row was handed to a different player".
             local owner = source.name
             if owner ~= nil and isSecret(owner) then owner = nil end
-            SetFrameGUID(frame, guid, true, owner)
+            -- Bound: this is the combatSource Blizzard is filling THIS frame
+            -- from, one call up the stack.
+            SetFrameGUID(frame, guid, true, owner, true)
         end
     end
     SafeBlizzCall("InjectIlvl", InjectIlvl, frame)
@@ -1957,6 +2050,10 @@ API.GetBlizzDMDebug = function()
         refreshTotal = refreshStats.total,
         refreshLastPass = refreshStats.lastPass,
         deferredRetry = deferredRetryPending, -- (#19)
+        ctrlOk = bfCtrl.ok,
+        ctrlBad = bfCtrl.bad,
+        ctrlWindows = bfCtrl.windows,
+        ctrlTrusted = bfCtrl.trusted,
     }
 
     if not DamageMeter.ForEachSessionWindow then
