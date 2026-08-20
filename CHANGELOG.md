@@ -4,6 +4,8 @@
 
 ### New
 
+*   **Rows whose name Blizzard has sealed now carry an item level.** In a raid or a random group the game hides most player names from addons, and every one of those rows on the Details! bars stayed blank. They are tagged now, without ever reading or rewriting the hidden name: the row's own player ID says who it is, and the hidden text is handed straight back untouched, so the rank, the name, the realm spelling and any icons survive exactly as Details! drew them. Where the game withholds the ID as well, the row stays blank on purpose — a missing tag is fine, a wrong name is not, and `/dilvl debug` now says which of the two happened.
+
 *   **Instant item levels via LibOpenRaid now actually work.** Anyone in your group running Details! broadcasts their gear, and those item levels appear without waiting for an inspect. This path shipped years ago and never delivered a single value: the callback was handed to the library in a shape it rejects, so it was refused at registration and silently did nothing, while the diagnostics reported it as active the whole time. It is repaired, and the report now counts values that actually arrived instead of asking whether the library is installed. Verified in a live raid before release. Entries sourced this way are marked `[LOR]` in `/dilvl cache`.
 
 ### Fixed
