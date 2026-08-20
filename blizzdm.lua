@@ -368,11 +368,22 @@ local inCombat = false
 -- the triple cannot be trusted on its own.
 local globalFontObject = nil   -- cached from a CLEAN frame: Blizzard's Font object
 
--- The client reports flags it applies for its own renderer. "SLUG" is one of
--- them: it appears nowhere in Blizzard's entire UI source, so it is never
--- something Blizzard asks for — but read it out of GetFont() and hand it back
--- through SetFont and it becomes an explicit request, on one row and not its
--- neighbours. Only flags Blizzard actually writes may go back in.
+-- Flags for the RAW fallback only, and the reason is narrower than it looks.
+--
+-- Measured 20.08.2026, in this order. Before the object path existed, sixteen
+-- rows in one window read 13.999999/OUTLINE and a single row read
+-- 14.299999/OUTLINE, SLUG. The odd one out looked like the damaged one. It was
+-- not: once every row was restored from Blizzard's Font object, ALL SEVENTEEN
+-- read 14.299999/OUTLINE, SLUG. So that is the object's own state, the outlier
+-- was the row we had never overwritten, and the sixteen tidy-looking ones were
+-- ours — our (file, size, flags) round trip was SHRINKING rows and DROPPING a
+-- flag. A row rendered bold because its neighbours had quietly become smaller.
+--
+-- SLUG is therefore Blizzard's, not something we smuggled in. It is filtered
+-- here anyway, for a different reason: this list is what we hand to SetFont as
+-- an INPUT, and nothing in Blizzard's UI source ever passes SLUG that way, so we
+-- have no evidence the setter accepts it. The path that matters restores the
+-- object and never reaches this list at all.
 local FONT_FLAGS_WE_MAY_SET = {OUTLINE = true, THICKOUTLINE = true, MONOCHROME = true}
 local function SanitizeFontFlags(flags)
     if not flags or flags == "" or isSecret(flags) then return "" end
@@ -628,10 +639,12 @@ local function RestoreNameFS(frame, nameFS)
     -- ALWAYS set a font — SetToDefaults clears it, "Font not set" error otherwise.
     -- Use GetFont() cache (file, size, flags) for pixel-perfect restore.
     -- Priority: per-frame cache > global cache > NumberFontNormal fallback.
-    -- Object first, always. It restores file, size and flags as Blizzard defined
-    -- them, with the text scale NOT folded into the height and no renderer flag
-    -- smuggled in. The triple below is the fallback for a FontString that has no
-    -- object to give, and its flags are filtered on the way back in.
+    -- Object first, always. It restores file, size and flags exactly as Blizzard
+    -- defined them; the triple below cannot, because GetFont() hands back a
+    -- height with the text scale already folded in and flags the setter may not
+    -- take. Measured: restoring the object made all seventeen rows in a window
+    -- identical, where the triple had left sixteen of them smaller than the one
+    -- it had not yet touched.
     if frame._dilvlFontObject then
         nameFS:SetFontObject(frame._dilvlFontObject)
     elseif globalFontObject then
