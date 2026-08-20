@@ -142,10 +142,6 @@ local unverifiedNameSkips = 0
 -- written again. Whatever tags are on screen at that moment would stay there
 -- for the rest of the session.
 local StripAllTags
--- Combat makes the element data stale again, so the one-shot refresh per window
--- has to be armed anew. Declared here because StripAllTags -- the routine that
--- runs at combat start -- sits far above where this is defined.
-local ClearRefreshRequests
 -- Same reason, one line further: IsGroupInCombat is defined ~230 lines below.
 -- A Lua closure binds its upvalues where it is CREATED, so without this
 -- declaration the call inside disableBlizzDMSelf would compile as a global read,
@@ -717,9 +713,6 @@ end
 -- own text becomes visible again (even without our iLvl tag).
 ---------------------------------------------------------------
 function StripAllTags()
-    -- Combat is what makes the element data stale, so this is exactly when the
-    -- one-shot refresh per window has to be armed again.
-    if ClearRefreshRequests then ClearRefreshRequests() end
     if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
     trace("StripAllTags")
     DamageMeter:ForEachSessionWindow(function(sw)
@@ -1192,7 +1185,6 @@ local bfWhy = {
     -- nothing to check its ordering against, so the index was never consulted.
     -- One is fixed with better evidence about the row, the other with a witness.
     ambiguous = 0, noLicence = 0, guidNil = 0, guidSecret = 0,
-    refreshed = 0,
 }
 
 -- The index join's positive control, counted so the report shows the licence and
@@ -1225,40 +1217,6 @@ local function ElementDataOf(frame)
     local ok, data = pcall(fn, frame)
     if not ok or not data or isSecret(data) then return nil end
     return data
-end
-
--- One refresh per staleness episode per window, and only where it can help.
---
--- Re-entrancy is the whole risk here and it is closed twice over. Our own
--- post-hook on Refresh calls ScheduleRefresh, which lands back in
--- RefreshAllFrames and therefore back here — the latch turns the second
--- request into a no-op, and inOurRefresh keeps a request from firing while one
--- is still running. Cleared when combat starts, because that is what makes the
--- data stale again.
---
--- What this does NOT do is fix anything up itself. It asks and returns; the
--- pass that follows finds readable data on the framework's own binding and
--- resolves the window through the direct path, with nothing inferred.
-local refreshRequested = setmetatable({}, {__mode = "k"})
-local inOurRefresh = false
-
-function ClearRefreshRequests()
-    for k in pairs(refreshRequested) do refreshRequested[k] = nil end
-end
-
-local function RequestFreshElementData(sw)
-    if inOurRefresh then return false end
-    if not sw.Refresh then return false end
-    -- Edit mode hands back a mock session; refreshing against it is meaningless.
-    if sw.IsEditing and sw:IsEditing() then return false end
-    if refreshRequested[sw] then return false end
-
-    refreshRequested[sw] = true
-    inOurRefresh = true
-    SafeBlizzCall("WindowRefresh", sw.Refresh, sw,
-        ScrollBoxConstants and ScrollBoxConstants.RetainScrollPosition)
-    inOurRefresh = false
-    return true
 end
 
 local function BackfillIdentity()
@@ -1306,15 +1264,6 @@ local function BackfillIdentity()
             -- Everything answered directly: the inference below is not needed and
             -- its cost (a session fetch plus a full grouping pass) is not paid.
             if #pending == 0 then return end
-
-            -- Rows the framework could not answer for mean one thing only: the
-            -- element they are bound to still holds the sealed copy from the
-            -- fight. Ask Blizzard for a fresh read rather than guessing around
-            -- it, and let the next pass answer them the direct way.
-            if RequestFreshElementData(sw) then
-                bfWhy.refreshed = bfWhy.refreshed + 1
-                return
-            end
 
             local okSession, session = pcall(sw.GetCombatSession, sw)
             if not okSession or not session then
@@ -2511,7 +2460,7 @@ API.GetBlizzDMDebug = function()
     local bfOrder = {"direct",
         "combat", "noApi", "noSession", "secretSession", "noSources",
         "noIndex", "noSrc", "classSecret", "classDiff", "specDiff", "ambiguous",
-        "noLicence", "guidNil", "guidSecret", "refreshed"}
+        "noLicence", "guidNil", "guidSecret"}
     local bfReason = ""
     for _, k in ipairs(bfOrder) do
         if (bfWhy[k] or 0) > 0 then

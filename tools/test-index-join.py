@@ -46,15 +46,6 @@ def extract(name):
 
 
 ELEMENT_DATA = extract("ElementDataOf")
-
-_m = re.search(
-    r"^local refreshRequested = setmetatable.*?"
-    r"^local function RequestFreshElementData\(sw\)\n.*?^end$",
-    SRC, re.M | re.S)
-if not _m:
-    sys.exit("Refresh-Anforderung nicht gefunden")
-REFRESH_REQ = _m.group(0)
-
 BACKFILL = extract("BackfillIdentity")
 for needle, why in [
     ("orderTrusted", "die Ordnungs-Kontrolle"),
@@ -62,7 +53,6 @@ for needle, why in [
     ("ctrlComplete", "die Abbruch-Erkennung der Kontrolle"),
     ("pinnedInKey", "die Gruppen-Fixierung"),
     ("GetLocalPlayerEntry", "die angeheftete Eigen-Zeile als Zeuge"),
-    ("RequestFreshElementData", "die Anforderung eines frischen Lesevorgangs"),
 ]:
     if needle not in BACKFILL:
         sys.exit("%s fehlt in BackfillIdentity" % why)
@@ -110,21 +100,9 @@ function DamageMeter:ForEachSessionWindow(fn) fn(WINDOW) end
 -- to model a Blizzard API that fails part way through.
 -- sticky: a local-player entry that lives OUTSIDE the ScrollBox, exactly as
 -- Blizzard pins it (MinimizeContainer.LocalPlayerEntry).
-REFRESH_CALLS = 0
-local function MakeWindow(frames, sources, throwAt, sticky, editing, elements)
+local function MakeWindow(frames, sources, throwAt, sticky)
     SOURCES = sources
-    local w
-    w = {
-        IsEditing = function(self) return editing == true end,
-        -- Was Blizzards Refresh tut, auf das Wesentliche eingedampft: die
-        -- Element-Tabellen behalten ihre Identitaet und bekommen frische Werte.
-        Refresh = elements and function(self)
-            REFRESH_CALLS = REFRESH_CALLS + 1
-            for i, e in pairs(elements) do
-                local s = sources[i]
-                if s then e.sourceGUID = s.sourceGUID end
-            end
-        end or nil,
+    return {
         ForEachEntryFrame = function(self, fn)
             for i, f in ipairs(frames) do
                 if throwAt and i > throwAt then error("blizzard blew up") end
@@ -135,8 +113,8 @@ local function MakeWindow(frames, sources, throwAt, sticky, editing, elements)
         GetCombatSession = function(self)
             return {combatSources = SOURCES}
         end,
+        IsEditing = function(self) return false end,
     }
-    return w
 end
 
 -- ---------------------------------------------------------------- Faelle
@@ -176,8 +154,6 @@ end
 
 __ELEMENT_DATA__
 
-__REFRESH_REQ__
-
 __BACKFILL__
 
 local R = {}
@@ -186,20 +162,12 @@ local function run(frames, sources, opts)
     inCombat = opts.combat or false
     bfCtrl.ok, bfCtrl.bad, bfCtrl.classBad = 0, 0, 0
     bfCtrl.windows, bfCtrl.trusted = 0, 0
-    if opts.armRefresh then ClearRefreshRequests() end
-    -- Die Sperre haengt an der IDENTITAET des Fensters. Im Spiel ist das ueber
-    -- alle Durchlaeufe dasselbe Frame, also muss der Test es auch wiederverwenden
-    -- koennen -- sonst prueft er eine Sperre, die er selbst umgeht.
-    if not (opts.reuseWindow and WINDOW) then
-        WINDOW = MakeWindow(frames, sources, opts.throwAt, opts.sticky,
-                            opts.editing, opts.elements)
-    end
+    WINDOW = MakeWindow(frames, sources, opts.throwAt, opts.sticky)
     BackfillIdentity()
     inCombat = false
     local out = {}
     for i, f in ipairs(frames) do out[i] = f._dilvlGUID or "-" end
-    return table.concat(out, ","), bfCtrl.trusted, bfCtrl.ok, bfCtrl.bad,
-           REFRESH_CALLS
+    return table.concat(out, ","), bfCtrl.trusted, bfCtrl.ok, bfCtrl.bad
 end
 
 -- Four hunters of one spec, damage totals sealed. Two of them are witnesses.
@@ -373,37 +341,6 @@ do
     R.licenceOnly = {run(frames, sources)}
 end
 
--- Der eigentliche Weg: versiegelte Zeilen ohne Identitaet -> Blizzard einmal um
--- einen frischen Lesevorgang bitten, danach beantwortet der DIREKTE Pfad alles.
-do
-    ClearRefreshRequests()
-    REFRESH_CALLS = 0
-    local elements = {[2] = {sourceGUID = SECRET, classFilename = "HUNTER",
-                             specIconID = 11}}
-    local frames = {Row(1, "HUNTER", 11, {isLocalPlayer = true}),
-                    Row(2, "HUNTER", 11, {elementData = elements[2]})}
-    local sources = {Source(PLAYER, "HUNTER", 11), Source("G2", "HUNTER", 11)}
-    -- Erster Lauf: bittet um den frischen Lesevorgang und entscheidet nichts.
-    local a = {run(frames, sources, {elements = elements})}
-    -- Zweiter Lauf: dieselben Frames, jetzt mit lesbaren Elementdaten.
-    local b = {run(frames, sources, {elements = elements, reuseWindow = true})}
-    R.refreshAsked  = {a[1], a[5]}
-    R.refreshWorked = {b[1], b[5]}
-end
-
--- Im Bearbeitungsmodus liefert das Fenster eine Attrappe; da ist ein frischer
--- Lesevorgang sinnlos.
-do
-    ClearRefreshRequests()
-    REFRESH_CALLS = 0
-    local frames = {Row(1, "HUNTER", 11, {isLocalPlayer = true}),
-                    Row(2, "HUNTER", 11)}
-    local sources = {Source(PLAYER, "HUNTER", 11), Source("G2", "HUNTER", 11)}
-    local g = {run(frames, sources, {editing = true, armRefresh = true,
-                                     elements = {}})}
-    R.editingNoRefresh = {g[1], g[5]}
-end
-
 R.backfills = identityBackfills
 return R
 """
@@ -411,7 +348,6 @@ return R
 chunk = (HARNESS
          .replace("__SET_GUID__", SET_GUID)
          .replace("__ELEMENT_DATA__", ELEMENT_DATA)
-         .replace("__REFRESH_REQ__", REFRESH_REQ)
          .replace("__BACKFILL__", BACKFILL))
 
 R = lupa.LuaRuntime(unpack_returned_tuples=False).execute(chunk)
@@ -484,15 +420,6 @@ checks = [
      and guids("doubleClaim").startswith("Player-Quinroth,")),
     ("der direkte Weg braucht weder Index noch Lizenz",
      guids("direct") == "GD"),
-    ("versiegelte Zeilen loesen genau EINEN frischen Lesevorgang aus",
-     R["refreshAsked"][2] == 1),
-    ("und dabei wird nichts geraten",
-     R["refreshAsked"][1] == "-,-"),
-    ("der zweite Lauf loest sie ueber den direkten Pfad auf, ohne erneut zu bitten",
-     R["refreshWorked"][1] == "Player-Quinroth,G2"
-     and R["refreshWorked"][2] == 1),
-    ("im Bearbeitungsmodus wird nicht aufgefrischt",
-     R["editingNoRefresh"][2] == 0),
     ("ein widersprechender Zeuge blockt auch eine fixierte Gruppe",
      guids("licenceOnly") == "-,-,FALSCH" and lic("licenceOnly") == 0),
 ]
@@ -532,9 +459,6 @@ controls = [
      chunk.replace("elseif frame._dilvlGUIDBound then",
                    "elseif frame._dilvlGUID then"),
      lambda r: r["selfLicense"][3] == 0),
-    ("Wiedereintritts-Sperre entfernt (Auffrischen koennte sich wiederholen)",
-     chunk.replace("if refreshRequested[sw] then return false end", ""),
-     lambda r: r["refreshWorked"][2] == 1),
     ("angeheftete Eigen-Zeile nicht mehr befragt",
      chunk.replace("ControlFrame(lpe)", ""),
      lambda r: r["stickyWitness"][1] == "A"),
