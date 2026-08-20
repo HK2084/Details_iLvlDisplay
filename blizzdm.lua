@@ -364,6 +364,26 @@ end
 -- PLAYER_REGEN_ENABLED + delayed passes for stale FontStrings.
 ---------------------------------------------------------------
 local inCombat = false
+-- Preferred over the triple below in every path. See SanitizeFontFlags for why
+-- the triple cannot be trusted on its own.
+local globalFontObject = nil   -- cached from a CLEAN frame: Blizzard's Font object
+
+-- The client reports flags it applies for its own renderer. "SLUG" is one of
+-- them: it appears nowhere in Blizzard's entire UI source, so it is never
+-- something Blizzard asks for — but read it out of GetFont() and hand it back
+-- through SetFont and it becomes an explicit request, on one row and not its
+-- neighbours. Only flags Blizzard actually writes may go back in.
+local FONT_FLAGS_WE_MAY_SET = {OUTLINE = true, THICKOUTLINE = true, MONOCHROME = true}
+local function SanitizeFontFlags(flags)
+    if not flags or flags == "" or isSecret(flags) then return "" end
+    local kept = {}
+    for word in tostring(flags):gmatch("[%a]+") do
+        local up = word:upper()
+        if FONT_FLAGS_WE_MAY_SET[up] then kept[#kept + 1] = up end
+    end
+    return table.concat(kept, ", ")
+end
+
 local globalFontFile = nil     -- cached from first CLEAN frame: font file path
 local globalFontSize = nil     -- cached from first CLEAN frame: font size
 local globalFontFlags = nil    -- cached from first CLEAN frame: font flags ("OUTLINE" etc.)
@@ -608,10 +628,20 @@ local function RestoreNameFS(frame, nameFS)
     -- ALWAYS set a font — SetToDefaults clears it, "Font not set" error otherwise.
     -- Use GetFont() cache (file, size, flags) for pixel-perfect restore.
     -- Priority: per-frame cache > global cache > NumberFontNormal fallback.
-    if frame._dilvlFontFile then
-        nameFS:SetFont(frame._dilvlFontFile, frame._dilvlFontSize, frame._dilvlFontFlags)
+    -- Object first, always. It restores file, size and flags as Blizzard defined
+    -- them, with the text scale NOT folded into the height and no renderer flag
+    -- smuggled in. The triple below is the fallback for a FontString that has no
+    -- object to give, and its flags are filtered on the way back in.
+    if frame._dilvlFontObject then
+        nameFS:SetFontObject(frame._dilvlFontObject)
+    elseif globalFontObject then
+        nameFS:SetFontObject(globalFontObject)
+    elseif frame._dilvlFontFile then
+        nameFS:SetFont(frame._dilvlFontFile, frame._dilvlFontSize,
+            SanitizeFontFlags(frame._dilvlFontFlags))
     elseif globalFontFile then
-        nameFS:SetFont(globalFontFile, globalFontSize, globalFontFlags)
+        nameFS:SetFont(globalFontFile, globalFontSize,
+            SanitizeFontFlags(globalFontFlags))
     else
         nameFS:SetFontObject(NumberFontNormal)
     end
@@ -983,6 +1013,16 @@ local function InjectIlvl(frame)
     -- Cache actual font properties from native FontString while readable.
     -- GetFont() returns the rendered font (file, size, flags) regardless of how it was set.
     -- This captures Blizzard's runtime SetTextScale effect on fontSize.
+    -- The object is what we actually want back later. It is only readable while
+    -- nothing has overwritten it with a raw SetFont — which is precisely why the
+    -- restore path above prefers SetFontObject: restoring the object keeps this
+    -- capture working on every later pass instead of poisoning it once and then
+    -- living off the poisoned copy.
+    local fontObj = nameFS.GetFontObject and nameFS:GetFontObject()
+    if fontObj and not isSecret(fontObj) then
+        frame._dilvlFontObject = fontObj
+        globalFontObject = fontObj
+    end
     local fontFile, fontSize, fontFlags = nameFS:GetFont()
     if fontFile and not isSecret(fontFile) and fontSize and not isSecret(fontSize) then
         frame._dilvlFontFile = fontFile
@@ -1010,10 +1050,18 @@ local function InjectIlvl(frame)
         -- Ensure native properties are intact (SetToDefaults from a previous
         -- session may have left wrong font/wordwrap that persists across /reload).
         nameFS:SetWordWrap(false)
-        if frame._dilvlFontFile then
-            nameFS:SetFont(frame._dilvlFontFile, frame._dilvlFontSize, frame._dilvlFontFlags)
+        -- Same order as RestoreNameFS. This runs on every clean write, so a bad
+        -- value here is re-stamped several times a second and never decays.
+        if frame._dilvlFontObject then
+            nameFS:SetFontObject(frame._dilvlFontObject)
+        elseif globalFontObject then
+            nameFS:SetFontObject(globalFontObject)
+        elseif frame._dilvlFontFile then
+            nameFS:SetFont(frame._dilvlFontFile, frame._dilvlFontSize,
+                SanitizeFontFlags(frame._dilvlFontFlags))
         elseif globalFontFile then
-            nameFS:SetFont(globalFontFile, globalFontSize, globalFontFlags)
+            nameFS:SetFont(globalFontFile, globalFontSize,
+                SanitizeFontFlags(globalFontFlags))
         end
         if frame._dilvlTextScale then
             nameFS:SetTextScale(frame._dilvlTextScale)
@@ -2027,6 +2075,7 @@ if DamageMeter.ForEachSessionWindow then
                         -- though its item level is sitting in our cache.
                         if not frame._dilvlGUIDFromAPI then
                             SetFrameGUID(frame, nil, false, nil)
+                            frame._dilvlFontObject = nil
                             frame._dilvlFontFile = nil
                             frame._dilvlFontSize = nil
                             frame._dilvlFontFlags = nil

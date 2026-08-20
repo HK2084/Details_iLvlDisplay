@@ -59,19 +59,59 @@ is_ignored() {
     return 1
 }
 
+# Every .lua the addon actually LOADS, straight from the .toc. A Lua file the
+# .toc does not name is not addon code however much it looks like it: WoW never
+# runs it, so in the download it is dead weight at best. Extension alone cannot
+# tell the difference, which is how 18 KB of test harness came to sit in the
+# addon root with this gate reporting OK.
+loaded=()
+while IFS= read -r line; do
+    line="${line%$'\r'}"
+    [ -z "$line" ] && continue
+    case "$line" in \#*) continue ;; esac
+    case "$line" in *.lua) loaded+=("${line//\\//}") ;; esac
+done < <(cat ./*.toc 2>/dev/null)
+
+is_loaded() {
+    local entry
+    for entry in "${loaded[@]}"; do
+        [ "$1" = "$entry" ] && return 0
+    done
+    return 1
+}
+
 status=0
 offenders=()
-while IFS= read -r file; do
-    [ -z "$file" ] && continue
-    is_ignored "$file" && continue
-    is_allowed "$file" && continue
+unloaded=()
+check_file() {
+    local file="$1"
+    is_ignored "$file" && return
+    case "$file" in
+        *.lua)
+            is_loaded "$file" && return
+            unloaded+=("$file")
+            status=1
+            return
+            ;;
+    esac
+    is_allowed "$file" && return
     offenders+=("$file")
     status=1
-done < <(git ls-files)
+}
+
+# Tracked AND untracked. The packager zips the folder, not the index, so a file
+# git never heard of ships exactly like one it did.
+while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    check_file "$file"
+done < <({ git ls-files; git ls-files --others --exclude-standard; } | sort -u)
 
 if [ "$status" -ne 0 ]; then
     for f in "${offenders[@]}"; do
         echo "::error file=$f::'$f' would be shipped to users but is not addon content"
+    done
+    for f in "${unloaded[@]}"; do
+        echo "::error file=$f::'$f' is Lua the .toc never loads - dead weight in the download"
     done
     echo
     echo "Every file above lands in the zip that users download."
