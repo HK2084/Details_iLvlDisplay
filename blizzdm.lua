@@ -2432,6 +2432,11 @@ API.GetBlizzDMDebug = function()
                 name = displayName,
                 isLocal = isLocal,
                 guid = guid ~= nil,
+                -- The value, not just the fact. The cache section of the report
+                -- shows entries for the rows actually on screen, and it needs
+                -- the identity to pick them out. Only ever a plain string here:
+                -- ResolveFrameGUID never hands back a secret.
+                guidRaw = guid,
                 cached = hasCached,
                 tagged = tagged,
                 secret = txtSecret,

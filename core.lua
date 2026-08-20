@@ -3495,18 +3495,64 @@ local function PrintDebugReport()
 
         -- Cache: show all entries with iLvl + set bonus
         if cacheCount > 0 then
-            print("  --- iLvl Cache ---")
+            -- RELEVANT entries only, and the rest counted.
+            --
+            -- The full list is what made this report unusable: 477 entries at
+            -- ~55 characters is ~26 000 of 32 217, four fifths of the whole
+            -- thing, and past the EditBox's limit — so the window refused it and
+            -- the report fell into chat, which is precisely what the window is
+            -- there to prevent. `/dilvl cache` already prints the full list on
+            -- its own; duplicating it here bought nothing.
+            --
+            -- What a bug report actually needs is the entries for the players on
+            -- screen right now. Across a full evening of live diagnosis every
+            -- lookup that mattered was a row on a meter or a member of the group.
+            local shown, total = {}, 0
+            local function want(guid)
+                if guid and not isSecretValue(guid) then shown[guid] = true end
+            end
+            want(SafeUnitGUID("player"))
+            local n = GetNumGroupMembers() or 0
+            if n > 0 then
+                local prefix = IsInRaid() and "raid" or "party"
+                for i = 1, n do want(SafeUnitGUID(prefix .. i)) end
+            end
+            -- Every row the Blizzard meter is currently showing, whether or not
+            -- that player is still in the group. Those are the rows a report is
+            -- usually about.
+            if Details_iLvlDisplayAPI and Details_iLvlDisplayAPI.GetBlizzDMDebug then
+                local okE, _, _, _, _, _, entries = pcall(Details_iLvlDisplayAPI.GetBlizzDMDebug)
+                if okE and type(entries) == "table" then
+                    for _, e in ipairs(entries) do want(e.guidRaw) end
+                end
+            end
+
             local now = time()
+            local skipped = 0
+            local lines = {}
             for guid, data in pairs(ilvlCache) do
-                local name = data.name or "?"
-                local age = ((now - data.time) .. "s") .. (data.stale and "+flag" or "")
-                -- Season suffix belongs to storage, not to the eye. Show the
-                -- season only where it differs from the current one, so the
-                -- normal case stays as short as it was.
-                local rawSb = setBonusCache[guid]
-                local sb = rawSb and ("[" .. util.SetBonusDebug(rawSb) .. "] ") or ""
-                local src = data.source and string.upper(data.source) or "?"
-                print(string.format("    %s: %s%d iLvl [%s] (%s)", name, sb, data.ilvl, src, age))
+                total = total + 1
+                if shown[guid] then
+                    local name = data.name or "?"
+                    local age = ((now - data.time) .. "s") .. (data.stale and "+flag" or "")
+                    -- Season suffix belongs to storage, not to the eye. Show the
+                    -- season only where it differs from the current one, so the
+                    -- normal case stays as short as it was.
+                    local rawSb = setBonusCache[guid]
+                    local sb = rawSb and ("[" .. util.SetBonusDebug(rawSb) .. "] ") or ""
+                    local s = data.source and string.upper(data.source) or "?"
+                    lines[#lines + 1] = string.format("    %s: %s%d iLvl [%s] (%s)",
+                        name, sb, data.ilvl, s, age)
+                else
+                    skipped = skipped + 1
+                end
+            end
+            print(string.format("  --- iLvl Cache --- %d of %d shown (on screen or in group)",
+                #lines, total))
+            for i = 1, #lines do print(lines[i]) end
+            if skipped > 0 then
+                print(string.format("    ... %d further entries not shown — /dilvl cache lists them all",
+                    skipped))
             end
         end
 
