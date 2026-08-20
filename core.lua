@@ -2529,6 +2529,8 @@ end
 ---------------------------------------------------------------
 -- Debug popup — scrollable, copy-pasteable output window
 ---------------------------------------------------------------
+local EM_DASH = "\226\128\148"  -- U+2014, written as bytes so the file stays ASCII-safe
+
 local function ShowDebugWindow(text)
     if not DILvlDebugFrame then
         local f = CreateFrame("Frame", "DILvlDebugFrame", UIParent, "BackdropTemplate")
@@ -2560,13 +2562,53 @@ local function ShowDebugWindow(text)
         eb:SetFontObject(GameFontHighlightSmall)
         eb:SetWidth(650)
         eb:SetAutoFocus(false)
+        -- No cap. Without this the box carries whatever default it was born
+        -- with, and a report that outgrows it is simply refused — no error,
+        -- no text, an empty window. The options page has always set this; this
+        -- one never did, and the report has since grown past 30 000 characters.
         eb:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
         scroll:SetScrollChild(eb)
         f.editBox = eb
     end
-    DILvlDebugFrame.editBox:SetText(text)
-    DILvlDebugFrame.editBox:HighlightText()
+
+    -- Returns true only if the text is actually IN the box afterwards. The
+    -- caller needs that answer: an empty window with no explanation is the one
+    -- outcome worse than no window.
+    local eb = DILvlDebugFrame.editBox
+    local body = text or ""
+    -- A scroll child needs a height of its own, or a long report renders as
+    -- nothing at all. Derived from the line count, the same way the options
+    -- page does it.
+    -- Applied on every show, not once at creation: the guarantee "no cap" has to
+    -- hold for this box whoever made it, and setting it again costs nothing.
+    eb:SetMaxLetters(0)
+    local lineCount = 1
+    for _ in body:gmatch("\n") do lineCount = lineCount + 1 end
+    local _, fontHeight = eb:GetFont()
+    eb:SetHeight(lineCount * ((fontHeight or 12) * 1.25) + 20)
+
+    eb:SetText(body)
+    if body ~= "" and (eb:GetText() or "") == "" then
+        -- It refused the whole thing. Show as much as it will take and name the
+        -- shortfall, so the window is never silently blank.
+        -- Give it less until it takes SOMETHING, and keep the explanation at the
+        -- front of whatever survives. The last step carries the note alone,
+        -- which always fits, so this cannot end in an empty window.
+        local note = "[window could not hold the full report (" .. #body
+            .. " characters) " .. EM_DASH .. " showing the start, "
+            .. "complete text printed to chat]\n\n"
+        local steps = {20000, 5000, 1000, 0}
+        for i = 1, #steps do
+            eb:SetText(note .. body:sub(1, steps[i]))
+            if (eb:GetText() or "") ~= "" then break end
+        end
+        DILvlDebugFrame:Show()
+        return false
+    end
+
+    eb:HighlightText()
     DILvlDebugFrame:Show()
+    return true
 end
 -- Expose for blizzdm.lua trace output
 Details_iLvlDisplay_ShowDebugWindow = ShowDebugWindow
@@ -2858,8 +2900,11 @@ local function PrintDebugReport()
         --    restored on both paths.
         local debugBuf = {}
         local origPrint = print
+        -- Collect ONLY. The report goes to the window, which is selectable and
+        -- copies in one keystroke; forwarding every line to chat as well buried
+        -- the chat and made the report harder to copy, not easier. If the window
+        -- turns out not to hold it, the caller falls back to chat and says so.
         print = function(...)
-            origPrint(...)
             local n = select("#", ...)
             if n == 1 then
                 local v = ...
@@ -3523,7 +3568,15 @@ local function PrintDebugReport()
             origPrint(msg2)
             debugBuf[#debugBuf + 1] = msg2
         end
-        ShowDebugWindow(table.concat(debugBuf, "\n"))
+        local full = table.concat(debugBuf, "\n")
+        if ShowDebugWindow(full) then
+            origPrint("|cFF33FF99Details! iLvl Display:|r debug report in the window ("
+                .. #debugBuf .. " lines) " .. EM_DASH .. " already selected, Ctrl+C copies it.")
+        else
+            -- The window could not take it. Chat is the fallback, not the
+            -- default, and the user is told which of the two happened.
+            for i = 1, #debugBuf do origPrint(debugBuf[i]) end
+        end
 
 end
 
