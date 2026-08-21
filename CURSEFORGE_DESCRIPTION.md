@@ -72,7 +72,9 @@ Blizzard's Secret Value system in Midnight seals combat data inside instanced co
 
 These are Blizzard restrictions, not addon bugs.
 
-**Improved in v1.5.5:** rows keep their tags through a kill, a wipe and the walk to the next boss. Switching segments (A–G) by hand to get the numbers back is no longer necessary.
+**Improved in v1.6.0:** in five-player content — dungeons, Delves, M+ — rows keep their tags through a kill, a wipe and the walk to the next boss, and switching segments (A–G) by hand is not necessary.
+
+In a **raid**, expect some rows to stay blank after a kill. Blizzard's meter stops rebuilding a row once the damage stops, so those rows hold on to the sealed data they were drawn with, and there is no way for an addon to make the meter re-read them. They fill in when the meter next rebuilds by itself — the next pull, an A–G switch, scrolling the row into view, or `/reload`. Where a row cannot be identified beyond doubt it stays blank on purpose: a missing tag is fine, another player's name is not.
 
 **ElvUI, Grid2 and DandersFrames are unaffected** — they have no combat gate at all. **Details! bars** follow the same rule as Blizzard's meter in inline layout; in **Columns layout** (`/dilvl layout columns`) iLvl and tier stay visible right through the fight.
 
