@@ -446,6 +446,21 @@ end
 -- secrets on OUR frames unlock when WE leave combat.
 function IsGroupInCombat()
     if inCombat then return true end
+    -- The client's own answer, and it cannot be secret. `inCombat` above is a
+    -- flag this file maintains from PLAYER_REGEN_DISABLED, and an event can be
+    -- missed — entering combat across a loading screen, or before these handlers
+    -- are registered. Nothing else here caught that, and the header of this file
+    -- has described a "layered defense" that in practice consulted two of its
+    -- five signals.
+    --
+    -- Measured live 21.08.2026, raid trash: ICL=YES with the flag still false,
+    -- so this function answered "not in combat" and seven rows were written mid
+    -- fight — the one thing the whole design says never happens. Shipped that way
+    -- since at least v1.5.9; the function is byte-identical on master.
+    --
+    -- IsInCombatSafe treats a secret/unknown lockdown as OUT of combat, which
+    -- keeps this file's rule that only an explicit true counts.
+    if IsInCombatSafe() == true then return true end
     local eip = IsEncounterInProgress()
     -- IsEncounterInProgress() can return secret in instances — treat as false
     if eip == true then return true end
