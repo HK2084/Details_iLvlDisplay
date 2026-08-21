@@ -45,12 +45,14 @@ EIP = false
 
 function IsInCombatSafe() return ICL end
 function IsEncounterInProgress() return EIP end
+RESTRICT = false
+function IsCombatRestrictionActive() return RESTRICT end
 
 __GUARD__
 
 local R = {}
-local function probe(flag, icl, eip)
-    inCombat, ICL, EIP = flag, icl, eip
+local function probe(flag, icl, eip, restrict)
+    inCombat, ICL, EIP, RESTRICT = flag, icl, eip, restrict or false
     return IsGroupInCombat()
 end
 
@@ -64,6 +66,9 @@ R.allThree     = probe(true,  true,  true)
 R.iclSecret    = probe(false, SECRET, false)
 R.iclNil       = probe(false, nil,   false)
 R.eipSecret    = probe(false, false, SECRET)
+-- Die Einschraenkungs-Abfrage des Clients allein: SecretWhenInCombat ist ueber
+-- genau dieses Praedikat DEFINIERT, also ist es das genaueste Signal von allen.
+R.restrictOnly = probe(false, false, false, true)
 
 inCombat, ICL, EIP = false, false, false
 return R
@@ -82,6 +87,8 @@ checks = [
     ("geheime Kampfsperre gilt als draussen", R["iclSecret"] is False),
     ("fehlende Kampfsperre gilt als draussen", R["iclNil"] is False),
     ("geheimer Encounter gilt als draussen", R["eipSecret"] is False),
+    ("aktive Addon-Einschraenkung allein zaehlt als Kampf",
+     R["restrictOnly"] is True),
 ]
 
 print()
@@ -101,6 +108,9 @@ controls = [
     ("Encounter nicht mehr gefragt",
      chunk.replace("if eip == true then return true end", ""),
      lambda r: r["encounterOnly"] is True),
+    ("Einschraenkungs-Abfrage nicht mehr gefragt",
+     chunk.replace("if IsCombatRestrictionActive() then return true end", ""),
+     lambda r: r["restrictOnly"] is True),
 ]
 bad += run_controls(chunk, controls)
 

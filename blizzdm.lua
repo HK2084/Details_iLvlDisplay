@@ -444,8 +444,25 @@ end
 -- members with UnitAffectingCombat blocked us permanently.
 -- Our own REGEN events + IsEncounterInProgress is sufficient:
 -- secrets on OUR frames unlock when WE leave combat.
+-- The client's own word on whether addon combat restrictions are in force.
+-- SecretWhenInCombat is DEFINED as exactly this predicate
+-- (Enum.AddOnRestrictionType.Combat, RestrictedActionsDocumentation.lua), so
+-- asking it directly is strictly more accurate than inferring from events.
+-- Details! ships the same gate in production. Only an explicit true counts;
+-- absence of the API or a throw reads as "no restriction known".
+local function IsCombatRestrictionActive()
+    if not (C_RestrictedActions and C_RestrictedActions.IsAddOnRestrictionActive
+            and Enum and Enum.AddOnRestrictionType) then
+        return false
+    end
+    local ok, active = pcall(C_RestrictedActions.IsAddOnRestrictionActive,
+        Enum.AddOnRestrictionType.Combat)
+    return ok and active == true
+end
+
 function IsGroupInCombat()
     if inCombat then return true end
+    if IsCombatRestrictionActive() then return true end
     -- The client's own answer, and it cannot be secret. `inCombat` above is a
     -- flag this file maintains from PLAYER_REGEN_DISABLED, and an event can be
     -- missed — entering combat across a loading screen, or before these handlers
@@ -1303,6 +1320,25 @@ local function BackfillIdentity()
             -- its cost (a session fetch plus a full grouping pass) is not paid.
             if #pending == 0 then return end
 
+            -- Never infer in a Deaths window. Every decision rule below assumes
+            -- ONE row per player — uniqueness, elimination, pinning all count
+            -- group members against rows. A Deaths window lists one row PER
+            -- DEATH, so a player who died twice appears twice, and a constructed
+            -- scenario shows the elimination rule writing player B's identity
+            -- onto player A's second death past the class/spec veto. That is the
+            -- one outcome this addon refuses to produce. The direct pass above
+            -- already ran and is binding-based, so it stays correct here; only
+            -- the by-index inference is unsound. (Deep analysis 21.08.2026,
+            -- finding #1; Enum.DamageMeterType.Deaths = 9.)
+            if sw.GetDamageMeterType then
+                local okT, wtype = pcall(sw.GetDamageMeterType, sw)
+                if okT and wtype ~= nil and not isSecret(wtype)
+                    and Enum and Enum.DamageMeterType
+                    and wtype == Enum.DamageMeterType.Deaths then
+                    return
+                end
+            end
+
             local okSession, session = pcall(sw.GetCombatSession, sw)
             if not okSession or not session then
                 bfWhy.noSession = bfWhy.noSession + 1 return
@@ -1430,9 +1466,12 @@ local function BackfillIdentity()
             -- Group the sources by the two fields Blizzard marks NeverSecret
             -- (DamageMeterDocumentation.lua:202-203). They stay readable exactly
             -- when everything else does not — the damage totals we used to confirm
-            -- with stay secret for good once they were recorded in restricted
-            -- combat. Measured, not assumed: the counter read totalSecret=489
-            -- during the fight and 621 AFTER it, every combat flag back to "no".
+            -- with stay secret once recorded in restricted combat. An earlier
+            -- version of this comment called that "measured"; it was not — the
+            -- totalSecret counter conflated fresh session reads with the always-
+            -- sealed frame side and with nils, so it proved nothing. The claim
+            -- now rests on the docs (totalAmount carries no annotation, so it
+            -- inherits call secrecy) and on every post-kill dump since.
             --
             -- n counts ALL members of a group, guids only the ones we can name.
             -- Both are needed: n decides uniqueness, guids decide elimination, and
@@ -1760,7 +1799,10 @@ end
 ---------------------------------------------------------------
 hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
     -- Combat = we don't exist. No reads, no writes, no traces.
-    -- Full group combat check (inCombat + IsEncounterInProgress + UnitAffectingCombat).
+    -- Gate = own REGEN flag + InCombatLockdown + restriction state + encounter.
+    -- Deliberately NOT UnitAffectingCombat over the group: that polling is the
+    -- documented LFR permanent-block regression (this comment used to claim it
+    -- was included; it never was, and correctly so).
     if IsGroupInCombat() then return end
 
     -- No identity work and no injection here any more. UpdateName's only caller
@@ -1822,8 +1864,14 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
         end
     end
 
-    -- Deferred retry: post-combat RefreshAllFrames found secret frames,
-    -- now UpdateName fired (secrets unlocked ~0.5s later) → full refresh (#19)
+    -- Deferred retry: post-combat RefreshAllFrames found secret frames and now
+    -- UpdateName fired. NOT because sealed values "unlock" — secrecy attaches
+    -- at value creation and never lifts in place. What happens is a race: a
+    -- trailing DAMAGE_METER event lands after the restriction deactivates,
+    -- Blizzard redraws under its own secure execution with freshly readable
+    -- data, and that redraw is what this hook sees. On a clean kill with no
+    -- trailing event the redraw never comes and rows stay sealed for minutes —
+    -- exactly the post-kill dumps. (#19)
     if deferredRetryPending and ScheduleRefresh then
         deferredRetryPending = false
         trace("UpdateName: deferred retry → RefreshAllFrames")
@@ -1867,8 +1915,8 @@ end
 ---------------------------------------------------------------
 -- Dirty-flag refresh system (replaces C_Timer.After ScheduleRefresh).
 -- Multiple events in the same frame only trigger ONE refresh.
--- After combat ends, OnUpdate keeps checking for untagged frames
--- whose secrets have unlocked, refreshing them incrementally
+-- After combat ends, OnUpdate keeps checking for untagged frames that a
+-- trailing Blizzard redraw has made readable, refreshing them incrementally
 -- until all visible frames are tagged (then goes idle).
 -- Zero closure allocation, purely event-driven.
 ---------------------------------------------------------------
@@ -2150,6 +2198,21 @@ RegisterHandler("DAMAGE_METER_COMBAT_SESSION_UPDATED", function()
 end)
 
 -- Fallback events — no special logic, just schedule a refresh
+-- Fired AFTER a restriction deactivates (documented sequencing), which is the
+-- exact moment post-combat reads become legal — a better wake-up than our
+-- 0.5s ticker guessing. Gate on the PAYLOAD, never on the getter: the docs say
+-- IsAddOnRestrictionActive always returns false during this event's dispatch.
+-- The probe loops downstream stay: Details!' own shipped error string proves
+-- restriction-inactive with still-sealed data occurs in the wild.
+RegisterHandler("ADDON_RESTRICTION_STATE_CHANGED", function(rtype, rstate)
+    if isSecret(rtype) or isSecret(rstate) then return end
+    if not (Enum and Enum.AddOnRestrictionType and Enum.AddOnRestrictionState) then return end
+    if rtype == Enum.AddOnRestrictionType.Combat
+        and rstate == Enum.AddOnRestrictionState.Inactive then
+        StartPostCombatRefresh()
+    end
+end)
+
 RegisterHandler("DAMAGE_METER_CURRENT_SESSION_UPDATED", ScheduleRefresh)
 RegisterHandler("DAMAGE_METER_RESET", ScheduleRefresh)
 -- v1.4.2: roster-leave purge. Clear nameResolveFails entries for players no
