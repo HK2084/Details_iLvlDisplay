@@ -2637,14 +2637,33 @@ local function ShowDebugWindow(text)
         -- number alone sent us after the wrong cause -- first the report's
         -- length, then a character cap -- when the box was simply the wrong
         -- shape to hold anything.
+        -- Two probes split the remaining suspects in one dump: a plain-ASCII
+        -- write (fails -> the BOX is broken, content innocent) and, as the
+        -- first fallback step, the body with EVERY bar doubled (sticks -> an
+        -- unbalanced escape sequence is what the box refuses). Added
+        -- 21.08.2026, when a 7 903-character report was refused by a healthy
+        -- 851x1511 box with both caps lifted -- which none of the three
+        -- previously found causes explains.
+        eb:SetText("PROBE-ASCII-1234567890")
+        local probeAscii = #(eb:GetText() or "") > 0 and "ok" or "FAIL"
+        local ml = eb.GetMaxLetters and eb:GetMaxLetters() or "?"
+        local mb = eb.GetMaxBytes and eb:GetMaxBytes() or "?"
         local note = string.format(
-            "[window took %d of %d characters (box %dx%d) %s showing the start, "
+            "[window took %d of %d characters (box %dx%d, maxLetters=%s, "
+            .. "maxBytes=%s, asciiProbe=%s) %s showing the start, "
             .. "complete text printed to chat]\n\n",
             got, #body, math.floor(eb:GetWidth() or 0),
-            math.floor(eb:GetHeight() or 0), EM_DASH)
-        local steps = {20000, 5000, 1000, 0}
+            math.floor(eb:GetHeight() or 0), tostring(ml), tostring(mb),
+            probeAscii, EM_DASH)
+        local steps = {
+            note .. "[all bars doubled]\n" .. body:gsub("|", "||"):sub(1, 20000),
+            note .. body:sub(1, 20000),
+            note .. body:sub(1, 5000),
+            note .. body:sub(1, 1000),
+            note,
+        }
         for i = 1, #steps do
-            eb:SetText(note .. body:sub(1, steps[i]))
+            eb:SetText(steps[i])
             if #(eb:GetText() or "") > 0 then break end
         end
         return false
