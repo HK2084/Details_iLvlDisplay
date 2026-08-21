@@ -2638,3 +2638,213 @@ function Details_iLvlDisplay_BlizzTrace(showWindow)
         end
     end
 end
+
+---------------------------------------------------------------
+-- /dilvl securetest — the two experiments from the 21.08.2026 deep analysis.
+--
+-- MANUAL ONLY. Nothing in here runs on its own, ever. Both experiments probe
+-- undocumented behaviour, and undocumented behaviour is exactly what Blizzard
+-- may change under us without notice — so neither may become an automatic code
+-- path unless a later release guards it with a version canary AND a kill
+-- switch, as a FALLBACK behind the documented paths. The maintainer's call,
+-- 21.08.2026, and the right one.
+--
+-- E2 "guid": the ScrollBox element bound to each sealed row still holds the
+--   sealed sourceGUID from the fight. UnitTokenFromGUID / UnitNameFromGUID /
+--   GetPlayerInfoByGUID are SecretArguments=AllowedWhenTainted, and their
+--   secrecy predicate (SecretWhenUnitIdentityRestricted) documents an
+--   exemption for party/raid members. So passing the sealed GUID in is legal;
+--   whether the RETURN is readable is the undocumented part. Every call is
+--   pcall'd, every return issecretvalue-checked before any comparison — reads
+--   only, no writes, no Blizzard code driven: zero taint risk.
+--   A readable return = a per-row witness = the "ambiguous" refusals die.
+--
+-- E1 "cvarflip": SetCVar("damageMeterEnabled", 0 then 1) makes Blizzard's own
+--   CVar handler hide and re-show the meter, and OnShow calls Refresh — the
+--   programmatic twin of the user's segment toggle. UNDECIDABLE from the docs
+--   whether that dispatch inherits our taint (CVAR_UPDATE is SynchronousEvent,
+--   but the CvarUtil cache handling implies dispatch starts secure). Hence an
+--   experiment, hard-gated:
+--     * refused in combat (full gate) and inside an active keystone —
+--       between M+ trash packs the restriction flickers, and a flip at the
+--       wrong instant is exactly the mess the maintainer predicted
+--     * refused unless the meter is shown, the cvar reads "1", and sealed
+--       rows actually exist (otherwise the result proves nothing)
+--     * requires the literal argument "confirm", after printing the recovery
+--       protocol
+--     * ONE run per session. If Blizzard's handler throws, the error surfaces
+--       in BugSack, not in our pcall — so after any run the latch stays down
+--       and recovery is the Settings checkbox or /reload, NEVER a second flip
+--       (a failed run poisons the cvar cache; re-firing re-poisons it).
+---------------------------------------------------------------
+local secureTestFlipDone = false
+
+local function SecureTestCensus()
+    local rows, sealedRows, sealedGuids = 0, 0, 0
+    if DamageMeter and DamageMeter.ForEachSessionWindow then
+        DamageMeter:ForEachSessionWindow(function(sw)
+            if not sw.ForEachEntryFrame then return end
+            sw:ForEachEntryFrame(function(frame)
+                rows = rows + 1
+                if isSecret(frame.sourceName) then sealedRows = sealedRows + 1 end
+                local fn = frame.GetElementData
+                if type(fn) == "function" then
+                    local ok, ed = pcall(fn, frame)
+                    if ok and not isSecret(ed) and ed then
+                        if isSecret(ed.sourceGUID) then sealedGuids = sealedGuids + 1 end
+                    end
+                end
+            end)
+        end)
+    end
+    return rows, sealedRows, sealedGuids
+end
+
+function Details_iLvlDisplay_BlizzDMSecureTest(mode, arg)
+    local function P(s) print("|cFF00FF00[securetest]|r " .. s) end
+
+    if mode == "guid" then
+        -- E2. Reads only; safe anywhere, any time.
+        local probes = {
+            {"UnitTokenFromGUID", UnitTokenFromGUID},
+            {"UnitNameFromGUID", UnitNameFromGUID},
+            {"UnitClassFromGUID", UnitClassFromGUID},
+            {"GetPlayerInfoByGUID", GetPlayerInfoByGUID},
+        }
+        local rows, sealedRows, sealedGuids = SecureTestCensus()
+        P(string.format("E2 GUID witness: %d rows, %d sealed names, %d sealed element GUIDs",
+            rows, sealedRows, sealedGuids))
+        if sealedGuids == 0 then
+            P("nothing to probe - need rows whose element still holds a sealed GUID (after an instanced fight)")
+            return
+        end
+        local shown, readableAny = 0, false
+        DamageMeter:ForEachSessionWindow(function(sw)
+            if not sw.ForEachEntryFrame then return end
+            sw:ForEachEntryFrame(function(frame)
+                if shown >= 10 then return end
+                local fn = frame.GetElementData
+                if type(fn) ~= "function" then return end
+                local ok, ed = pcall(fn, frame)
+                if not ok or isSecret(ed) or not ed then return end
+                local g = ed.sourceGUID
+                if not isSecret(g) then return end
+                shown = shown + 1
+                local parts = {}
+                for _, pr in ipairs(probes) do
+                    local label, f = pr[1], pr[2]
+                    if type(f) ~= "function" then
+                        parts[#parts + 1] = label .. ":ABSENT"
+                    else
+                        local okc, a = pcall(f, g)
+                        if not okc then
+                            parts[#parts + 1] = label .. ":THROW"
+                        elseif isSecret(a) then
+                            parts[#parts + 1] = label .. ":secret"
+                        elseif a == nil then
+                            parts[#parts + 1] = label .. ":nil"
+                        else
+                            parts[#parts + 1] = label .. ":READABLE(" .. tostring(a) .. ")"
+                            readableAny = true
+                        end
+                    end
+                end
+                P(string.format("  row %d: %s", shown, table.concat(parts, "  ")))
+            end)
+        end)
+        if readableAny then
+            P("VERDICT: E2 POSITIVE - the GUID witness works. Report this; it kills the ambiguous refusals in 1.6.1.")
+        else
+            P("VERDICT: E2 negative - returns sealed or refused. The exemption does not reach sealed inputs.")
+        end
+        return
+    end
+
+    if mode == "cvarflip" then
+        -- E1. Gates first, every one with its reason.
+        if secureTestFlipDone then
+            P("E1 already ran this session. By protocol no second flip: Settings checkbox or /reload.")
+            return
+        end
+        if IsGroupInCombat() then
+            P("refused: in combat.")
+            return
+        end
+        if C_RestrictedActions and C_RestrictedActions.IsAddOnRestrictionActive
+            and Enum and Enum.AddOnRestrictionType
+            and Enum.AddOnRestrictionType.ChallengeMode then
+            local okR, act = pcall(C_RestrictedActions.IsAddOnRestrictionActive,
+                Enum.AddOnRestrictionType.ChallengeMode)
+            if okR and act == true then
+                P("refused: active keystone. Between trash packs the restriction flickers - run this after a raid, ideally solo.")
+                return
+            end
+        end
+        if not (DamageMeter and DamageMeter.IsShown and DamageMeter:IsShown()) then
+            P("refused: Blizzard meter is not shown.")
+            return
+        end
+        local cv = GetCVar and GetCVar("damageMeterEnabled")
+        if cv ~= "1" then
+            P("refused: cvar damageMeterEnabled is not 1 (read: " .. tostring(cv) .. ").")
+            return
+        end
+        local rows, sealedRows = SecureTestCensus()
+        if sealedRows == 0 then
+            P("refused: no sealed rows - a run now would prove nothing. Run it while the meter still shows sealed names.")
+            return
+        end
+        if arg ~= "confirm" then
+            P(string.format("E1 ready: %d rows, %d sealed. RECOVERY PROTOCOL: if ANYTHING errors", rows, sealedRows))
+            P("(BugSack/red text), do NOT run again - fix via Settings checkbox or /reload.")
+            P("Best venue: solo, outside the instance, leftover sealed rows on the meter.")
+            P("To execute: /dilvl securetest cvarflip confirm")
+            return
+        end
+
+        secureTestFlipDone = true
+        local sessBefore = 0
+        if C_DamageMeter and C_DamageMeter.GetAvailableCombatSessions then
+            local okS, t = pcall(C_DamageMeter.GetAvailableCombatSessions)
+            if okS and type(t) == "table" then sessBefore = #t end
+        end
+        P(string.format("E1 executing. sessions=%d sealed=%d", sessBefore, sealedRows))
+
+        local ok0, err0 = pcall(SetCVar, "damageMeterEnabled", "0")
+        P(string.format("SetCVar 0: %s   meter shown: %s",
+            ok0 and "ok" or ("THROW " .. tostring(err0)), tostring(DamageMeter:IsShown())))
+        local ok1, err1 = pcall(SetCVar, "damageMeterEnabled", "1")
+        P(string.format("SetCVar 1: %s   meter shown: %s",
+            ok1 and "ok" or ("THROW " .. tostring(err1)), tostring(DamageMeter:IsShown())))
+
+        local function report(when)
+            local r2, s2 = SecureTestCensus()
+            local sessAfter = 0
+            if C_DamageMeter and C_DamageMeter.GetAvailableCombatSessions then
+                local okS, t = pcall(C_DamageMeter.GetAvailableCombatSessions)
+                if okS and type(t) == "table" then sessAfter = #t end
+            end
+            P(string.format("%s: rows=%d sealed=%d (was %d)  sessions=%d (was %d)",
+                when, r2, s2, sealedRows, sessAfter, sessBefore))
+            if when == "t+0.6s" then
+                if s2 == 0 and r2 > 0 then
+                    P("VERDICT: E1 outcome (a) - secure rebuild, all rows readable. Check BugSack is EMPTY before celebrating.")
+                elseif s2 >= sealedRows then
+                    P("VERDICT: no refresh or blocked - check BugSack: a taint error there means outcome (b), route dead; empty means outcome (c).")
+                else
+                    P("VERDICT: partial - report the numbers.")
+                end
+                P("Either way: do not run again this session.")
+            end
+        end
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, function() report("t+0") end)
+            C_Timer.After(0.6, function() report("t+0.6s") end)
+        else
+            report("immediate")
+        end
+        return
+    end
+
+    P("usage: /dilvl securetest guid  |  /dilvl securetest cvarflip [confirm]")
+end

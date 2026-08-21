@@ -4031,6 +4031,17 @@ local function SlashBody(msg)
             print("|cFF00FF00Details! iLvl Display:|r Blizz DM trace not available (blizzdm.lua not loaded)")
         end
 
+    elseif msg:match("^securetest") then
+        -- The two experiments from the 21.08.2026 deep analysis. Manual only,
+        -- and E1 is single-shot per session with its recovery protocol printed
+        -- before anything happens - see the block in blizzdm.lua.
+        if Details_iLvlDisplay_BlizzDMSecureTest then
+            local sub, rest = msg:match("^securetest%s+(%S+)%s*(%S*)")
+            Details_iLvlDisplay_BlizzDMSecureTest(sub, rest ~= "" and rest or nil)
+        else
+            print("|cFF00FF00Details! iLvl Display:|r securetest needs Blizzard's Damage Meter loaded.")
+        end
+
     elseif msg == "taint" then
         -- Active taint-safety self-test: pcall-probes the Blizzard DM foreign-mixin
         -- surface and flags any call that throws while tainted (the v1.5.2 class).
