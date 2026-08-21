@@ -44,9 +44,9 @@
     It does so only where the match can be proven: every row whose owner the game states outright
     must land on the line it claims, no row may sit on a source of another class, and a player
     is only identified this way when every other player of that class and specialisation is
-    already pinned to a confirmed line. Where that proof is not available the row stays blank,
-    which in a raid full of one specialisation is still the common case. A missing tag is fine;
-    another player's name is not.
+    already pinned to a confirmed line. Where that proof is not available the row stays blank
+    rather than guessing — a missing tag is fine, another player's name is not — and the
+    automatic post-fight refresh above then closes what remains.
 
 *   **The public API no longer throws on input it did not produce.** The colour helpers raised an error on anything that was not a number, and two lookups could throw inside restricted instances. Other addons reading item levels from this one no longer see errors carrying its name.
 
