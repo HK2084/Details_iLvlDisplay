@@ -4050,6 +4050,14 @@ local function SlashBody(msg)
             print("|cFF00FF00Details! iLvl Display:|r Blizz DM trace not available (blizzdm.lua not loaded)")
         end
 
+    elseif msg == "autorefresh" then
+        -- The post-fight fallback bounce (proven 21.08.2026). Default ON as a
+        -- FALLBACK behind the documented paths; this is the user-facing kill
+        -- switch on top of the automatic session latch.
+        db.blizzAutoRefresh = (db.blizzAutoRefresh == false) and true or false
+        print("|cFF00FF00Details! iLvl Display:|r auto-refresh after combat: "
+            .. (db.blizzAutoRefresh and "|cFF00FF00ON|r" or "|cFFFF4444OFF|r"))
+
     elseif msg:match("^securetest") then
         -- The two experiments from the 21.08.2026 deep analysis. Manual only,
         -- and E1 is single-shot per session with its recovery protocol printed

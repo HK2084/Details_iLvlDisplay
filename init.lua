@@ -38,6 +38,15 @@ ns.defaults = {
     detailsWindowId = 0,   -- which Details! window shows iLvl; 0 = all windows, 1-10 = only that window. Live-set via /dilvl details window <n|all>
     -- blizzDM: nil = auto (ON when Details! absent, OFF when Details! active)
     --          true/false = user override via /dilvl blizzdm
+    -- After a fight, Blizzard's meter never rebuilds its rows on its own, so
+    -- rows drawn mid-fight keep their sealed data. When the documented paths
+    -- leave sealed rows behind, this FALLBACK bounces the damageMeterEnabled
+    -- CVar once per fight: Blizzard's own handler then re-shows the meter and
+    -- rebuilds every row from post-combat-readable data, in its own secure
+    -- execution. Proven live 21.08.2026 (25/25 rows, no error, data kept).
+    -- Guarded: never in combat, never in an active keystone, once per fight,
+    -- and it disables itself for the session if a bounce ever fails to help.
+    blizzAutoRefresh = true,  -- /dilvl autorefresh to toggle
 }
 
 -- Valid Danders position keys. Mirror of POS in danders_integration.lua —

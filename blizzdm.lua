@@ -763,6 +763,9 @@ end
 -- own text becomes visible again (even without our iLvl tag).
 ---------------------------------------------------------------
 function StripAllTags()
+    -- Combat start = the auto-flip's one shot per fight is armed again. It is
+    -- spent only after a fight that leaves sealed rows behind.
+    if Details_iLvlDisplay_BlizzDMArmAutoFlip then Details_iLvlDisplay_BlizzDMArmAutoFlip() end
     if not DamageMeter or not DamageMeter.ForEachSessionWindow then return end
     trace("StripAllTags")
     DamageMeter:ForEachSessionWindow(function(sw)
@@ -2210,6 +2213,13 @@ RegisterHandler("ADDON_RESTRICTION_STATE_CHANGED", function(rtype, rstate)
     if rtype == Enum.AddOnRestrictionType.Combat
         and rstate == Enum.AddOnRestrictionState.Inactive then
         StartPostCombatRefresh()
+        -- The fallback runs BEHIND the documented paths, by construction: two
+        -- seconds is several catch-up passes, so by the time this fires, every
+        -- row the direct path could answer is answered and the census counts
+        -- only what is genuinely left over.
+        if C_Timer and C_Timer.After and Details_iLvlDisplay_BlizzDMTryAutoFlip then
+            C_Timer.After(2.0, Details_iLvlDisplay_BlizzDMTryAutoFlip)
+        end
     end
 end)
 
@@ -2848,3 +2858,96 @@ function Details_iLvlDisplay_BlizzDMSecureTest(mode, arg)
 
     P("usage: /dilvl securetest guid  |  /dilvl securetest cvarflip [confirm]")
 end
+
+---------------------------------------------------------------
+-- Automatic post-fight backfill: the E1 cvar bounce as a FALLBACK.
+--
+-- Proven live 21.08.2026 (manual /dilvl securetest cvarflip, outcome (a)):
+-- SetCVar("damageMeterEnabled","0"->"1") makes Blizzard's OWN handler hide and
+-- re-show the meter; OnShow calls Refresh, which rebuilds every row from
+-- post-combat-readable getters in Blizzard's own secure execution. 25 sealed
+-- rows became readable at t+0, sessions intact, no error thrown.
+--
+-- Fallback discipline, the maintainer's explicit condition: this fires only
+-- AFTER the documented paths have had their chance, and only when they left
+-- sealed rows behind. It is armed once per fight, refuses inside an active
+-- keystone (between M+ trash packs the combat restriction flickers, and a
+-- bounce at the wrong instant is exactly the mess to avoid), refuses while any
+-- combat signal is up, and if a bounce ever fails to reduce the sealed count it
+-- assumes Blizzard changed the undocumented behaviour underneath us and
+-- disables itself for the rest of the session -- the kill switch this feature
+-- is not allowed to ship without. /dilvl autorefresh toggles it off entirely.
+--
+-- The visible cost: the meter blinks for one frame when the bounce fires.
+---------------------------------------------------------------
+local autoFlipArmed = true    -- re-armed at combat start (StripAllTags)
+local autoFlipDead = false    -- session kill switch: bounce stopped helping
+
+function Details_iLvlDisplay_BlizzDMArmAutoFlip()
+    autoFlipArmed = true
+end
+
+local function AutoFlipState()
+    return {armed = autoFlipArmed, dead = autoFlipDead,
+            flips = blizzDMState.autoFlips or 0}
+end
+Details_iLvlDisplay_BlizzDMAutoFlipState = AutoFlipState
+
+local function TryAutoFlip()
+    if autoFlipDead or not autoFlipArmed then return end
+    local db = API.GetDb()
+    if not db or not db.enabled then return end
+    if db.blizzAutoRefresh == false then return end
+    if db.blizzDM == false then return end
+    if db.blizzDM == nil and Details then return end
+    if blizzDMState.disabled then return end
+    if IsGroupInCombat() then return end
+    if C_RestrictedActions and C_RestrictedActions.IsAddOnRestrictionActive
+        and Enum and Enum.AddOnRestrictionType
+        and Enum.AddOnRestrictionType.ChallengeMode then
+        local okR, act = pcall(C_RestrictedActions.IsAddOnRestrictionActive,
+            Enum.AddOnRestrictionType.ChallengeMode)
+        if okR and act == true then return end
+    end
+    if not (DamageMeter and DamageMeter.IsShown and DamageMeter:IsShown()) then return end
+    if not (GetCVar and SetCVar) then return end
+    if GetCVar("damageMeterEnabled") ~= "1" then return end
+
+    -- Only when the documented paths left sealed rows behind. Counting is the
+    -- same census the manual command uses.
+    local _, sealedRows = SecureTestCensus()
+    if sealedRows == 0 then return end
+
+    -- One shot per fight, spent BEFORE the flip: whatever happens next, this
+    -- fight does not get a second one.
+    autoFlipArmed = false
+    blizzDMState.autoFlips = (blizzDMState.autoFlips or 0) + 1
+    trace(format("AutoFlip: %d sealed rows after the documented paths, bouncing cvar", sealedRows))
+
+    local ok0 = pcall(SetCVar, "damageMeterEnabled", "0")
+    local ok1 = pcall(SetCVar, "damageMeterEnabled", "1")
+    if not (ok0 and ok1) then
+        -- The cvar write itself failed: unknown territory, stop for the session.
+        autoFlipDead = true
+        blizzDMState.autoFlipDead = "cvar write failed"
+        return
+    end
+
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.5, function()
+            local _, after = SecureTestCensus()
+            if after >= sealedRows then
+                -- The bounce no longer helps. Blizzard changed something
+                -- underneath the undocumented path this rides on; stop trying
+                -- for the session rather than blinking the meter for nothing.
+                autoFlipDead = true
+                blizzDMState.autoFlipDead = format("no effect (%d -> %d sealed)", sealedRows, after)
+                trace("AutoFlip: bounce had no effect, disabled for this session")
+            else
+                trace(format("AutoFlip: %d -> %d sealed", sealedRows, after))
+                ScheduleRefresh()
+            end
+        end)
+    end
+end
+Details_iLvlDisplay_BlizzDMTryAutoFlip = TryAutoFlip

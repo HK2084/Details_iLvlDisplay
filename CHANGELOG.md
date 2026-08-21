@@ -6,6 +6,17 @@
 
 *   **Rows whose name Blizzard has sealed now carry an item level.** In a raid or a random group the game hides most player names from addons, and every one of those rows on the Details! bars stayed blank. They are tagged now, without ever reading or rewriting the hidden name: the row's own player ID says who it is, and the hidden text is handed straight back untouched, so the rank, the name, the realm spelling and any icons survive exactly as Details! drew them. Where the game withholds the ID as well, the row stays blank on purpose — a missing tag is fine, a wrong name is not, and `/dilvl debug` now says which of the two happened.
 
+*   **After a fight, Blizzard's damage meter now fills in the rows it left sealed.** Blizzard
+    stops rebuilding rows once the damage stops, so rows drawn mid-fight kept their hidden
+    data until something unrelated forced a redraw. When that state is detected after combat
+    ends, the addon now briefly toggles the meter's own enable setting once — Blizzard's own
+    handler then re-shows the meter and rebuilds every row itself, with everything readable
+    again. Proven in a live raid: twenty-five sealed rows, complete within the same instant,
+    session data intact. Deliberately cautious: it runs at most once per fight, only after the
+    normal paths have had their chance, never during combat or inside an active keystone, and
+    if it ever stops helping it switches itself off for the rest of the session. The meter
+    blinks for a moment when it fires. `/dilvl autorefresh` turns it off entirely.
+
 *   **Instant item levels via LibOpenRaid now actually work.** Anyone in your group running Details! broadcasts their gear, and those item levels appear without waiting for an inspect. This path shipped years ago and never delivered a single value: the callback was handed to the library in a shape it rejects, so it was refused at registration and silently did nothing, while the diagnostics reported it as active the whole time. It is repaired, and the report now counts values that actually arrived instead of asking whether the library is installed. Verified in a live raid before release. Entries sourced this way are marked `[LOR]` in `/dilvl cache`.
 
 ### Fixed
