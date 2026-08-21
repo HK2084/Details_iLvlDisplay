@@ -3383,7 +3383,14 @@ local function PrintDebugReport()
                 end
             end
             if frames == 0 then
-                print("    (open Blizzard DM window to see entries)")
+                -- Two different states, and telling someone to open a window
+                -- that is already open sends them looking in the wrong place.
+                -- `windows` counts SHOWN session windows, so it separates them.
+                if windows > 0 then
+                    print("    (window is open but has no rows yet — no damage recorded in this session)")
+                else
+                    print("    (open Blizzard DM window to see entries)")
+                end
             end
             -- Per-player resolve fail tracker
             if resolveFails and #resolveFails > 0 then
