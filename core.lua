@@ -2613,6 +2613,15 @@ local function ShowDebugWindow(text)
     -- report was still turned away.
     eb:SetMaxLetters(0)
     eb:SetMaxBytes(0)
+    -- Empty the box BEFORE the real write. The probes settled the fourth blank
+    -- window (21.08.2026): box healthy, caps lifted, asciiProbe=ok - and the
+    -- fallback chain then wrote the SAME raw body successfully that the first
+    -- SetText had refused, because the probe writes had emptied the box in
+    -- between. Every observed failure overwrote a large previous report; every
+    -- success wrote into an empty box (first open after a reload). Overwriting
+    -- large-with-large is what this engine build refuses; large-into-empty is
+    -- fine, so clear first.
+    eb:SetText("")
 
     -- A scroll child needs a height of its own, or a long report renders as
     -- nothing at all. Derived from the line count, the same way the options page
