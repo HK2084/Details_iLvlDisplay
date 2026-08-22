@@ -2957,6 +2957,11 @@ local function TryAutoFlip()
 
     if C_Timer and C_Timer.After then
         C_Timer.After(0.5, function()
+            -- The next pull may already be running when this census fires:
+            -- rows redraw sealed by design then, and the count would call a
+            -- working bounce dead for the session. Leave the verdict open --
+            -- the next fight re-arms and retries anyway.
+            if IsGroupInCombat() then return end
             local _, after = SecureTestCensus()
             if after >= sealedRows then
                 -- The bounce no longer helps. Blizzard changed something

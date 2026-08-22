@@ -142,6 +142,17 @@ reset({keystone = true}); TryAutoFlip(); R.gateKeystone = #CVAR_LOG
 reset({toggle = false});  TryAutoFlip(); R.gateToggle = #CVAR_LOG
 reset({shown = false});   TryAutoFlip(); R.gateHidden = #CVAR_LOG
 
+-- 5b) Verify-Fenster: der naechste Pull laeuft schon, wenn der 0.5s-Zensus
+-- feuert. Zeilen sind dann bauartbedingt wieder versiegelt -- das darf einen
+-- funktionierenden Bounce NICHT fuer tot erklaeren.
+reset({})
+TryAutoFlip()
+COMBAT = true
+EFFECTIVE = false
+runTimers()
+R.verifyInCombatDead = Details_iLvlDisplay_BlizzDMAutoFlipState().dead
+COMBAT = false
+
 -- 6) Kill-Switch: der Flip senkt die Zahl nicht -> tot fuer die Sitzung
 reset({effective = false})
 TryAutoFlip()
@@ -172,6 +183,8 @@ checks = [
     ("Keystone-Sperre haelt", R["gateKeystone"] == 0),
     ("Nutzer-Schalter haelt", R["gateToggle"] == 0),
     ("verstecktes Meter: kein Flip", R["gateHidden"] == 0),
+    ("Zensus mitten im naechsten Pull toetet das Feature nicht",
+     R["verifyInCombatDead"] is False),
     ("wirkungsloser Flip toetet das Feature fuer die Sitzung",
      R["deadAfter"] is True),
     ("und tot bleibt tot, auch nach neuem Kampf", R["deadStays"] == 0),
@@ -197,6 +210,9 @@ controls = [
     ("Zensus-Bedingung entfernt (Flip auch ohne versiegelte Zeilen)",
      chunk.replace("if sealedRows == 0 then return end", ""),
      lambda r: r["noSealed"] == 0),
+    ("Kampf-Sperre im Verify-Fenster entfernt (Pull-Zensus toetet den Bounce)",
+     chunk.replace("            if IsGroupInCombat() then return end\n", ""),
+     lambda r: r["verifyInCombatDead"] is False),
 ]
 bad += run_controls(chunk, controls)
 

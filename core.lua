@@ -2576,6 +2576,11 @@ end
 ns.ScrubUtf8 = ScrubUtf8
 
 local function ShowDebugWindow(text)
+    -- The window itself is the encoding chokepoint: every caller lands here,
+    -- including the ones that never pass the report builder (blizztrace, the
+    -- taint self-test) and cut player names raw. Their damage is repaired at
+    -- the door too, not just the /dilvl debug capture path.
+    text = ScrubUtf8(text or "")
     if not DILvlDebugFrame then
         local f = CreateFrame("Frame", "DILvlDebugFrame", UIParent, "BackdropTemplate")
         f:SetSize(900, 640)
@@ -4243,6 +4248,7 @@ local function SlashBody(msg)
         print("      off-frame: above, aboveleft, aboveright, below, belowleft, belowright")
         print("  /dilvl danders size <n>  — Danders text size (6-30, live)")
         print("  /dilvl blizzdm         — Toggle iLvl on Blizzard Damage Meter")
+        print("  /dilvl autorefresh     — Toggle the post-fight auto-refresh of Blizzard's meter")
         print("  /dilvl color           — Toggle color-coded iLvl")
         print("  /dilvl setbonus        — Toggle 2P/4P display")
         print("  /dilvl layout          — Toggle inline/columns layout")

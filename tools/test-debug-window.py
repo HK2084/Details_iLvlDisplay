@@ -26,7 +26,12 @@ SRC = io.open("core.lua", encoding="utf-8").read().replace("\r\n", "\n")
 m = re.search(r"^local function ShowDebugWindow\(text\)\n.*?^end$", SRC, re.M | re.S)
 if not m:
     sys.exit("ShowDebugWindow nicht gefunden")
-SHOW = m.group(0)
+# Der Torwaechter haengt seit dem Release-Review direkt am Fenstereingang;
+# das Fenster laeuft hier mit dem ECHTEN ScrubUtf8 davor, nicht mit einem Stub.
+m2 = re.search(r"^local function ScrubUtf8\(str\)\n.*?^end$", SRC, re.M | re.S)
+if not m2:
+    sys.exit("ScrubUtf8 nicht gefunden")
+SHOW = m2.group(0) + "\n" + m.group(0)
 for needle, why in [
     ("SetMaxLetters", "die aufgehobene Zeichenkappe"),
     ("SetHeight", "die Hoehe des Scroll-Kindes"),
@@ -116,6 +121,17 @@ LIMIT = nil
 box.text = ""
 R.emptyReturn = ShowDebugWindow("")
 
+-- 5) Ungueltige Kodierung am Fenstereingang: wird an der Tuer repariert, egal
+-- welcher Aufrufer den rohen Schnitt verursacht hat (blizztrace, taint) --
+-- der Bericht-Sammler ist nicht mehr der einzige bewachte Weg.
+LIMIT = nil
+box.text = ""
+R.scrubReturn = ShowDebugWindow("kaputt: " .. string.char(0xC3) .. " Ende")
+-- Urteil in Lua faellen: das rohe Byte darf nicht zurueck nach Python
+-- (dort waere es selbst der Kodierungsfehler, den es nachweist).
+R.scrubText = (box.text == "kaputt: ? Ende") and "repariert"
+    or (box.text:find(string.char(0xC3), 1, true) and "roh" or "anders")
+
 R.shown = SHOWN
 return R
 """
@@ -143,7 +159,9 @@ checks = [
     ("ein leerer Bericht gilt nicht als Fehlschlag", R["emptyReturn"] is True),
     ("ohne vermessenes Scroll-Frame bleibt die Breite brauchbar",
      R["unlaidWidth"] > 100 and R["unlaidReturn"] is True),
-    ("das Fenster wird in jedem Fall gezeigt", R["shown"] == 4),
+    ("ungueltige Bytes werden an der Fenstertuer zu '?' repariert",
+     R["scrubText"] == "repariert"),
+    ("das Fenster wird in jedem Fall gezeigt", R["shown"] == 5),
 ]
 
 print()
@@ -170,7 +188,10 @@ controls = [
     ("Fenster erst nach dem Text gezeigt (Layout fehlt beim Schreiben)",
      chunk.replace("    DILvlDebugFrame:Show()\n    -- Width from the scroll frame",
                    "    -- Width from the scroll frame"),
-     lambda r: r["shown"] == 4),
+     lambda r: r["shown"] == 5),
+    ("Torwaechter am Fenstereingang entfernt (roher Schnitt kaeme durch)",
+     chunk.replace('    text = ScrubUtf8(text or "")\n', ""),
+     lambda r: r["scrubText"] == "repariert"),
     ("Breiten-Rueckfall entfernt (0 - 8 ergibt eine negative Breite)",
      chunk.replace("if scrollW < 100 then scrollW = 650 end", "")
           .replace("if scrollW < 100 then scrollW = (DILvlDebugFrame:GetWidth() or 0) - 40 end", ""),

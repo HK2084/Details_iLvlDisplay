@@ -74,6 +74,20 @@ ns.POS_KEYS_SET = {
 -- so a user installing ElvUI later still gets the ElvUI-specific hint.
 ns.LOGIN_HINTS = {
     {
+        -- Gated on the Blizzard-meter channel actually being live: with
+        -- Details! installed and no override the bounce never fires, and a
+        -- hint about a meter that will not blink is noise. The seen flag
+        -- survives the skip (see above), so a user forcing /dilvl blizzdm on
+        -- later still gets told why their meter blinks after a boss.
+        key  = "autorefresh",                               -- v1.6.0
+        gate = function()
+            local sv = Details_iLvlDisplayDB
+            return DamageMeter ~= nil and sv ~= nil
+                and (sv.blizzDM == true or (sv.blizzDM == nil and Details == nil))
+        end,
+        msg  = "After a fight, Blizzard's damage meter now fills in the rows it left sealed. The meter blinks once right after combat when this fires — the blink is the feature working, not a bug. /dilvl autorefresh turns it off.",
+    },
+    {
         -- No gate: there is no command to learn. What changes is WHERE the
         -- numbers come from and how fast they appear, and someone who suddenly
         -- sees item levels before any inspect could have run deserves to know
