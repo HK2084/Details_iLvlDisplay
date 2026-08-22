@@ -2633,6 +2633,20 @@ local function ShowDebugWindow(text)
 
     eb:SetText(body)
     local got = #(eb:GetText() or "")
+    -- The judge of last resort. Five observations now contradict every state
+    -- theory (caps, width, escapes, stale content) while asciiProbe stays ok -
+    -- which leaves exactly one suspect: SetText WORKS and GetText lies for
+    -- large multiline texts, making the failure an illusion of our own
+    -- verification. GetNumLetters is the independent second witness: if it
+    -- counts the full body while GetText returns nothing, the text is in the
+    -- box, the fallback must NOT overwrite it, and the note would have been
+    -- wrong all along.
+    local numLetters = (eb.GetNumLetters and eb:GetNumLetters()) or -1
+    if got == 0 and numLetters >= #body - 200 and #body > 0 then
+        -- The text is there; only GetText cannot say so. Show it and be done.
+        eb:HighlightText()
+        return true
+    end
     if #body > 0 and got < #body then
         -- Offer less until something sticks, and keep the explanation at the
         -- front of whatever survives. The last step carries the note alone,
@@ -2655,15 +2669,36 @@ local function ShowDebugWindow(text)
         -- previously found causes explains.
         eb:SetText("PROBE-ASCII-1234567890")
         local probeAscii = #(eb:GetText() or "") > 0 and "ok" or "FAIL"
+        -- Name the culprit LINE. The chat's own copy box dies on the same
+        -- report (21.08.2026, second time a foreign widget breaks on our
+        -- text), so the poison is in the CONTENT again. Write each line alone;
+        -- the first one the box refuses is the killer, and its first bytes go
+        -- into the note as hex - one dump then names the exact character
+        -- instead of another evening of theories.
+        local culprit = "none"
+        for lineNo, line in ipairs({strsplit("\n", body)}) do
+            if #line > 0 then
+                eb:SetText(line)
+                if #(eb:GetText() or "") == 0 then
+                    local hex = {}
+                    for b = 1, math.min(#line, 40) do
+                        hex[#hex + 1] = string.format("%02X", string.byte(line, b))
+                    end
+                    culprit = string.format("line %d (%d bytes): %s",
+                        lineNo, #line, table.concat(hex, " "))
+                    break
+                end
+            end
+        end
         local ml = eb.GetMaxLetters and eb:GetMaxLetters() or "?"
         local mb = eb.GetMaxBytes and eb:GetMaxBytes() or "?"
         local note = string.format(
-            "[window took %d of %d characters (box %dx%d, maxLetters=%s, "
-            .. "maxBytes=%s, asciiProbe=%s) %s showing the start, "
+            "[window took %d of %d characters (numLetters=%d, box %dx%d, maxLetters=%s, "
+            .. "maxBytes=%s, asciiProbe=%s, culprit=%s) %s showing the start, "
             .. "complete text printed to chat]\n\n",
-            got, #body, math.floor(eb:GetWidth() or 0),
+            got, #body, numLetters, math.floor(eb:GetWidth() or 0),
             math.floor(eb:GetHeight() or 0), tostring(ml), tostring(mb),
-            probeAscii, EM_DASH)
+            probeAscii, culprit, EM_DASH)
         local steps = {
             note .. "[all bars doubled]\n" .. body:gsub("|", "||"):sub(1, 20000),
             note .. body:sub(1, 20000),
