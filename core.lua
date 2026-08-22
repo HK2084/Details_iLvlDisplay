@@ -2531,6 +2531,50 @@ end
 ---------------------------------------------------------------
 local EM_DASH = "\226\128\148"  -- U+2014, written as bytes so the file stays ASCII-safe
 
+-- The chokepoint that makes the whole invalid-UTF-8 class extinct instead of
+-- hunting one cut site per incident. Five blank windows in two days, and the
+-- fifth was half an umlaut: SOME byte cut somewhere produced invalid encoding,
+-- and one bad byte makes an EditBox refuse the ENTIRE report - ours and the
+-- chat's copy box alike. Every line captured for the debug report passes
+-- through here, so a future cut site added anywhere upstream cannot poison the
+-- report again; its damage is repaired to '?' at the door.
+--
+-- Scans byte-wise (Lua 5.1 has no utf8 library): ASCII passes, a lead byte
+-- must be followed by exactly its continuation bytes, everything else - stray
+-- continuations, dangling leads, out-of-range leads - becomes "?".
+local function ScrubUtf8(str)
+    local out, i, n = {}, 1, #str
+    while i <= n do
+        local b = str:byte(i)
+        local len = (b < 0x80 and 1) or (b >= 0xC2 and b <= 0xDF and 2)
+            or (b >= 0xE0 and b <= 0xEF and 3) or (b >= 0xF0 and b <= 0xF4 and 4) or 0
+        if len == 1 then
+            out[#out + 1] = string.char(b)
+            i = i + 1
+        elseif len == 0 then
+            out[#out + 1] = "?"
+            i = i + 1
+        else
+            local ok = i + len - 1 <= n
+            if ok then
+                for j = i + 1, i + len - 1 do
+                    local c = str:byte(j)
+                    if not (c and c >= 0x80 and c <= 0xBF) then ok = false break end
+                end
+            end
+            if ok then
+                out[#out + 1] = str:sub(i, i + len - 1)
+                i = i + len
+            else
+                out[#out + 1] = "?"
+                i = i + 1
+            end
+        end
+    end
+    return table.concat(out)
+end
+ns.ScrubUtf8 = ScrubUtf8
+
 local function ShowDebugWindow(text)
     if not DILvlDebugFrame then
         local f = CreateFrame("Frame", "DILvlDebugFrame", UIParent, "BackdropTemplate")
@@ -2700,11 +2744,29 @@ local function ShowDebugWindow(text)
             got, #body, numLetters, math.floor(eb:GetWidth() or 0),
             math.floor(eb:GetHeight() or 0), tostring(ml), tostring(mb),
             probeAscii, culprit, EM_DASH)
+        -- No cut here may split a multi-byte character either - half a
+        -- character is invalid UTF-8, which is exactly what the fifth blank
+        -- window was (SafeSnippet cutting a player name mid-umlaut).
+        local function Utf8Cut(str, n)
+            str = str:sub(1, n)
+            while #str > 0 do
+                local b = str:byte(#str)
+                if b >= 0x80 and b <= 0xBF then
+                    str = str:sub(1, #str - 1)
+                elseif b >= 0xC0 then
+                    str = str:sub(1, #str - 1)
+                    break
+                else
+                    break
+                end
+            end
+            return str
+        end
         local steps = {
-            note .. "[all bars doubled]\n" .. body:gsub("|", "||"):sub(1, 20000),
-            note .. body:sub(1, 20000),
-            note .. body:sub(1, 5000),
-            note .. body:sub(1, 1000),
+            note .. "[all bars doubled]\n" .. Utf8Cut(body:gsub("|", "||"), 20000),
+            note .. Utf8Cut(body, 20000),
+            note .. Utf8Cut(body, 5000),
+            note .. Utf8Cut(body, 1000),
             note,
         }
         for i = 1, #steps do
@@ -3015,14 +3077,14 @@ local function PrintDebugReport()
             local n = select("#", ...)
             if n == 1 then
                 local v = ...
-                debugBuf[#debugBuf + 1] = isSecretValue(v) and "(secret)" or tostring(v)
+                debugBuf[#debugBuf + 1] = ScrubUtf8(isSecretValue(v) and "(secret)" or tostring(v))
             else
                 local parts = {}
                 for i = 1, n do
                     local v = select(i, ...)
                     parts[i] = isSecretValue(v) and "(secret)" or tostring(v)
                 end
-                debugBuf[#debugBuf + 1] = table.concat(parts, " ")
+                debugBuf[#debugBuf + 1] = ScrubUtf8(table.concat(parts, " "))
             end
         end
 

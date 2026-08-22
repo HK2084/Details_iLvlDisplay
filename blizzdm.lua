@@ -2444,6 +2444,25 @@ API.GetBlizzDMDebug = function()
                     s = s:sub(1, n)
                     local trailing = #(s:match("|*$") or "")
                     if trailing % 2 == 1 then s = s:sub(1, #s - 1) end
+                    -- And never end mid UTF-8 sequence. The byte cut above can
+                    -- land inside a multi-byte character, and half a character
+                    -- is invalid encoding - an EditBox refuses the WHOLE string
+                    -- over it, ours and the chat's alike. Found 22.08.2026 by
+                    -- the culprit probe: line 50, a native row whose player
+                    -- name got cut inside an umlaut. Trailing continuation
+                    -- bytes (0x80-0xBF) are stripped, then a dangling lead
+                    -- byte (0xC0+) whose continuations were cut.
+                    while #s > 0 do
+                        local b = s:byte(#s)
+                        if b >= 0x80 and b <= 0xBF then
+                            s = s:sub(1, #s - 1)
+                        elseif b >= 0xC0 then
+                            s = s:sub(1, #s - 1)
+                            break
+                        else
+                            break
+                        end
+                    end
                 end
                 return s
             end
@@ -2484,7 +2503,10 @@ API.GetBlizzDMDebug = function()
                 local sn = frame.sourceName
                 local snDbg = sn and not isSecret(sn) and tostring(sn) or nil
                 if snDbg and nameResolveFails[snDbg] and nameResolveFails[snDbg] >= MAX_RESOLVE_FAILS then
-                    path = "GAVE-UP(" .. snDbg:sub(1,10) .. ")"
+                    -- Same rule as SafeSnippet: a raw byte cut can split a
+                    -- multi-byte character, and half a character poisons every
+                    -- EditBox the report ever touches.
+                    path = "GAVE-UP(" .. (SafeSnippet(snDbg, 10) or "") .. ")"
                 else
                     -- Carry the backfill's own verdict for this row. Without it
                     -- NO-GUID says only "we do not know who this is", which is
