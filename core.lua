@@ -2676,8 +2676,10 @@ local function ShowDebugWindow(text)
         -- into the note as hex - one dump then names the exact character
         -- instead of another evening of theories.
         local culprit = "none"
-        for lineNo, line in ipairs({strsplit("\n", body)}) do
-            if #line > 0 then
+        local lineNo = 0
+        for line in (body .. "\n"):gmatch("([^\n]*)\n") do
+            lineNo = lineNo + 1
+            if culprit == "none" and #line > 0 then
                 eb:SetText(line)
                 if #(eb:GetText() or "") == 0 then
                     local hex = {}
@@ -2686,7 +2688,6 @@ local function ShowDebugWindow(text)
                     end
                     culprit = string.format("line %d (%d bytes): %s",
                         lineNo, #line, table.concat(hex, " "))
-                    break
                 end
             end
         end
