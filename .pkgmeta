@@ -19,6 +19,7 @@ ignore:
   - .pkgmeta
   - .release
   - tools
+  - dev-docs
   - docs
   - logo.png
   - icon_source.png

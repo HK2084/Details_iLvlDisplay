@@ -20,63 +20,14 @@ local isSecretValue = ns.secrets.isSecretValue
 ----------------------------------------------------------------
 -- Strip a realm suffix: "Fhina-Thrall" -> "Fhina".
 --
--- WHY THIS EXISTS: we used to call Ambiguate(name, "none") and rely on it
--- stripping the realm. It never did, and it never was going to. The second
--- argument names the CONTEXT to ambiguate for, and "none" means exactly what
--- it says — do not ambiguate, hand the full name back. Blizzard's own code
--- uses "none" when it wants the untouched name (ChatFrameUtil.lua:1014,
--- TextToSpeechFrame.lua:971) and "short" when it wants the realm gone
--- (LFGList.lua:2038). We were asking for the opposite of what we wanted.
+-- Ambiguate's second argument is the CONTEXT to ambiguate FOR: "short" drops
+-- the realm, "none" hands the full name back untouched. We asked for "none"
+-- for months and wondered why nothing ever matched.
 --
--- The symptom was recorded in-game 2026-08-13: /dilvl map held 51 entries,
--- every one a full "Name-Realm" string and not one short form, because
---     local short = Ambiguate(name, "none"); if short ~= name then ...
--- can never fire. Details! bars show only "Fhina", so nothing matched and no
--- item level appeared, while Blizzard's meter (which shows "Fhina-Thrall")
--- kept working. That was read at the time as a 12.1 behaviour change, and the
--- note here said so. It was not: the documentation did not change because the
--- function did not change. We had the wrong argument from the start, and the
--- fallback below hid it well enough that the bug looked like Blizzard's.
---
--- Corrected 2026-08-20 to "short", the context Blizzard uses for display
--- names. Ambiguate stays FIRST on purpose: it is the sanctioned API and knows
--- about name forms a plain match does not. The match remains the fallback, so
--- a client where Ambiguate is missing or answers oddly still gets short names.
--- Realm names cannot contain "-", so the first segment is the character name.
-----------------------------------------------------------------
--- SECRET SAFETY: type() cannot detect a secret — a secret string still reports
--- "string" (see the note in secrets.lua). Ambiguate accepts secret arguments
--- (PlayerScriptDocumentation: SecretArguments = "AllowedWhenTainted", and
--- `fullName` carries no NeverSecret flag), so a secret in means a secret out.
--- Both the input and Ambiguate's result are therefore checked with
--- issecretvalue, not type(): returning a secret here would hand it straight to
--- `nameToIlvl[shortName] = ilvl` in core.lua, and a secret table key throws.
--- Returning the input unchanged is the safe answer — callers already treat "no
--- short form" as normal.
-----------------------------------------------------------------
--- Shorten a name FOR DISPLAY ONLY, and unlike StripRealm this one is allowed
--- to hand back a secret.
---
--- StripRealm refuses to touch a secret on purpose: its result feeds
--- nameToIlvl[shortName], and a secret table key throws. That guard is right for
--- every caller it has. It is wrong for exactly one job — composing a string we
--- are only ever going to pass to FontString:SetText, never compare, never key.
---
--- Blizzard grants precisely that. Ambiguate is SecretArguments =
--- "AllowedWhenTainted" (PlayerScriptDocumentation.lua:22-30, `fullName`
--- unrestricted, `context` NeverSecret), and SimpleFontString:SetText carries
--- SecretArgumentsAddAspect = {Enum.SecretAspect.Text} with the same
--- AllowedWhenTainted grant — the only setter family on that widget that has it.
--- Secret in, secret out, and the secret never leaves the C boundary.
---
--- Why it must exist at all: Details! shortens a sealed name itself when the
--- source carries a spec icon (class_damage.lua:3182-3193). If we rebuild a row
--- without doing the same, every cross-realm player in a raid would suddenly
--- render "Name-Realm" where Details! showed "Name". Not a wrong name, but a
--- visible regression on most rows of a raid.
---
--- The RESULT MUST NOT be stored, compared or used as a key by any caller.
--- If you need a name to look something up, you want StripRealm.
+-- SECRET SAFETY: check with issecretvalue, NEVER type() -- a secret string
+-- still reports "string", and this result feeds a table key in core.lua.
+-- Ambiguate is AllowedWhenTainted, so a secret in means a secret out.
+-- Why: dev-docs/CODE_NOTES.md#stripealm
 ----------------------------------------------------------------
 function U.ShortenForDisplay(name)
     if name == nil then return nil end
@@ -104,51 +55,20 @@ function U.StripRealm(name)
 end
 
 ----------------------------------------------------------------
--- iLvl colour by gear tier.
+-- iLvl colour by gear tier, DERIVED from Blizzard's mythic+ reward curve:
+-- those numbers ARE the season and Blizzard keeps them current, so we inherit
+-- that for free. A fixed table cannot survive a season change -- the old one
+-- put 43 % of everyone into the top band. Five of six boundaries are theirs.
+-- Why: dev-docs/CODE_NOTES.md#ilvl-colors
 --
--- WHY THIS IS NOT A FIXED TABLE ANY MORE
+-- U.ILVL_COLORS below is the FALLBACK for when the API says nothing, and it is
+-- A SNAPSHOT THAT WILL ROT. Refresh it at every season start:
+--   /run for _,k in ipairs({2,4,7,10}) do print(k, C_MythicPlus.GetRewardLevelFromKeystoneLevel(k)) end
 --
--- It used to be, and the numbers rotted. Measured on 256 real cache entries on
--- 2026-08-17, the old thresholds put 43.4 % of everyone met in FOUR DAYS into
--- the top band: orange had stopped meaning "well geared" and started meaning
--- "plays the game". And season 2 was about to make it total — the whole sample
--- ran 157..295 while the LOWEST season-2 mythic+ reward is 305, so within days
--- every single player would have been orange for the rest of the expansion.
---
--- A fixed table cannot survive that, because the thing it measures moves every
--- season while the table does not. So the bands are derived from Blizzard's own
--- mythic+ reward curve instead: those numbers ARE the season, Blizzard keeps
--- them current, and we inherit that for free. Five of the six boundaries are
--- values Blizzard defines, not values we invented.
---
---   artifact   >= reward(+10)      beyond what mythic+ hands out at all
---   legendary  >= reward(+7)
---   epic       >= reward(+4)
---   rare       >= reward(+2)       the season floor: has started current content
---   uncommon   >= reward(+2) - 20  the one invented number, and the mildest
---   poor       below
---
--- The colours come from C_Item.GetItemQualityColor for the same reason: if
--- Blizzard ever retunes the palette we follow instead of drifting.
---
--- U.ILVL_COLORS below is the FALLBACK, kept in the same row shape so every
--- consumer keeps working unchanged when the API says nothing.
---
--- IT IS A SNAPSHOT AND IT WILL ROT. These are the derived season 2 values,
--- measured in-game 2026-08-18: keys 2/4/7/10 returned 305/308/315/318. When
--- season 3 raises the reward curve this table becomes too GENEROUS — everyone
--- gold — which is the same failure the season 1 numbers produced on season 2
--- launch day, only inverted. Refresh it at every season start:
---     /run for _,k in ipairs({2,4,7,10}) do print(k, C_MythicPlus.GetRewardLevelFromKeystoneLevel(k)) end
--- The colours are measured too (C_Item.GetItemQualityColor, same day) rather
--- than copied from a wiki — Blizzard's palette lives in the engine, not in
--- any Lua file we can diff.
+-- One table, two readers: text channels need the escape sequence, Grid2 needs
+-- numbers. Keep the thresholds in ONE place -- typing them twice is how the
+-- Grid2 channel ended up permanently white. High to low, last row catches all.
 ----------------------------------------------------------------
--- One table, two readers. Channels that write coloured TEXT need the escape
--- sequence; Grid2 hands its colours to SetTextColor and needs numbers. Keeping
--- the thresholds in one place is the point — typing them twice is how the
--- Grid2 channel ended up permanently white while everything else was coloured.
--- Ordered high to low; the last row is the catch-all.
 U.ILVL_COLORS = {
     {318, "E6CC80", 0.902, 0.800, 0.502}, -- artifact gold   (key +10)
     {315, "FF8000", 1.000, 0.502, 0.000}, -- legendary orange (key +7)
@@ -323,31 +243,17 @@ end
 ----------------------------------------------------------------
 U.TIER_SLOTS = {1, 3, 5, 7, 10} -- Head, Shoulder, Chest, Legs, Hands
 
--- Midnight Season 1 tier setIDs per class (confirmed in-game via item
--- tooltip). GetSetBonusText() was removed in 12.0 — hardcoded whitelist
--- replaces it. Update this table when a new raid tier is added.
--- PvP gear (honor/conquest) has its own setIDs outside this range — the
--- whitelist approach means they are automatically ignored regardless of
--- their setID values.
--- Which raid season is CURRENTLY running. Season 2 opened with patch 12.1; the
--- pre-season is already part of it, so season-1 tier is the OLD set even while
--- most players are still wearing it.
+-- Tier setIDs per class, confirmed in-game via item tooltip.
+-- GetSetBonusText() was removed in 12.0, so this whitelist replaces it: PvP
+-- sets sit outside the range and are ignored for free. Extend it per tier.
 --
--- That last sentence is the whole trap, and I walked into it on 2026-08-16:
--- seeing a raid full of season-1 tier, I concluded season 1 must still be
--- current and that C_MythicPlus.GetCurrentUIDisplaySeason() (which answered 2)
--- was running ahead of reality. It was not. What people are WEARING says
--- nothing about which season is running — lagging behind is precisely the
--- transition this colouring exists to show.
---
--- Still a hand-set constant rather than that API call, but for control, not
--- distrust: the set IDs below are maintained per season by hand anyway, a
--- season without a new tier would leave the two legitimately out of step, and
--- getting this wrong mislabels every set in the raid at once. /dilvl debug
--- prints both and flags a mismatch, so the API stays a cross-check.
---
--- Not derived from the set IDs either: the highest ID is not reliably the
--- current season (2070 "Biss von Zul'jan" sits outside the tier run entirely).
+-- CURRENT_TIER_SEASON is which season is RUNNING -- not what people are
+-- wearing. A raid full of season-1 tier says nothing about that; lagging
+-- behind is exactly the transition this colouring exists to show. Hand-set on
+-- purpose, not distrust: the set IDs are hand-kept anyway, and getting this
+-- wrong mislabels every set in the raid at once. /dilvl debug prints both this
+-- and the client's own answer, and flags a mismatch.
+-- Why: dev-docs/CODE_NOTES.md#tier-season
 U.CURRENT_TIER_SEASON = 2
 
 U.MIDNIGHT_TIER_SETS = {
@@ -392,23 +298,16 @@ U.MIDNIGHT_TIER_SETS = {
 }
 
 ----------------------------------------------------------------
--- Set bonus detection for an inspected unit.
--- Reads item IDs from the 5 tier slots, counts pieces per setID.
--- Returns "4P", "2P", or nil.
+-- Set bonus for an inspected unit: reads the 5 tier slots, counts per setID.
+-- Returns: bonus ("4P" / "2P" / nil), complete (boolean).
 -- Must be called synchronously during INSPECT_READY while data is loaded.
+--
+-- `complete` is the important half. GetItemInfo is ASYNCHRONOUS, so a bare nil
+-- cannot tell "wears no tier" from "could not read it yet" -- and writing that
+-- nil to the cache erased correct 4P readings after a loading screen.
+-- complete = false means: keep what you had, try again later.
+-- Why: dev-docs/CODE_NOTES.md#setbonus-complete
 ----------------------------------------------------------------
--- Returns: bonus ("4P" / "2P" / nil), complete (boolean)
---
--- `complete` is the important half. C_Item.GetItemInfo is ASYNCHRONOUS: for an
--- item the client has not cached yet it returns nothing at all, and then this
--- function cannot tell "wears no tier" apart from "could not read it yet".
--- Both used to come back as a bare nil, and every caller wrote that straight
--- into the cache — so one unlucky read right after a loading screen erased a
--- correct 4P and nothing ever put it back (reported live 2026-08-15: own [4P]
--- gone after zoning into a raid, restored only by re-equipping a piece).
---
--- complete = false means "at least one occupied tier slot did not resolve".
--- Callers must keep whatever they already had and try again later.
 function U.GetSetBonusForUnit(unit)
     local setPieces = {} -- setID -> count
     local complete = true
@@ -467,24 +366,13 @@ function U.GetSetBonusForUnit(unit)
         complete = false
     end
 
-    -- The strongest SINGLE set wins — counts are never summed across sets, so
-    -- 2 old + 2 new correctly reads 2P rather than 4P.
-    --
-    -- On a tie the current season wins. Someone wearing 2 old and 2 new pieces
-    -- has both 2-piece bonuses, and the current one is the stronger of the two
-    -- and the one they are moving towards, so it is the more useful of the two
-    -- to show. The reverse case matters just as much and is why the strongest
-    -- bonus still wins outright: 4 old + 2 new is a real 4-piece, and showing
-    -- 2P there would understate the player.
-    -- Every set that actually grants a bonus is reported, not just the best
-    -- one. During a tier change a player can carry TWO live bonuses — 2 old
-    -- pieces and 2 new ones, for instance — and showing only one of them hides
-    -- exactly the state this colouring was built to make visible.
-    --
-    -- Compare the BONUS, never the piece count: three pieces and two pieces both
-    -- grant 2P, so counting pieces made one set "beat" another it had in fact
-    -- tied. Five tier slots means at most two sets can reach a bonus at once
-    -- (2+2 fits, 2+2+2 does not), but nothing below assumes that.
+    -- Compare the BONUS, never the piece count: three pieces and two pieces
+    -- both grant 2P, so counting pieces let one set "beat" another it had in
+    -- fact tied with. The strongest single set wins and counts are never summed
+    -- across sets (2 old + 2 new is 2P, not 4P); on a tie the current season
+    -- wins. Every set granting a bonus is reported, not just the best -- a tier
+    -- change can carry two live bonuses at once.
+    -- Why: dev-docs/CODE_NOTES.md#setbonus-auswahl
     local function bonusTier(count)
         if count >= 4 then return 4 elseif count >= 2 then return 2 end
         return 0
@@ -540,28 +428,12 @@ local function parseSetBonus(sb)
     return out
 end
 
--- Green for the current season, grey for an older one, and NOTHING for a value
--- whose season we do not know.
---
--- That last case is the one that matters and it nearly shipped wrong. Before
--- seasons existed green was simply "the colour of a set bonus" — neutral, the
--- only one there was. The moment grey arrived, green stopped being neutral and
--- became a claim: "current season". Every entry already sitting in a user's
--- SavedVariables from v1.5.5 carries no season, and painting those green would
--- have asserted that claim for data that cannot support it — on the whole cache
--- at once, on the first login after the update, at exactly the moment when in
--- practice they are all last season's sets.
---
--- Nor may they be painted grey: v1.5.5 already detected season-2 sets too, so a
--- suffix-less value is season-UNKNOWN, not season-1. Grey would be the same
--- unfounded claim in the other direction.
---
--- So the coloured surfaces show nothing until the next inspect rewrites the
--- entry with a season — a missing tag is fine, a wrong one is not. The
--- uncoloured surfaces (Danders, Grid2) keep showing the bonus, because there
--- the colour claim does not arise.
---
--- 9D9D9D is already the bottom of our item-level scale and reads as dated.
+-- Green = current season, grey = older, and NOTHING when the season is
+-- unknown. Green stopped being neutral the moment grey arrived: it became a
+-- claim, and pre-v1.5.6 cache entries carry no season to back it. Grey would be
+-- the same unfounded claim inverted. The uncoloured surfaces (Danders, Grid2)
+-- still show the bonus -- there the colour claim never arises.
+-- Why: dev-docs/CODE_NOTES.md#season-color
 local function seasonColor(season)
     if not season then return nil end
     if season ~= U.CURRENT_TIER_SEASON then return "|cFF9D9D9D" end
