@@ -18,16 +18,15 @@ local U = ns.util
 local isSecretValue = ns.secrets.isSecretValue
 
 ----------------------------------------------------------------
--- Strip a realm suffix: "Fhina-Thrall" -> "Fhina".
+-- Shorten a name FOR DISPLAY ONLY. Unlike StripRealm this one is allowed to
+-- hand back a secret: Ambiguate and FontString:SetText both carry the same
+-- AllowedWhenTainted grant, so the secret never leaves the C boundary. It
+-- exists because Details! shortens sealed names itself -- rebuilding a row
+-- without doing the same would show "Name-Realm" where Details! showed "Name".
 --
--- Ambiguate's second argument is the CONTEXT to ambiguate FOR: "short" drops
--- the realm, "none" hands the full name back untouched. We asked for "none"
--- for months and wondered why nothing ever matched.
---
--- SECRET SAFETY: check with issecretvalue, NEVER type() -- a secret string
--- still reports "string", and this result feeds a table key in core.lua.
--- Ambiguate is AllowedWhenTainted, so a secret in means a secret out.
--- Why: dev-docs/CODE_NOTES.md#stripealm
+-- THE RESULT MUST NOT BE STORED, COMPARED OR USED AS A KEY by any caller.
+-- If you need a name to look something up, you want StripRealm.
+-- Why: dev-docs/CODE_NOTES.md#shortenfordisplay
 ----------------------------------------------------------------
 function U.ShortenForDisplay(name)
     if name == nil then return nil end
@@ -37,6 +36,18 @@ function U.ShortenForDisplay(name)
     return name
 end
 
+----------------------------------------------------------------
+-- Strip a realm suffix: "Fhina-Thrall" -> "Fhina".
+--
+-- Ambiguate's second argument is the CONTEXT to ambiguate FOR: "short" drops
+-- the realm, "none" hands the full name back untouched. We asked for "none"
+-- for months and wondered why nothing ever matched.
+--
+-- SECRET SAFETY: check with issecretvalue, NEVER type() -- a secret string
+-- still reports "string", and this result feeds a table key in core.lua.
+-- Ambiguate is AllowedWhenTainted, so a secret in means a secret out.
+-- Why: dev-docs/CODE_NOTES.md#striprealm
+----------------------------------------------------------------
 function U.StripRealm(name)
     if not name or type(name) ~= "string" then return name end
     if issecretvalue and issecretvalue(name) then return name end

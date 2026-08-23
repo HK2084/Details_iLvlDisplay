@@ -8,7 +8,7 @@ die Beweiskette gegen Blizzards Quelltext — steht hier. Wer eine Regel ändern
 will, liest zuerst den passenden Abschnitt: fast jede davon ist die Narbe eines
 Fehlers, der schon einmal live war.
 
-Verweise im Code sehen so aus: `-- Warum: docs/CODE_NOTES.md#stripealm`.
+Verweise im Code sehen so aus: `-- Why: dev-docs/CODE_NOTES.md#striprealm`.
 
 Diese Datei ist **versioniert** (sie muss mit dem Code wandern, sonst driftet
 sie davon weg), wird aber **nicht ausgeliefert**: `.pkgmeta` ignoriert
@@ -20,7 +20,7 @@ bleibt der ungetrackte Ort für interne Analysen und Arbeitsnotizen.
 
 ## util.lua
 
-### StripRealm — `Ambiguate(name, "short")`, niemals `"none"` {#stripealm}
+### StripRealm — `Ambiguate(name, "short")`, niemals `"none"` {#striprealm}
 
 Wir riefen lange `Ambiguate(name, "none")` auf und verließen uns darauf, dass es
 den Realm abschneidet. Das hat es nie getan und konnte es nie tun: das zweite
