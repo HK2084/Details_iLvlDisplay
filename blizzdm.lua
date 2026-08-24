@@ -62,24 +62,17 @@ local SafeUnitName         = API.SafeUnitName
 local SafeUnitGUID         = API.SafeUnitGUID  or function() return nil end
 
 ---------------------------------------------------------------
--- The rank prefix Blizzard draws in front of a name is LOCALISED, and it is
--- not always a full stop:
---     enUS/deDE/koKR/ruRU   "%d. %s"
---     zhCN                  "%d、%s"      (U+3001)
---     zhTW                  "%d。%s"      (U+3002)
--- Three places used to hardcode "^%d+%." — two identity fallbacks that read
--- Blizzard's rendered text, and the split that keeps the rank in front of our
--- tag. On a Chinese client none of them matched: the fallbacks silently
--- resolved nothing and the rank was pushed off the line. A missing tag, never
--- a wrong one, which is why it could sit there unnoticed.
+-- The rank prefix Blizzard draws in front of a name is LOCALISED, and it is not
+-- always a full stop: zhCN uses U+3001, zhTW U+3002. Three places hardcoded the
+-- full-stop pattern and matched nothing on a Chinese client -- a missing tag,
+-- never a wrong one, which is why it sat there unnoticed. Derived from
+-- Blizzard's own format string rather than enumerated, so an unexamined locale
+-- is covered too.
 --
--- Derived from Blizzard's own format string rather than enumerated, so a locale
--- we have not looked at is covered too. gsub escapes byte-wise, which is what
--- we want: the multi-byte separators come out as literal bytes in the pattern.
---
--- NOTE: this is for BLIZZARD's meter only. Details! hardcodes ". " in every
--- language (Details-Damage-Meter/boot.lua:1332), so the patterns in core.lua
--- and util.lua are correct as they stand and must NOT be switched over.
+-- BLIZZARD's meter ONLY. Details! hardcodes ". " in every language
+-- (Details-Damage-Meter/boot.lua:1332), so the patterns in core.lua and
+-- util.lua are correct as they stand and must NOT be switched over.
+-- Why: dev-docs/CODE_NOTES.md#rank-prefix
 ---------------------------------------------------------------
 local RANK_CAPTURE, RANK_SPLIT
 do
@@ -1191,36 +1184,23 @@ local deferredRetryPending = false
 local ScheduleRefresh, StartPostCombatRefresh
 
 ---------------------------------------------------------------
--- Identity backfill: ask Blizzard for the row's owner instead of
--- waiting to be handed it.
+-- Identity backfill: ask Blizzard for the row's owner instead of waiting to be
+-- handed it. The Init hook is the only place Blizzard gives us a GUID, and it
+-- fires only when a row is (re)filled -- during a fight sourceGUID is not
+-- available, and once the fight ends nothing refills the rows, so they keep the
+-- empty identity for the rest of the session. GetCombatSession plus frame.index
+-- points straight at the row's entry (BuildDataProvider stamps
+-- combatSource.index = i, :640; Init copies it, DamageMeterEntry.lua:477).
 --
--- The Init hook is the only place Blizzard gives us a row's GUID, and it fires
--- exactly when a row is (re)filled. That moment is wrong for us twice over:
--- DURING a fight sourceGUID is not available, and once the fight ENDS nothing
--- refills the rows — so they keep the empty identity the last in-combat Init
--- left behind, read "[NO-GUID]" for the rest of the session, and stay untagged
--- even though every player on them is sitting in our cache with a full item
--- level. Switching the window mode by hand cures it, and only because that
--- forces a rebuild. Reported live twice, 2026-08-16.
---
--- So we fetch the data ourselves. GetCombatSession (DamageMeterSessionWindow
--- .lua:562) is a plain getter over C_DamageMeter.GetCombatSessionFromType /
--- FromID, and frame.index points straight at the row's entry in that list:
--- BuildDataProvider stamps combatSource.index = i (:640) and Init copies it
--- (DamageMeterEntry.lua:477).
---
--- The index alone is NOT proof. The list can be reordered between a frame's
+-- The index alone is NOT proof: the list can be reordered between a frame's
 -- last Init and now, and trusting it blindly would hand one player's identity
--- to another player's row — the exact failure this addon refuses to produce.
--- So every match is confirmed against the two fields Blizzard marks NeverSecret
--- and that Init copied from that same source: classFilename and specIconID
--- (DamageMeterDocumentation.lua:202-203). The damage total is NOT one of them —
--- it carries no annotation at all, exactly like sourceGUID (:199, :204), so it is
--- unreadable on a sealed row and only ever serves as a bonus confirmation when
--- it happens to be available.
+-- to another player's row. Every match is confirmed against the two fields
+-- Blizzard marks NeverSecret and Init copied from that same source:
+-- classFilename and specIconID (DamageMeterDocumentation.lua:202-203). The
+-- damage total carries no annotation at all and is only ever a bonus check.
 --
--- Out of combat only: GetCombatSessionFromType is SecretWhenInCombat
--- (DamageMeterDocumentation.lua:39-41).
+-- Out of combat only: GetCombatSessionFromType is SecretWhenInCombat (:39-41).
+-- Why: dev-docs/CODE_NOTES.md#identity-backfill
 ---------------------------------------------------------------
 local identityBackfills = 0
 
@@ -1611,29 +1591,17 @@ local function BackfillIdentity()
                         --    an index a verified witness confirmed, so this row
                         --    is the only place left this one can be.
                         --
-                        --    The window-wide licence alone is NOT enough here,
-                        --    and that was a real defect rather than a theoretical
-                        --    one. orderTrusted is raised by two signals: verified
-                        --    rows landing on the index they claim, and no class
-                        --    disagreeing with its source anywhere. A swap of two
-                        --    players who share class AND spec emits NEITHER — the
-                        --    class string at every index is unchanged, and unless
-                        --    one of the two swapped rows happens to be a witness
-                        --    itself, no witness moves. After a fight the only
-                        --    witness is usually your own row, so a single unmoved
-                        --    sample would have licensed two dozen others. Rules 1
-                        --    to 3 all decline for exactly that population, so
-                        --    this rule was the one deciding it, and it would have
-                        --    written the other player's name AND item level onto
-                        --    the row, under a class icon that still matched.
-                        --    Nothing on screen would have contradicted it, and
-                        --    the direct pass skips rows that already carry an
-                        --    API identity, so no later pass repairs it.
-                        --
-                        --    Counting pinned positions closes it: a class-
-                        --    preserving permutation has to move at least two
-                        --    members of one group, and if every other member is
-                        --    pinned there is no second one left to move.
+                        --    The window-wide licence alone is NOT enough, and
+                        --    that was a real defect: a swap of two players who
+                        --    share class AND spec emits neither of the signals
+                        --    that raise orderTrusted, so a single unmoved
+                        --    witness would have licensed two dozen rows --
+                        --    writing the other player's name AND item level
+                        --    under a class icon that still matched, with no
+                        --    later pass to repair it. Counting pinned positions
+                        --    closes it: a class-preserving permutation must move
+                        --    at least two members of one group.
+                        --    Why: dev-docs/CODE_NOTES.md#index-join-rule4
                         local key = srcKey[idx]
                         local grp = key and groups[key]
                         if not decided and orderTrusted and not claimed[guid]
@@ -1837,27 +1805,18 @@ hooksecurefunc(DamageMeterEntryMixin, "UpdateName", function(self)
 
     -- Inject here too, but only when it cannot write someone else's data.
     --
-    -- Why it must happen here at all: when a fight ends Blizzard un-secrets the
-    -- names and calls UpdateName, but the ScrollBox does NOT rebuild its rows,
-    -- so Init never runs. With injection living only in the Init hook the whole
-    -- meter stayed untagged after every pull until something forced a rebuild —
-    -- switching the window mode, for instance. Reported live, 2026-08-15.
+    -- Needed because a fight ending un-secrets the names and calls UpdateName
+    -- WITHOUT the ScrollBox rebuilding its rows, so Init never runs and the
+    -- whole meter stayed untagged after every pull (live 15.08.2026).
     --
-    -- Why it is gated: UpdateName's only caller is Init itself
+    -- Gated because UpdateName's only caller is Init itself
     -- (DamageMeterEntry.lua:481), so it also fires mid-recycle, when sourceName
-    -- is already the NEW player while _dilvlGUID still holds the previous one —
-    -- and ResolveFrameGUID hands back an API GUID unconditionally. Writing then
-    -- put one player's item level under another's name (fixed in 62544d4).
-    -- Two cases are provably safe:
-    --   * no API identity stored — ResolveFrameGUID then resolves fresh from the
-    --     name Blizzard just drew, which is by definition the current occupant.
-    --     This is the post-combat case above: the in-combat Init cleared the
-    --     identity because the GUID was unreadable.
-    --   * an API identity whose recorded owner still matches sourceName — the
-    --     row was redrawn, not reassigned.
-    -- Everything else is a recycle: skip it, CaptureIdentityAndInject injects a
-    -- moment later with the correct identity. A tag one frame late beats a wrong
-    -- tag now.
+    -- is already the NEW player while _dilvlGUID still holds the previous one.
+    -- Two cases are provably safe: no API identity stored (ResolveFrameGUID then
+    -- resolves fresh from the name Blizzard just drew), or one whose recorded
+    -- owner still matches sourceName (redrawn, not reassigned). Everything else
+    -- is a recycle: skip it. A tag one frame late beats a wrong tag now.
+    -- Why: dev-docs/CODE_NOTES.md#updatename-gate
     if self.spellID == nil then
         local owner = self._dilvlGUIDOwner
         local readable = (name ~= nil and not isSecret(name)) and name or nil
@@ -2294,28 +2253,17 @@ if DamageMeter.ForEachSessionWindow then
                     sw:ForEachEntryFrame(function(frame)
                         -- A guessed GUID carries no guarantee that it still belongs
                         -- to this row, so it goes: a recycled frame can represent a
-                        -- DIFFERENT player while sourceName is still secret, and a
-                        -- preserved guess would paint the previous occupant's item
-                        -- level onto the wrong bar.
+                        -- DIFFERENT player while sourceName is still secret.
                         --
                         -- An API identity is the opposite case and must SURVIVE.
                         -- Refresh re-Inits every frame BEFORE this post-hook body
-                        -- runs (DamageMeterSessionWindow.lua:747-750, and :762 →
-                        -- SetDataProvider → the initializer, which ScrollBox runs
-                        -- synchronously), so CaptureIdentityAndInject has already
-                        -- cleared and re-established each frame's identity from
-                        -- Blizzard's own combatSource. Wiping again here deleted
-                        -- exactly that, in the same call stack, a moment later.
-                        --
-                        -- That is why every live dump read "(0 api)": the identity
-                        -- survived only on rows the ScrollBox acquired by SCROLLING,
-                        -- the one path that never goes through Refresh — which is
-                        -- also why a dump taken right after scrolling read "(4 api)"
-                        -- for exactly the four newly exposed rows. The consequence
-                        -- was not wrong data but no data: with no API identity, a
-                        -- row whose name Blizzard still protects after a fight has
-                        -- nothing to be attributed by, so it stays untagged even
-                        -- though its item level is sitting in our cache.
+                        -- runs (DamageMeterSessionWindow.lua:747-750), so
+                        -- CaptureIdentityAndInject has already re-established each
+                        -- frame's identity from Blizzard's own combatSource --
+                        -- wiping again here deleted exactly that, one moment later
+                        -- in the same call stack. That is why every live dump read
+                        -- "(0 api)". The consequence was not wrong data but none.
+                        -- Why: dev-docs/CODE_NOTES.md#refresh-identity
                         if not frame._dilvlGUIDFromAPI then
                             SetFrameGUID(frame, nil, false, nil)
                             frame._dilvlFontObject = nil
@@ -2672,42 +2620,22 @@ function Details_iLvlDisplay_BlizzTrace(showWindow)
 end
 
 ---------------------------------------------------------------
--- /dilvl securetest — the two experiments from the 21.08.2026 deep analysis.
+-- /dilvl securetest -- the two experiments from the 21.08.2026 deep analysis.
 --
--- MANUAL ONLY. Nothing in here runs on its own, ever. Both experiments probe
--- undocumented behaviour, and undocumented behaviour is exactly what Blizzard
--- may change under us without notice — so neither may become an automatic code
--- path unless a later release guards it with a version canary AND a kill
--- switch, as a FALLBACK behind the documented paths. The maintainer's call,
--- 21.08.2026, and the right one.
+-- MANUAL ONLY. Nothing in here runs on its own, ever. Both probe undocumented
+-- behaviour, which Blizzard may change under us without notice -- so neither
+-- may become an automatic code path unless a later release guards it with a
+-- version canary AND a kill switch, as a FALLBACK behind the documented paths.
 --
--- E2 "guid": the ScrollBox element bound to each sealed row still holds the
---   sealed sourceGUID from the fight. UnitTokenFromGUID / UnitNameFromGUID /
---   GetPlayerInfoByGUID are SecretArguments=AllowedWhenTainted, and their
---   secrecy predicate (SecretWhenUnitIdentityRestricted) documents an
---   exemption for party/raid members. So passing the sealed GUID in is legal;
---   whether the RETURN is readable is the undocumented part. Every call is
---   pcall'd, every return issecretvalue-checked before any comparison — reads
---   only, no writes, no Blizzard code driven: zero taint risk.
---   A readable return = a per-row witness = the "ambiguous" refusals die.
+-- E2 "guid" reads only: every call pcall'd, every return issecretvalue-checked
+-- before any comparison, no writes, no Blizzard code driven -- zero taint risk.
 --
--- E1 "cvarflip": SetCVar("damageMeterEnabled", 0 then 1) makes Blizzard's own
---   CVar handler hide and re-show the meter, and OnShow calls Refresh — the
---   programmatic twin of the user's segment toggle. UNDECIDABLE from the docs
---   whether that dispatch inherits our taint (CVAR_UPDATE is SynchronousEvent,
---   but the CvarUtil cache handling implies dispatch starts secure). Hence an
---   experiment, hard-gated:
---     * refused in combat (full gate) and inside an active keystone —
---       between M+ trash packs the restriction flickers, and a flip at the
---       wrong instant is exactly the mess the maintainer predicted
---     * refused unless the meter is shown, the cvar reads "1", and sealed
---       rows actually exist (otherwise the result proves nothing)
---     * requires the literal argument "confirm", after printing the recovery
---       protocol
---     * ONE run per session. If Blizzard's handler throws, the error surfaces
---       in BugSack, not in our pcall — so after any run the latch stays down
---       and recovery is the Settings checkbox or /reload, NEVER a second flip
---       (a failed run poisons the cvar cache; re-firing re-poisons it).
+-- E1 "cvarflip" is hard-gated: refused in combat and inside an active keystone,
+-- refused unless the meter is shown and sealed rows actually exist, requires
+-- the literal "confirm", ONE run per session. After any run the latch stays
+-- down -- a failed run poisons the cvar cache, so recovery is the Settings
+-- checkbox or /reload, NEVER a second flip.
+-- Why: dev-docs/CODE_NOTES.md#securetest
 ---------------------------------------------------------------
 local secureTestFlipDone = false
 
@@ -2884,23 +2812,19 @@ end
 ---------------------------------------------------------------
 -- Automatic post-fight backfill: the E1 cvar bounce as a FALLBACK.
 --
--- Proven live 21.08.2026 (manual /dilvl securetest cvarflip, outcome (a)):
--- SetCVar("damageMeterEnabled","0"->"1") makes Blizzard's OWN handler hide and
--- re-show the meter; OnShow calls Refresh, which rebuilds every row from
--- post-combat-readable getters in Blizzard's own secure execution. 25 sealed
--- rows became readable at t+0, sessions intact, no error thrown.
+-- Proven live 21.08.2026: bouncing damageMeterEnabled 0 then 1 makes Blizzard's
+-- OWN handler hide and re-show the meter, and OnShow calls Refresh, which
+-- rebuilds every row from post-combat-readable getters in Blizzard's own secure
+-- execution. 25 sealed rows became readable at t+0, sessions intact, no throw.
 --
--- Fallback discipline, the maintainer's explicit condition: this fires only
--- AFTER the documented paths have had their chance, and only when they left
--- sealed rows behind. It is armed once per fight, refuses inside an active
--- keystone (between M+ trash packs the combat restriction flickers, and a
--- bounce at the wrong instant is exactly the mess to avoid), refuses while any
--- combat signal is up, and if a bounce ever fails to reduce the sealed count it
--- assumes Blizzard changed the undocumented behaviour underneath us and
--- disables itself for the rest of the session -- the kill switch this feature
--- is not allowed to ship without. /dilvl autorefresh toggles it off entirely.
---
--- The visible cost: the meter blinks for one frame when the bounce fires.
+-- Fallback discipline, the maintainer's explicit condition: fires only AFTER
+-- the documented paths had their chance and only when they left sealed rows
+-- behind. Armed once per fight, refused inside an active keystone, refused
+-- while any combat signal is up, and if a bounce ever fails to reduce the
+-- sealed count it disables itself for the rest of the session -- the kill
+-- switch this feature is not allowed to ship without. /dilvl autorefresh turns
+-- it off entirely. The visible cost: the meter blinks for one frame.
+-- Why: dev-docs/CODE_NOTES.md#auto-backfill
 ---------------------------------------------------------------
 local autoFlipArmed = true    -- re-armed at combat start (StripAllTags)
 local autoFlipDead = false    -- session kill switch: bounce stopped helping

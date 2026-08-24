@@ -232,3 +232,389 @@ weil dort die Farbbehauptung gar nicht erst entsteht.
 
 `9D9D9D` ist bereits der Boden unserer Item-Level-Skala und liest sich als
 veraltet.
+
+---
+
+## core.lua
+
+### barRankInfo — warum der Datensatz seine GUID mitträgt {#barrankinfo}
+
+Der Datensatz hält fest, was Details! zuletzt in eine FontString geschrieben
+hat: den Rang als blanke Zahl und den Anzeigenamen getrennt, **bevor** Details!
+beides zu einem String verschweißt. Geschrieben wird er ausschließlich vom
+`UpdateBarApocalypseWow`-Post-Hook, dem beide Hälften einzeln übergeben werden.
+Genau dieser eine Aufruf ist der einzige Moment, in dem die Teile getrennt
+existieren — danach liegt nur noch ein undurchsichtiger Klumpen vor, den wir
+nicht zerschneiden dürfen. Das ist es, was echte Links-Platzierung auf einer
+versiegelten Zeile überhaupt möglich macht.
+
+Die Namenshälfte darf ein Secret sein. Als Tabellen-**Wert** ist das sicher
+(genau wie `barSecretText`), und sie wird ausschließlich als `%s`-Argument an
+`string.format` gereicht.
+
+**Der Kommentar an dieser Stelle hat einmal gelogen, und die Lüge hat den Fehler
+verdeckt.** Er behauptete, der Datensatz werde im Gleichschritt mit
+`barSecretText` geleert, sodass eine wiederverwendete Zeile niemals den
+vorherigen Bewohner erneut ausgeben könne. Falsch: Eine FontString ist kein
+Spieler, sondern ein Zeilen-**Slot**, den Details! bei jeder Neusortierung einem
+anderen Akteur zuteilt. Details! überschreibt `lineText1` an Ort und Stelle
+(`class_damage.lua:3199`), ohne je zu leeren — `ClearText()` kommt in seinem
+gesamten Quelltext nicht vor. Bei einer Übergabe von versiegelt zu versiegelt
+feuert also **keine** der beiden Leerstellen, und der Datensatz überlebt in den
+nächsten Bewohner hinein.
+
+Was das erzeugte: Das Tag wird aus der **aktuellen** `actorGUID` der Zeile
+zusammengesetzt, Name und Rang stammen aber aus dem Datensatz — eine Zeile
+konnte also den Namen des gegangenen Spielers neben dem Item Level des
+ankommenden zeigen. Ein falscher Name auf dem Bildschirm ist das eine Ergebnis,
+das dieses Addon nicht akzeptiert. Deshalb reist die GUID mit dem Datensatz, und
+bei Abweichung wird er verworfen.
+
+### Der Cache-Fallback — Auffrisch-Horizont ist kein Anzeige-Horizont {#cache-fallback}
+
+`CACHE_REFRESH` ist ein **Re-Inspect**-Horizont, kein Anzeige-Horizont. Der
+Kommentar an seiner Deklaration sagt das ausdrücklich: „re-inspect if we can
+reach them". Ihn zusätzlich zum Unterdrücken des Tags zu benutzen heißt, dass
+das Tag für jeden verschwindet, den wir gar nicht mehr erreichen können — jemand,
+der die Gruppe verlassen hat, oder ein gespeichertes Segment aus einem früheren
+Raid. Für die kommt nie ein neuerer Wert, also ist „warte auf etwas Frischeres"
+ein Versprechen, das nicht eingelöst werden kann.
+
+Es brachte außerdem die beiden Renderer über dieselben Daten in Widerspruch.
+`API.GetCacheData`, das der Blizzard-Meter-Pfad benutzt, liest `ilvlCache` ganz
+ohne Altersfilter — ein zwei Stunden alter Eintrag markierte dort also jede
+Zeile, während die Details!-Balken daneben leer blieben. Live am 20.08.2026 sah
+das so aus: Details! verlor eine Stunde nach dem Raid seine Tags, **35.385**
+Ablehnungen wegen „kein Item Level" gegen einen Cache, der jeden einzelnen davon
+enthielt. Nichts war kaputt — die Einträge hatten schlicht 7.200 Sekunden
+überschritten.
+
+Das schwächt die Frische-Regel nicht. Alles darüber bevorzugt weiterhin die
+frischere Quelle, und die Inspect-Pipeline inspiziert nach ihrem eigenen Plan
+neu. Es hört nur auf, die Antwort wegzuwerfen, wenn es keine bessere gibt. Was
+wir gemessen haben, ist zuschreibbar; nichts zu zeigen, während das Meter daneben
+die Zahl zeigt, ist einfach inkonsistent.
+
+### Niemals `actor.displayName` {#displayname}
+
+Details! führt die beiden Felder ausdrücklich getrennt:
+
+```
+Definitions.lua:601   displayName   "actor name shown in the regular window"
+Definitions.lua:610   nome          "name of the actor"
+```
+
+`displayName` ist ein **gerenderter** String, den Details! frei umschreibt. Zwei
+der drei Pfade sind **standardmäßig an**:
+
+- Ein Gilden-Spitzname ersetzt ihn vollständig (`container_actors.lua:644-651`).
+  `ignore_nicktag` ist standardmäßig `false` (`profiles.lua:1330`), und der Pool
+  wird über den GILDEN-Addon-Kanal gefüllt — der String ist also von einem
+  anderen Spieler verfasst. `checkValidNickname` beschränkt **wer**, nicht
+  **was**: keine Ähnlichkeitsprüfung, „Gandalf" für Ivan-Blackrock geht durch.
+- `remove_realm_from_name` ist standardmäßig `true` (`profiles.lua:980`) und
+  entfernt den Realm bei `:657-658` — für einen Cross-Realm-Spieler bleibt das
+  blanke „Torvi", genau der Kollisionsvektor, um den sich Zeile 340 sorgt. (Die
+  `>`-Form bei `:802` ist der PET-Zweig; wir filtern auf `IsPlayer()`, er kann
+  uns nicht erreichen.)
+- Translit ist standardmäßig aus, romanisiert aber **an Ort und Stelle**, wenn
+  eingeschaltet (`class_damage.lua:3921-3925`) — ein einziges Rendern irgendwo
+  lässt den geteilten Akteur dauerhaft „!Ivan" für „Иван" tragen.
+
+Jedes davon wäre hier als Identität persistiert worden — und `blizzdm.lua:909`
+schreibt `cached.name` auf eine Blizzard-eigene Zeile. Wir hätten also eine von
+uns erfundene Schreibweise unter fremde Balken gesetzt. Ein Name, den wir nicht
+zuschreiben können, ist schlimmer als kein Name, und `nome` wird nie
+umgeschrieben.
+
+Der Rückwärts-Fallback über `nameOnly` in `ResolveGUIDByName` deckt übrig
+gebliebene blanke Einträge weiterhin ab.
+
+### Inline-Tagging statt Ticker — der Flicker-Fix {#inline-tagging}
+
+Die versiegelte Zeile wird **hier** getaggt, innerhalb von Details!' eigenem
+`SetText`-Aufruf, nicht nur aus dem 2-Sekunden-Ticker.
+
+Das ist die Behebung des am 20.08.2026 live gemeldeten Flackerns. Eine Zeile,
+die wir **lesen** können, wird bei jedem Neuzeichnen synchron neu getaggt, weil
+dieser Hook innerhalb von Details!' `SetText` läuft und anhängt, bevor das Bild
+gezeichnet wird — dieser Pfad hat nie geflackert. Eine **versiegelte** Zeile
+wurde früher nur vom Ticker getaggt, also ließ jedes Neuzeichnen von Details! sie
+nackt zurück, bis zu zwei Sekunden lang. Das Tag erschien und verschwand — das
+war „Details blinkt". Es erklärt auch die scheinbaren Lücken: Ein Screenshot
+erwischt die Hälfte des Zyklus, die gerade zu sehen ist.
+
+Das hängt ausdrücklich **nicht** davon ab, wie oft Details! neu zeichnet. Sobald
+das Tag im selben Aufruf geschrieben wird wie der Text, zu dem es gehört, gibt es
+kein Einzelbild, in dem die ungetaggte Fassung auf dem Schirm steht.
+
+Die Identität ist hier **besser** als auf dem Ticker, nicht schlechter: Details!
+setzt `instanceLine.actorGUID` bei `class_damage.lua:3129` und schreibt
+`lineText1` bei `:3199` — dieselbe Funktion, derselbe Aufruf, GUID zuerst. Wenn
+wir laufen, gehört die GUID neben dem Secret auch wirklich zu ihm und ist keine
+Hinterlassenschaft eines früheren Bewohners.
+
+`isOurSetText` wird um den Aufruf herum gesetzt, damit unser eigenes `SetText`
+in den Wächter am Kopf dieses Hooks läuft: Der getaggte String kann nie als
+Details!' Original eingefangen werden, das Tag kann sich also nicht verdoppeln.
+`SafeCall` verhindert, dass ein Wurf `isOurSetText` auf `true` stranden lässt —
+das würde das Taggen für den Rest der Sitzung still abwürgen.
+
+### Das `stale`-Flag — drei tragende Gründe {#stale-flag}
+
+`stale` heißt „ein INSPECT ist geschuldet", und nur ein `INSPECT_READY` darf es
+löschen. Drei Gründe, alle tragend:
+
+1. **Ein bestehendes Flag mitnehmen.** Ein Bosskill flaggt die ganze Gruppe und
+   reiht einen Re-Inspect ein; LibOpenRaid sendet die Ausrüstung ein paar
+   Sekunden nach Kampfende erneut. Ohne das käme der LoR-Schreibvorgang zuerst,
+   löschte das Flag und annullierte den Re-Inspect nach dem Kill für alle.
+2. **Eines setzen, wenn wir diesen Spieler nie inspiziert haben.** LoR liefert
+   ein Item Level, nie einen Set-Bonus — der hat für Gruppenmitglieder genau
+   einen Erzeuger, den Inspect-Pfad. Ein LoR-Schreibvorgang ohne Flag sieht aus
+   wie ein abgeschlossener Inspect: vorhanden, nicht stale, null Sekunden alt.
+   Die Warteschlange fragte dann nie, `setBonusCache` bliebe leer, und das
+   `[2P]`/`[4P]`-Tag verschwände still für jeden, den LoR abdeckt.
+3. **Eines erneut setzen, sobald der Inspect-Horizont abgelaufen ist.** Der
+   frühe Ausstieg oben greift nur bei UNVERÄNDERTEM Item Level innerhalb von
+   300 s, also schreibt jede spätere Lieferung `.time` neu — und LibOpenRaid
+   sendet die Ausrüstung der ganzen Gruppe nach **jedem** Kampfende erneut,
+   nicht nur bei Änderungen. Ohne diese Klausel wird `.time` schneller
+   aufgefrischt als `CACHE_REFRESH`, das Warteschlangen-Tor kann nie wieder
+   feuern, und der 2-Stunden-Re-Inspect, der ein veraltetes `[2P]`/`[4P]` neben
+   einer frischen Zahl in Rente schickt, ist für jeden weg, den LoR abdeckt.
+
+Bewusst **nicht** an „das Item Level hat sich geändert" gekoppelt: Unsere Zahl
+kommt aus der Inspect-API, LoRs aus `GetAverageItemLevel`. Eine dauerhafte
+Abweichung um einen Punkt würde den ganzen Raid nach jedem Pull neu einreihen.
+Der Horizont feuert höchstens einmal pro Spieler und 2 Stunden und fängt auch
+einen Tier-Tausch bei gleichem Item Level.
+
+### Der Settings-Router — ein Ort statt zwanzig {#settings-router}
+
+Die Slash-Zweige setzen `db` direkt und rufen dann die Details!-seitige
+Auffrischung auf, die sie gerade brauchen. Das funktionierte, solange Details!
+die einzige Oberfläche war. Jetzt ist es falsch: Der Router ist das, was den
+**anderen** Renderern mitteilt, dass sich eine Einstellung bewegt hat, und der
+Slash-Pfad erreichte ihn nie. Also räumte `/dilvl off` die Details!-Balken und
+die Unit-Frame-Oberflächen ab und ließ jedes Tag auf Blizzards Meter stehen —
+während derselbe Schalter im Optionsfenster, der durch den Router geht, sauber
+aufräumte. Live gemeldet am 20.08.2026. `/dilvl blizzdm` hatte dasselbe Loch.
+
+Behoben an dieser einen Stelle statt an den zwanzig Zuweisungsstellen, weil eine
+Behebung pro Stelle eine Behebung ist, die die einundzwanzigste Stelle nicht
+bekommt. Schlüssel schnappschießen, Befehl ausführen, weiterreichen, was sich
+tatsächlich geändert hat. Ein künftiger Befehl ist damit von Bauart her
+abgedeckt.
+
+Die eingebauten Auffrischungen in den Zweigen bleiben unangetastet. Eine davon
+doppelt laufen zu lassen kostet einen überflüssigen Durchlauf bei einem Befehl,
+den der Nutzer von Hand getippt hat — also nichts —, und sie zu entfernen hieße,
+zwanzig Zweige für eine nicht messbare Ersparnis neu zu testen.
+
+---
+
+## blizzdm.lua
+
+### Das Rang-Präfix ist lokalisiert — und nur bei Blizzard {#rank-prefix}
+
+Das Rang-Präfix, das Blizzard vor einen Namen zeichnet, ist **lokalisiert**, und
+es ist nicht immer ein Punkt:
+
+```
+enUS/deDE/koKR/ruRU   "%d. %s"
+zhCN                  "%d、%s"      (U+3001)
+zhTW                  "%d。%s"      (U+3002)
+```
+
+Drei Stellen hatten `^%d+%.` fest verdrahtet — zwei Identitäts-Fallbacks, die
+Blizzards gerenderten Text lesen, und die Aufteilung, die den Rang vor unserem
+Tag hält. Auf einem chinesischen Client traf keine davon zu: Die Fallbacks lösten
+still nichts auf, und der Rang wurde aus der Zeile geschoben. Ein fehlendes Tag,
+nie ein falsches — genau deshalb konnte das unbemerkt dort sitzen.
+
+Aus Blizzards eigenem Formatstring abgeleitet statt aufgezählt, damit eine
+Sprache, die wir nie angesehen haben, mit abgedeckt ist. `gsub` escapt
+byteweise, und das ist genau, was wir wollen: Die mehrbyte-Trenner landen als
+literale Bytes im Muster.
+
+**Das gilt ausschließlich für BLIZZARDS Meter.** Details! verdrahtet `". "` in
+jeder Sprache fest (`Details-Damage-Meter/boot.lua:1332`), die Muster in
+`core.lua` und `util.lua` sind also korrekt, wie sie sind, und dürfen **nicht**
+umgestellt werden.
+
+### Identitäts-Nachtrag — der Index allein ist kein Beweis {#identity-backfill}
+
+Der `Init`-Hook ist die einzige Stelle, an der Blizzard uns die GUID einer Zeile
+gibt, und er feuert genau dann, wenn eine Zeile (neu) befüllt wird. Dieser
+Moment ist für uns gleich zweifach falsch: **Während** eines Kampfes ist
+`sourceGUID` nicht verfügbar, und sobald der Kampf **endet**, befüllt nichts die
+Zeilen neu — sie behalten also die leere Identität, die der letzte
+In-Combat-`Init` hinterlassen hat, lesen für den Rest der Sitzung `[NO-GUID]`
+und bleiben ungetaggt, obwohl jeder Spieler darauf mit vollem Item Level in
+unserem Cache sitzt. Den Fenstermodus von Hand umzuschalten heilt es, und nur
+deshalb, weil das einen Neuaufbau erzwingt. Zweimal live gemeldet, 16.08.2026.
+
+Also holen wir die Daten selbst. `GetCombatSession`
+(`DamageMeterSessionWindow.lua:562`) ist ein schlichter Getter über
+`C_DamageMeter.GetCombatSessionFromType` / `FromID`, und `frame.index` zeigt
+direkt auf den Eintrag der Zeile in dieser Liste: `BuildDataProvider` stempelt
+`combatSource.index = i` (`:640`), und `Init` kopiert es
+(`DamageMeterEntry.lua:477`).
+
+**Der Index allein ist KEIN Beweis.** Die Liste kann zwischen dem letzten `Init`
+eines Frames und jetzt umsortiert worden sein, und ihm blind zu vertrauen würde
+die Identität eines Spielers der Zeile eines anderen zuteilen — genau das
+Versagen, das dieses Addon nicht produziert. Deshalb wird jede Übereinstimmung
+gegen die zwei Felder bestätigt, die Blizzard als `NeverSecret` markiert und die
+`Init` aus derselben Quelle kopiert hat: `classFilename` und `specIconID`
+(`DamageMeterDocumentation.lua:202-203`). Die Schadenssumme gehört **nicht**
+dazu — sie trägt überhaupt keine Annotation, genau wie `sourceGUID` (`:199`,
+`:204`), ist auf einer versiegelten Zeile also unlesbar und dient nur als
+Zusatzbestätigung, wenn sie zufällig verfügbar ist.
+
+Nur außerhalb des Kampfes: `GetCombatSessionFromType` ist `SecretWhenInCombat`
+(`DamageMeterDocumentation.lua:39-41`).
+
+### Index-Join Regel 4 — warum gezählt und nicht lizenziert wird {#index-join-rule4}
+
+Regel 4 lautet: Jede **andere** Quelle dieser Klasse und Spezialisierung sitzt
+auf einem Index, den ein bestätigter Zeuge belegt hat — diese Zeile ist also der
+einzige Platz, der für diese eine übrig bleibt.
+
+Die fensterweite Lizenz allein reicht hier **nicht**, und das war ein echter
+Defekt, kein theoretischer. `orderTrusted` wird von zwei Signalen gesetzt:
+bestätigte Zeilen, die auf dem Index landen, den sie behaupten, und keine Klasse,
+die irgendwo ihrer Quelle widerspricht. Ein Tausch zweier Spieler, die Klasse
+**und** Spezialisierung teilen, sendet **keines von beiden** — der Klassenstring
+ist an jedem Index unverändert, und solange nicht einer der beiden getauschten
+Zeilen selbst ein Zeuge ist, bewegt sich kein Zeuge. Nach einem Kampf ist der
+einzige Zeuge meist die eigene Zeile, eine einzige unbewegte Probe hätte also
+zwei Dutzend andere lizenziert. Die Regeln 1 bis 3 lehnen für genau diese
+Population alle ab, diese Regel war also die entscheidende — und sie hätte den
+Namen **und** das Item Level des anderen Spielers auf die Zeile geschrieben,
+unter einem Klassensymbol, das weiterhin passte. Nichts auf dem Bildschirm hätte
+dem widersprochen, und der direkte Durchlauf überspringt Zeilen, die bereits eine
+API-Identität tragen — kein späterer Durchlauf repariert das also.
+
+Angeheftete Positionen zu zählen schließt die Lücke: Eine klassenerhaltende
+Vertauschung muss mindestens zwei Mitglieder einer Gruppe bewegen, und wenn jedes
+andere Mitglied angeheftet ist, bleibt kein zweites zum Bewegen übrig.
+
+### Injektion in UpdateName — zwei beweisbar sichere Fälle {#updatename-gate}
+
+**Warum es hier überhaupt passieren muss:** Wenn ein Kampf endet, hebt Blizzard
+die Geheimhaltung der Namen auf und ruft `UpdateName` — aber die ScrollBox baut
+ihre Zeilen **nicht** neu auf, `Init` läuft also nie. Lebte die Injektion nur im
+`Init`-Hook, bliebe das ganze Meter nach jedem Pull ungetaggt, bis irgendetwas
+einen Neuaufbau erzwingt, etwa das Umschalten des Fenstermodus. Live gemeldet
+am 15.08.2026.
+
+**Warum es abgesichert ist:** `UpdateName`s einziger Aufrufer ist `Init` selbst
+(`DamageMeterEntry.lua:481`), es feuert also auch mitten im Recycling — wenn
+`sourceName` bereits der **neue** Spieler ist, während `_dilvlGUID` noch den
+vorherigen hält — und `ResolveFrameGUID` gibt bedingungslos eine API-GUID
+zurück. Dann zu schreiben setzte das Item Level des einen Spielers unter den
+Namen eines anderen (behoben in `62544d4`).
+
+Zwei Fälle sind beweisbar sicher:
+
+- **Keine API-Identität gespeichert** — `ResolveFrameGUID` löst dann frisch aus
+  dem Namen auf, den Blizzard gerade gezeichnet hat, und das ist per Definition
+  der aktuelle Bewohner. Das ist der Nach-Kampf-Fall von oben: Der
+  In-Combat-`Init` hat die Identität geleert, weil die GUID unlesbar war.
+- **Eine API-Identität, deren notierter Eigentümer weiterhin zu `sourceName`
+  passt** — die Zeile wurde neu gezeichnet, nicht neu vergeben.
+
+Alles andere ist ein Recycling: überspringen. `CaptureIdentityAndInject`
+injiziert einen Moment später mit der korrekten Identität. Ein Tag einen Frame
+zu spät schlägt ein falsches Tag jetzt.
+
+### Refresh — Vermutung fliegt, API-Identität überlebt {#refresh-identity}
+
+Eine **geratene** GUID trägt keine Garantie, dass sie noch zu dieser Zeile
+gehört, also fliegt sie: Ein wiederverwendetes Frame kann einen **anderen**
+Spieler darstellen, während `sourceName` noch geheim ist, und eine erhaltene
+Vermutung würde das Item Level des vorherigen Bewohners auf den falschen Balken
+malen.
+
+Eine **API-Identität** ist der umgekehrte Fall und muss **überleben**. `Refresh`
+re-initialisiert jedes Frame, **bevor** der Rumpf dieses Post-Hooks läuft
+(`DamageMeterSessionWindow.lua:747-750`, und `:762` → `SetDataProvider` → der
+Initializer, den die ScrollBox synchron ausführt). `CaptureIdentityAndInject` hat
+die Identität jedes Frames also bereits geleert und aus Blizzards eigener
+`combatSource` neu aufgebaut. Hier noch einmal zu löschen entfernte genau das —
+im selben Aufrufstapel, einen Moment später.
+
+Deshalb las jeder Live-Dump `(0 api)`: Die Identität überlebte nur auf Zeilen,
+die die ScrollBox durch **Scrollen** erworben hat, dem einzigen Pfad, der nie
+durch `Refresh` läuft. Genau deshalb las ein Dump direkt nach dem Scrollen
+`(4 api)` für exakt die vier neu freigelegten Zeilen. Die Folge waren keine
+falschen Daten, sondern **gar keine**: Ohne API-Identität hat eine Zeile, deren
+Namen Blizzard nach einem Kampf weiterhin schützt, nichts, wodurch sie
+zugeschrieben werden könnte — sie bleibt ungetaggt, obwohl ihr Item Level in
+unserem Cache liegt.
+
+### /dilvl securetest — die beiden Experimente {#securetest}
+
+Aus der Tiefenanalyse vom 21.08.2026. **Nur von Hand.** Nichts hierin läuft je
+von selbst. Beide Experimente sondieren undokumentiertes Verhalten, und
+undokumentiertes Verhalten ist genau das, was Blizzard ohne Vorwarnung unter uns
+ändern darf — keines darf also zu einem automatischen Codepfad werden, außer eine
+spätere Version sichert es mit einer Versions-Kanarie **und** einem Kill-Switch
+ab, als **Fallback** hinter den dokumentierten Pfaden. Entscheidung des
+Maintainers, 21.08.2026, und die richtige.
+
+**E2 „guid":** Das an jede versiegelte Zeile gebundene ScrollBox-Element hält
+noch die versiegelte `sourceGUID` aus dem Kampf. `UnitTokenFromGUID` /
+`UnitNameFromGUID` / `GetPlayerInfoByGUID` sind
+`SecretArguments=AllowedWhenTainted`, und ihr Geheimhaltungs-Prädikat
+(`SecretWhenUnitIdentityRestricted`) dokumentiert eine Ausnahme für
+Gruppen-/Raidmitglieder. Die versiegelte GUID hineinzureichen ist also legal; ob
+die **Rückgabe** lesbar ist, ist der undokumentierte Teil. Jeder Aufruf ist
+`pcall`'t, jede Rückgabe wird vor jedem Vergleich `issecretvalue`-geprüft — nur
+Lesen, keine Schreibvorgänge, kein Blizzard-Code angetrieben: null Taint-Risiko.
+Eine lesbare Rückgabe wäre ein Zeuge pro Zeile, und die „ambiguous"-Ablehnungen
+stürben.
+
+**E1 „cvarflip":** `SetCVar("damageMeterEnabled", 0 dann 1)` lässt Blizzards
+eigenen CVar-Handler das Meter verstecken und wieder zeigen, und `OnShow` ruft
+`Refresh` — das programmatische Gegenstück zum Segment-Umschalten des Nutzers.
+Aus der Dokumentation **nicht entscheidbar**, ob diese Zustellung unseren Taint
+erbt (`CVAR_UPDATE` ist `SynchronousEvent`, aber die Cache-Behandlung in
+`CvarUtil` legt nahe, dass die Zustellung sicher beginnt). Daher ein Experiment,
+hart abgesichert:
+
+- verweigert im Kampf (volles Gatter) und innerhalb eines aktiven Keystones —
+  zwischen M+-Trashgruppen flackert die Beschränkung, und ein Flip im falschen
+  Moment ist genau das Chaos, das der Maintainer vorhergesagt hat
+- verweigert, solange das Meter nicht gezeigt wird, die CVar nicht `"1"` liest
+  und nicht tatsächlich versiegelte Zeilen existieren (sonst beweist das Ergebnis
+  nichts)
+- verlangt das wörtliche Argument `"confirm"`, nachdem das Wiederherstellungs-
+  Protokoll gedruckt wurde
+- **ein** Lauf pro Sitzung. Wirft Blizzards Handler, taucht der Fehler in BugSack
+  auf, nicht in unserem `pcall` — nach jedem Lauf bleibt der Riegel also unten,
+  und die Wiederherstellung ist die Einstellungs-Checkbox oder `/reload`,
+  **niemals** ein zweiter Flip (ein fehlgeschlagener Lauf vergiftet den
+  CVar-Cache, erneutes Feuern vergiftet ihn erneut).
+
+### Der automatische Nach-Kampf-Nachtrag {#auto-backfill}
+
+Der E1-CVar-Bounce als **Fallback**, live bewiesen am 21.08.2026 (manuelles
+`/dilvl securetest cvarflip`, Ausgang (a)): `SetCVar("damageMeterEnabled","0"→"1")`
+bringt Blizzards **eigenen** Handler dazu, das Meter zu verstecken und wieder zu
+zeigen; `OnShow` ruft `Refresh`, das jede Zeile aus nach dem Kampf lesbaren
+Gettern neu aufbaut, in Blizzards eigener sicherer Ausführung. 25 versiegelte
+Zeilen wurden bei t+0 lesbar, Sitzungen intakt, kein Fehler geworfen.
+
+Fallback-Disziplin, die ausdrückliche Bedingung des Maintainers: Das feuert nur,
+**nachdem** die dokumentierten Pfade ihre Chance hatten, und nur, wenn sie
+versiegelte Zeilen hinterlassen haben. Einmal pro Kampf scharf gestellt,
+verweigert innerhalb eines aktiven Keystones, verweigert bei jedem Kampfsignal,
+und wenn ein Bounce je die Zahl der versiegelten Zeilen nicht senkt, nimmt es an,
+Blizzard habe das undokumentierte Verhalten unter uns geändert, und schaltet sich
+für den Rest der Sitzung ab — der Kill-Switch, ohne den dieses Feature nicht
+ausgeliefert werden durfte. `/dilvl autorefresh` schaltet es ganz aus.
+
+Der sichtbare Preis: Das Meter blinkt für einen Frame, wenn der Bounce feuert.

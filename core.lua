@@ -142,29 +142,16 @@ local detailsShowsRank = true
 -- Per-FontString record of what Details! last drew there: the rank as a plain
 -- number and the display name on its own, BEFORE Details! welded them into one
 -- string. Written only by the UpdateBarApocalypseWow post-hook, which is handed
--- both separately. This is what makes true "left" placement possible on a
--- sealed row: the pieces exist for exactly one call, and afterwards there is
--- only an opaque blob we may not cut.
+-- both separately -- that one call is the only moment the pieces exist, and
+-- afterwards there is an opaque blob we may not cut. The name half may be a
+-- secret: safe as a table VALUE, and only ever passed to format as a %s.
 --
--- The name half may be a secret. That is safe as a table VALUE (same as
--- barSecretText) and it is only ever passed to string.format as a %s argument.
---
--- CARRIES THE GUID IT WAS BUILT FROM, and every consumer must check it.
---
--- The note here used to claim the record was cleared in lockstep with
--- barSecretText so a recycled row could never re-emit the previous occupant.
--- That was wrong, and it is what hid the bug. A FontString is not a player, it
--- is a row SLOT that Details! hands to a different actor on every re-sort, and
--- Details! overwrites lineText1 in place (class_damage.lua:3199) without ever
--- blanking it — `ClearText()` appears nowhere in its entire source. So on a
--- sealed-to-sealed handover NEITHER clear site fires and the record survives
--- into the next occupant.
---
--- What that produced: the tag is composed from the row's CURRENT actorGUID
--- while the name and rank come from the record, so a row could render the
--- departed player's name beside the arriving player's item level. A wrong name
--- on screen is the one outcome this addon does not accept, so the guid travels
--- with the record and a mismatch discards it.
+-- CARRIES THE GUID IT WAS BUILT FROM, and every consumer must check it. A
+-- FontString is a row SLOT, not a player -- Details! hands it to a different
+-- actor on every re-sort and overwrites lineText1 in place without ever
+-- blanking it, so a surviving record would render the departed player's name
+-- beside the arriving player's item level.
+-- Why: dev-docs/CODE_NOTES.md#barrankinfo
 local barRankInfo = {}
 local detailsMethodHooked = false
 -- Forward declaration: installed from HookAllBars, defined below EmitSealedTag.
@@ -426,26 +413,15 @@ local function GetIlvlForGuid(guid)
 
     -- LAST RESORT: the value we measured, however old it is.
     --
-    -- CACHE_REFRESH is a RE-INSPECT horizon, not a display horizon. The comment
-    -- at its declaration says so: "re-inspect if we can reach them". Using it to
-    -- suppress the tag as well means the tag vanishes for anyone we can no
-    -- longer reach — someone who left the group, or a stored segment from an
-    -- earlier raid. No newer value is ever coming for them, so "wait for
-    -- something fresher" is a promise that cannot be kept.
-    --
-    -- It also made the two renderers disagree about the same data.
-    -- API.GetCacheData, which the Blizzard-meter path uses, reads ilvlCache with
-    -- no age filter at all, so a two-hour-old entry tagged every row over there
-    -- while these rows went blank. Live on 20.08.2026 that showed up as Details!
-    -- losing its tags an hour after a raid: 35385 refusals for "no item level"
-    -- against a cache that held every one of them. Nothing had broken; the
-    -- entries had simply crossed 7200 seconds.
-    --
-    -- This does not weaken the freshness rule. Everything above still prefers a
-    -- fresher source and the inspect pipeline still re-inspects on its own
-    -- schedule. It only stops us throwing the answer away when no fresher one
-    -- exists. What we measured is attributable; showing nothing while the meter
-    -- beside it shows the number is just inconsistent.
+    -- CACHE_REFRESH is a RE-INSPECT horizon, not a display horizon. Using it to
+    -- suppress the tag as well made the tag vanish for anyone we can no longer
+    -- reach -- someone who left the group, a stored segment from an earlier
+    -- raid -- where no newer value is ever coming. It also made the two
+    -- renderers disagree: API.GetCacheData reads the same cache with no age
+    -- filter, so Blizzard's meter kept tagging rows that went blank here.
+    -- Everything above still prefers a fresher source; this only stops us
+    -- throwing the answer away when no fresher one exists.
+    -- Why: dev-docs/CODE_NOTES.md#cache-fallback
     return cached and cached.ilvl or nil
 end
 
@@ -627,34 +603,14 @@ local function RebuildNameIlvlMap()
                         -- Prefer the Name-Realm form via the roster (cross-realm asymmetry
                         -- fix); otherwise actor.nome, which is the combat-log name.
                         --
-                        -- NOT actor.displayName. Details! documents the two apart:
-                        --   Definitions.lua:601  displayName  "actor name shown in the
-                        --                                      regular window"
-                        --   Definitions.lua:610  nome         "name of the actor"
-                        -- displayName is a RENDERED string and Details! rewrites it freely.
-                        -- Two of the three paths are ON BY DEFAULT:
-                        --   * a guild nickname replaces it outright
-                        --     (container_actors.lua:644-651). ignore_nicktag defaults to
-                        --     false (profiles.lua:1330) and the pool is fed over the GUILD
-                        --     addon channel, so the string is authored by another player.
-                        --     checkValidNickname constrains WHO, not WHAT — no similarity
-                        --     check, so "Gandalf" for Ivan-Blackrock passes.
-                        --   * remove_realm_from_name defaults to true (profiles.lua:980) and
-                        --     strips the realm at :657-658, giving the bare "Torvi" for a
-                        --     cross-realm player — the collision vector line 340 worries
-                        --     about. (The ">" form at :802 is the PET branch; we filter
-                        --     IsPlayer(), so it cannot reach us.)
-                        --   * Translit is off by default, but romanises IN PLACE when on
-                        --     (class_damage.lua:3921-3925), so one render anywhere leaves
-                        --     the shared actor permanently carrying "!Ivan" for "Иван".
-                        -- Any of those would have been persisted here as identity —
-                        -- and blizzdm.lua:909 writes cached.name onto a Blizzard-owned row,
-                        -- so we would have put a spelling we invented under someone's bar.
-                        -- A name we cannot attribute is worse than no name, and nome is
-                        -- never rewritten.
-                        --
-                        -- The reverse-lookup nameOnly fallback in ResolveGUIDByName still
-                        -- covers any leftover bare entries.
+                        -- NOT actor.displayName. It is a RENDERED string that Details!
+                        -- rewrites freely -- guild nicknames authored by other players,
+                        -- realm stripping, transliteration in place -- and two of those
+                        -- three are ON BY DEFAULT. blizzdm.lua:909 writes cached.name onto
+                        -- a Blizzard-owned row, so persisting it would put a spelling we
+                        -- invented under someone else's bar. A name we cannot attribute is
+                        -- worse than no name, and nome is never rewritten.
+                        -- Why: dev-docs/CODE_NOTES.md#displayname
                         local entry = ilvlCache[actor.serial]
                         if entry and not entry.name then
                             entry.name = ResolveFullNameByGuid(actor.serial)
@@ -1105,34 +1061,22 @@ local function HookBarTextIfNeeded(bar)
                     end
                     return
                 end
-                -- Tag the sealed row HERE, inside Details!' own SetText call —
-                -- not only from the 2s ticker.
+                -- Tag the sealed row HERE, inside Details!' own SetText call --
+                -- not only from the 2s ticker. Writing the tag in the same call
+                -- as the text means no frame ever shows the untagged version;
+                -- the ticker alone left sealed rows bare between redraws, which
+                -- is what "Details blinkt" was (live 20.08.2026).
                 --
-                -- This is the fix for the flicker reported live on 20.08.2026. A
-                -- row we CAN read is re-tagged synchronously on every redraw,
-                -- because this hook runs inside Details!' SetText and appends
-                -- before the frame is drawn; that path has never flickered. A
-                -- SEALED row used to be tagged only by the ticker, so every
-                -- Details! redraw left it bare until the next tick, up to two
-                -- seconds later. The tag appeared and vanished, and that is what
-                -- "Details blinkt" was. It also explains the apparent gaps: a
-                -- screenshot catches whichever half of the cycle is showing.
-                --
-                -- Note this does NOT depend on how often Details! redraws. Once
-                -- the tag is written in the same call as the text it belongs to,
-                -- there is no frame in which the untagged version is on screen.
-                --
-                -- Identity is BETTER here than on the ticker, not worse: Details!
-                -- assigns instanceLine.actorGUID at class_damage.lua:3129 and
-                -- writes lineText1 at :3199 — same function, same call, GUID
-                -- first. When we run, the GUID beside the secret is the one that
-                -- belongs to it, not one left over from a previous occupant.
+                -- Identity is BETTER here than on the ticker: Details! assigns
+                -- actorGUID (class_damage.lua:3129) and writes lineText1 (:3199)
+                -- in the same call, GUID first, so the GUID beside the secret is
+                -- the one that belongs to it.
                 --
                 -- isOurSetText is set around the call so our own SetText hits the
-                -- guard at the top of this hook: the tagged string can never be
-                -- captured as Details!' original, so the tag cannot double.
-                -- SafeCall keeps a throw from stranding isOurSetText as true,
-                -- which would kill tagging silently for the rest of the session.
+                -- guard at the top of this hook and the tag cannot double.
+                -- SafeCall keeps a throw from stranding it as true, which would
+                -- kill tagging silently for the rest of the session.
+                -- Why: dev-docs/CODE_NOTES.md#inline-tagging
                 if not db.showInDetails then return end
                 if not IsDetailsWindowAllowed(bar.instance_id) then return end
                 -- Same combat rule as every other write to a Details! FontString.
@@ -1952,29 +1896,16 @@ local function LoRApplyGear(unit, gearInfo)
     local storedName = (realm and realm ~= "") and (name .. "-" .. realm) or name
     ilvlCache[guid] = {ilvl = ilvl, time = time(), name = storedName, source = "lor",
         -- `stale` means "an INSPECT is owed", and only an INSPECT_READY may clear
-        -- it. Two separate reasons, both load-bearing:
-        --   1. Carry an existing flag. A boss kill flags the whole group and
-        --      queues a re-inspect; LibOpenRaid re-broadcasts gear a few seconds
-        --      after combat ends, so without this the LoR write would land first,
-        --      clear the flag, and cancel the post-kill re-inspect for everyone.
-        --   2. Raise one when we have never inspected this player. LoR gives us
-        --      an item level, never a set bonus — that has exactly one producer
-        --      for group members, the inspect path. A LoR write with no flag looks
-        --      like a completed inspect: present, not stale, zero seconds old. The
-        --      queue would then never ask, setBonusCache would stay empty, and the
-        --      [2P]/[4P] tag would silently disappear for everyone LoR covers.
-        --   3. Re-raise one once the inspect horizon has already expired. The early
-        --      return above only fires for an UNCHANGED item level inside 300s, so
-        --      every later delivery rewrites `.time` — and LibOpenRaid re-sends the
-        --      whole group's gear a few seconds after EVERY combat drop, not only
-        --      when something changed. Without this clause `.time` is refreshed
-        --      faster than CACHE_REFRESH, the queue gate can never fire again, and
-        --      the 2h re-inspect that retires a stale [2P]/[4P] sitting beside a
-        --      fresh number is gone for everyone LoR covers. Deliberately NOT keyed
-        --      on "the item level changed": our number comes from the inspect API
-        --      and LoR's from GetAverageItemLevel, so a permanent 1-point disagreement
-        --      would re-queue the entire raid after every pull. The horizon fires at
-        --      most once per player per 2h and also catches an equal-ilvl tier swap.
+        -- it. Three load-bearing reasons: carry an existing flag (a LoR write
+        -- must not cancel the post-kill re-inspect), raise one when we have
+        -- never inspected this player (LoR gives an item level, never a set
+        -- bonus), and re-raise one once the inspect horizon expired (LoR re-sends
+        -- after EVERY combat drop, so `.time` would refresh faster than
+        -- CACHE_REFRESH and the 2h re-inspect could never fire again).
+        -- Deliberately NOT keyed on "the item level changed": our number comes
+        -- from the inspect API and LoR's from GetAverageItemLevel, so a standing
+        -- one-point disagreement would re-queue the entire raid after every pull.
+        -- Why: dev-docs/CODE_NOTES.md#stale-flag
         stale = (existing and existing.stale) or (setBonusCache[guid] == nil)
                 or (existing and (time() - existing.time) >= CACHE_REFRESH) or nil}
     StoreNameIlvl(storedName, ilvl, guid)
@@ -4265,25 +4196,16 @@ local function SlashBody(msg)
 end
 
 ---------------------------------------------------------------
--- Every slash command routes its change through the settings router.
+-- Every slash command routes its change through the settings router: snapshot
+-- the keys, run the command, forward whatever actually changed.
 --
--- The branches above set db directly and then call the Details!-side refresh
--- they happen to need. That worked while Details! was the only surface. It is
--- wrong now: the router is what tells the OTHER renderers a setting moved, and
--- the slash path never reached it. So `/dilvl off` cleared the Details! bars and
--- the unit-frame surfaces, and left every tag standing on Blizzard's meter --
--- while the same toggle in the options panel, which does go through the router,
--- cleaned up properly. Reported live 20.08.2026. `/dilvl blizzdm` had the same
--- hole.
---
--- Fixed here rather than at the twenty assignment sites, because a fix per site
--- is a fix that the twenty-first site will not get. Snapshot the keys, run the
--- command, forward whatever actually changed. A future command is covered by
--- construction.
---
--- The inline refreshes above are left alone. Re-running one costs a redundant
--- pass on a command the user typed by hand, which is nothing, and removing them
--- would mean re-testing twenty branches for a saving nobody can measure.
+-- The branches above set db directly and refresh only the Details! side, so the
+-- OTHER renderers never heard that a setting moved -- `/dilvl off` left every
+-- tag standing on Blizzard's meter while the same toggle in the options panel
+-- cleaned up properly (live 20.08.2026). Fixed here rather than at the twenty
+-- assignment sites, because a fix per site is one the twenty-first will not get.
+-- The inline refreshes above are left alone on purpose.
+-- Why: dev-docs/CODE_NOTES.md#settings-router
 ---------------------------------------------------------------
 local ROUTED_KEYS = {
     "enabled", "colorIlvl", "showSetBonus", "showInDetails", "detailsFontSize",
