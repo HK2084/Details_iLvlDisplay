@@ -107,6 +107,8 @@ In a **raid**, rows that come out of a kill still sealed are now filled in autom
 
 Full documentation, source code, and issue tracker on [GitHub](https://github.com/HK2084/Details_iLvlDisplay).
 
+**Contributing?** The repository carries an [AGENTS.md](https://github.com/HK2084/Details_iLvlDisplay/blob/master/AGENTS.md) describing the architecture, the rules this addon does not bend, and the test gates a change has to pass. Written for AI coding assistants and human contributors alike.
+
 **Translations welcome.** The addon ships in English and German; the AddOn-list description is also localised for ruRU, zhCN, zhTW and koKR. If a string reads wrong in your language, open an issue on GitHub — corrections from native speakers are very welcome.
 
 **License:** free to download and use, and you are welcome to tweak it for your own UI. Please don't reupload it or publish modified copies — see the full license on this page.
