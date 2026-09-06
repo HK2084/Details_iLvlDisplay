@@ -90,6 +90,13 @@ end
 -- to ReturnWithError. pcall handles all three paths.
 -- Returns name, realm or nil, nil when blocked by secrets OR when the
 -- call is hard-rejected from a tainted execution context (#26).
+--
+-- Predicate rename, recorded so nobody investigates it twice: with build 69587
+-- Blizzard renamed UnitName's guard from SecretWhenUnitIdentityRestricted to
+-- SecretWhenUnitNameIdentityRestricted (radar run 06.09.2026). Rename only,
+-- same behaviour, absorbed here unchanged. UnitGUID kept the old name — the two
+-- are separate predicates now. SecretArguments stays on the watchlist: it is
+-- AllowedWhenTainted today and has flipped before.
 ----------------------------------------------------------------
 function S.SafeUnitName(unit)
     local ok, name, realm = pcall(UnitName, unit)
@@ -163,3 +170,56 @@ end
 function S.InCombatRaw()
     return InCombatLockdown()
 end
+
+----------------------------------------------------------------
+-- canaccessvalue -- the question issecretvalue cannot answer.
+--
+-- issecretvalue asks "is this value sealed?"; canaccessvalue asks "may THIS
+-- function touch it?" -- and the two come apart. A value can be secret and
+-- still readable by us (Blizzard exempts party and raid members from several
+-- identity predicates), and permission is judged against the immediate calling
+-- function, so the answer belongs to the caller, not to the value.
+--
+-- Blizzard uses it exactly that way (ChatFrameFilters.lua:37), to decide
+-- whether handing a decorated player name to a tainted callback is worthwhile.
+--
+-- pcall'd on purpose: the API itself carries SecretArguments =
+-- "AllowedWhenUntainted", so calling it from our tainted code with a secret
+-- argument is not guaranteed to be legal. A guard that throws is worse than no
+-- guard at all.
+--
+-- Returns true / false / nil, where nil means "no answer" -- the API is absent
+-- or the call itself was refused. Callers must treat nil as "no access".
+--
+-- No caller yet: this is the wrapper layer, and completeness here is the point
+-- (same reason InCombatRaw exists). Grid2 needed this predicate where
+-- issecretvalue was not enough; when we hit that case, the guard is in place.
+----------------------------------------------------------------
+function S.CanAccessValue(val)
+    if not canaccessvalue then return nil end
+    local ok, res = pcall(canaccessvalue, val)
+    if not ok then return nil end
+    if res == true then return true end
+    if res == false then return false end
+    return nil
+end
+
+----------------------------------------------------------------
+-- GUID identity lookups -- the E2 probe set.
+--
+-- All four carry SecretWhenUnitIdentityRestricted on live: inside a restricted
+-- instance they hand back a secret, and comparing or concatenating one throws.
+-- They live here rather than at the call site so the .luacheckrc gate can keep
+-- them out of the rest of the addon -- a new call site anywhere else then fails
+-- CI instead of shipping.
+--
+-- Read-only. Every caller must isSecretValue-check the return before touching
+-- it AND pcall the call itself: the lookups can throw on a sealed GUID.
+----------------------------------------------------------------
+S.guidLookups = {
+    UnitTokenFromGUID   = UnitTokenFromGUID,
+    UnitNameFromGUID    = UnitNameFromGUID,
+    UnitClassFromGUID   = UnitClassFromGUID,
+    GetPlayerInfoByGUID = GetPlayerInfoByGUID,
+}
+

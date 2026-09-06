@@ -4496,6 +4496,11 @@ Details_iLvlDisplayAPI = {
     InCombatRaw     = InCombatRaw,
     isSecretValue   = isSecretValue,
     hasanysecretvalues = _hasanysecretvalues,
+    CanAccessValue  = secrets.CanAccessValue,
+    -- The four GUID identity lookups live behind the secrets.lua gate; the
+    -- .luacheckrc keeps them out of every other file, so sub-files reach them
+    -- through here or not at all.
+    guidLookups     = secrets.guidLookups,
     -- LibOpenRaid delivery counters for the diagnostics page. Returns a COPY:
     -- the page renders the session counters, it must not be able to reset them.
     GetLoRDebug = function()

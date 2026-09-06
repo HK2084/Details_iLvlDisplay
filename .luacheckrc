@@ -11,11 +11,18 @@
 --   That is the exact class of crash that hit the Slave Pens event dungeon.
 --
 -- HOW IT IS ENFORCED:
---   These six APIs are deliberately LEFT OUT of read_globals below. So a raw
+--   These APIs are deliberately LEFT OUT of read_globals below. So a raw
 --   call anywhere reads as luacheck code 113 ("accessing undefined variable")
 --   => warning => CI fails. secrets.lua is the ONLY file that whitelists them
 --   (see files["secrets.lua"] at the bottom). To satisfy the linter you must
 --   route the call through a wrapper — which is the point.
+--
+--   Extended 06.09.2026 after a Secret-Value-Radar run: the four GUID identity
+--   lookups carry SecretWhenUnitIdentityRestricted on live but sat in
+--   read_globals, so any file could call them raw. No live exposure at the
+--   time — the only call sites were pcall-guarded probes — but the gate would
+--   have missed a new one. canaccessvalue joined them: it answers a question
+--   issecretvalue cannot, and belongs behind the same wrapper layer.
 --
 --   Consequence: even the always-safe UnitGUID("player") / UnitName("player")
 --   sites must use SafeUnitGUID("player") etc. (identical behaviour, never
@@ -23,7 +30,7 @@
 --
 -- Run locally:  luacheck . --std lua51
 -- (read_globals regenerated from the addon's actual API surface via
---  `luacheck . --only 113 --globals ""`, minus the six forbidden APIs.)
+--  `luacheck . --only 113 --globals ""`, minus the forbidden APIs.)
 
 std = "lua51"
 max_line_length = false
@@ -74,7 +81,7 @@ globals = {
 }
 
 -- Read-only API surface the addon uses. Regenerated mechanically from the
--- code; the six secret-prone APIs are intentionally ABSENT (see header).
+-- code; the secret-prone APIs are intentionally ABSENT (see header).
 read_globals = {
 	"ACCEPT", "Ambiguate", "CANCEL",
 	"C_AddOns", "C_DamageMeter", "C_InstanceEncounter", "C_Item", "C_Map",
@@ -87,7 +94,7 @@ read_globals = {
 	"Details", "ElvUI", "Enum",
 	"GameFontHighlightSmall", "GameTooltip",
 	"GetAverageItemLevel", "GetBuildInfo", "GetCVar", "GetInventoryItemID",
-	"GetLocale", "GetNumGroupMembers", "GetPlayerInfoByGUID", "GetTime",
+	"GetLocale", "GetNumGroupMembers", "GetTime",
 	"IsEncounterInProgress", "IsInGroup", "IsInRaid",
 	"LE_PARTY_CATEGORY_INSTANCE", "LibStub",
 	"NotifyInspect", "NumberFontNormal", "SetCVar", "Settings",
@@ -96,15 +103,14 @@ read_globals = {
 	"UIDropDownMenu_Initialize", "UIDropDownMenu_SetSelectedValue",
 	"UIDropDownMenu_SetText", "UIDropDownMenu_SetWidth",
 	"UIParent", "UISpecialFrames",
-	"UnitAffectingCombat", "UnitClassFromGUID", "UnitExists", "UnitIsPlayer",
-	"UnitNameFromGUID", "UnitTokenFromGUID",
+	"UnitAffectingCombat", "UnitExists", "UnitIsPlayer",
 	"debugprofilestop", "format", "geterrorhandler", "hasanysecretvalues",
 	"hooksecurefunc", "issecrettable", "issecretvalue",
 	"time", "tinsert", "wipe",
 }
 
 -- The ONE exception: secrets.lua is the wrapper layer, so it is allowed to
--- call the six secret-prone APIs raw. Nothing else may.
+-- call the secret-prone APIs raw. Nothing else may.
 files["secrets.lua"].read_globals = {
 	"UnitGUID",
 	"UnitName",
@@ -112,4 +118,11 @@ files["secrets.lua"].read_globals = {
 	"UnitFullName",
 	"UnitIsUnit",
 	"InCombatLockdown",
+	-- GUID identity lookups: SecretWhenUnitIdentityRestricted on live
+	"UnitTokenFromGUID",
+	"UnitNameFromGUID",
+	"UnitClassFromGUID",
+	"GetPlayerInfoByGUID",
+	-- "may this function touch that value" — see S.CanAccessValue
+	"canaccessvalue",
 }

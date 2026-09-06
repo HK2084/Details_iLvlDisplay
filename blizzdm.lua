@@ -2665,11 +2665,15 @@ function Details_iLvlDisplay_BlizzDMSecureTest(mode, arg)
 
     if mode == "guid" then
         -- E2. Reads only; safe anywhere, any time.
+        -- Through the secrets.lua gate, not raw: all four carry
+        -- SecretWhenUnitIdentityRestricted, and .luacheckrc now fails CI on a
+        -- raw call outside that file.
+        local L = API.guidLookups or {}
         local probes = {
-            {"UnitTokenFromGUID", UnitTokenFromGUID},
-            {"UnitNameFromGUID", UnitNameFromGUID},
-            {"UnitClassFromGUID", UnitClassFromGUID},
-            {"GetPlayerInfoByGUID", GetPlayerInfoByGUID},
+            {"UnitTokenFromGUID", L.UnitTokenFromGUID},
+            {"UnitNameFromGUID", L.UnitNameFromGUID},
+            {"UnitClassFromGUID", L.UnitClassFromGUID},
+            {"GetPlayerInfoByGUID", L.GetPlayerInfoByGUID},
         }
         local rows, sealedRows, sealedGuids = SecureTestCensus()
         P(string.format("E2 GUID witness: %d rows, %d sealed names, %d sealed element GUIDs",
