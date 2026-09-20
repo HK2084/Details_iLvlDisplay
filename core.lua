@@ -1008,6 +1008,136 @@ local function SeedCleanText(fontString)
     end
 end
 
+---------------------------------------------------------------
+-- The body of the Details! SetText hook, at file scope ON PURPOSE.
+--
+-- It used to be an anonymous function built inline: SafeCall(function() ... end).
+-- Lua 5.1 has no closure cache, so that allocated a fresh LClosure plus UpVals on
+-- EVERY call -- measured at roughly 28 calls per second in a raid, before any of
+-- the body's own early returns could skip anything. Hoisting it costs one file
+-- scope local and removes the allocation entirely: SafeCall already takes varargs,
+-- which is the pattern the two calls further down already use.
+--
+-- Only three names came from the enclosing scope (self, text, bar); everything
+-- else was already a file-scope upvalue, which is why this moves without changing
+-- behaviour. `fontString` was NOT used -- `self` is that same FontString.
+---------------------------------------------------------------
+local function BarSetTextBody(self, text, bar)
+    -- Details! Itemlevelfinder passes "secret string" values to SetText.
+    if isSecretValue(text) then
+        hookStats.secret = hookStats.secret + 1
+        barCleanText[self] = nil
+        -- Keep it, unopened. This is the ONLY writer of barSecretText, and
+        -- our own re-emission runs with isOurSetText true (guard at the top
+        -- of this hook), so our tagged line can never be captured as
+        -- Details!' original and the tag can never double.
+        barSecretText[self] = text
+        if db.layout == "columns" then
+            local cols = barColumns[bar]
+            if cols then
+                cols.ilvlFS:SetText("")
+                cols.ilvlFS:Hide()
+                cols.tierFS:SetText("")
+                cols.tierFS:Hide()
+            end
+            return
+        end
+        -- Tag the sealed row HERE, inside Details!' own SetText call --
+        -- not only from the 2s ticker. Writing the tag in the same call
+        -- as the text means no frame ever shows the untagged version;
+        -- the ticker alone left sealed rows bare between redraws, which
+        -- is what "Details blinkt" was (live 20.08.2026).
+        --
+        -- Identity is BETTER here than on the ticker: Details! assigns
+        -- actorGUID (class_damage.lua:3129) and writes lineText1 (:3199)
+        -- in the same call, GUID first, so the GUID beside the secret is
+        -- the one that belongs to it.
+        --
+        -- isOurSetText is set around the call so our own SetText hits the
+        -- guard at the top of this hook and the tag cannot double.
+        -- SafeCall keeps a throw from stranding it as true, which would
+        -- kill tagging silently for the rest of the session.
+        -- Why: dev-docs/CODE_NOTES.md#inline-tagging
+        if not db.showInDetails then return end
+        if not IsDetailsWindowAllowed(bar.instance_id) then return end
+        -- Same combat rule as every other write to a Details! FontString.
+        -- Counted, because a raid produces thousands of these and the
+        -- report must be able to say "held back" rather than going silent.
+        if MayBeInCombat() then
+            sealedStats.combatSkip = sealedStats.combatSkip + 1
+            return
+        end
+        -- The renderer hook runs a few instructions later in this same
+        -- call and will place the tag properly between rank and name.
+        -- Writing the suffix form first would be two writes per row per
+        -- repaint for a result that is immediately overwritten. Keyed on
+        -- the row having been handled before, so a row the renderer hook
+        -- cannot serve still gets its fallback tag from here.
+        if db.ilvlPosition == "left" and barRankInfo[self] then return end
+        sealedStats.inline = sealedStats.inline + 1
+        isOurSetText = true
+        SafeCall(EmitSealedTag, self, text, bar, db.ilvlPosition == "left")
+        isOurSetText = false
+        return
+    end
+    -- A non-secret string arrived: this row is not sealed any more. This
+    -- MUST sit above the two guards below. Details! blanks a row with
+    -- SetText("") when it reuses it, and that empty string returns early;
+    -- clearing after the guards would strand the previous occupant's
+    -- secret and repaint their name onto a row Details! just emptied.
+    barSecretText[self] = nil
+    barRankInfo[self] = nil
+    hookStats.clean = hookStats.clean + 1
+    if not text or type(text) ~= "string" or text:match("^%s*$") then return end
+    if text:find("%[%d+%]") then return end
+
+    -- Cache Details!'s clean text before we inject anything.
+    local hasRank = text:match("^%d+%.%s") ~= nil
+    if hasRank or not barCleanText[self] then
+        barCleanText[self] = text
+    end
+    -- Learn the row layout from the rows we are allowed to read, so the
+    -- sealed rows can be placed to match. Only rows that carry OUR tag
+    -- already, or none, are evidence; a row we just wrote would report
+    -- our own formatting back to us, but those never reach here because
+    -- isOurSetText returns above.
+    detailsShowsRank = hasRank
+
+    if not db.showInDetails then return end
+    -- Per-window filter: this bar's window may be excluded (db.detailsWindowId).
+    -- Gate here covers both layouts — columns are also hidden in RefreshAllColumns.
+    if not IsDetailsWindowAllowed(bar.instance_id) then return end
+
+    if db.layout == "columns" then
+        ScheduleColumnRefresh()
+        return
+    end
+
+    -- Don't inject during combat (taint with secure UI elements)
+    if MayBeInCombat() then return end
+
+    local name = ExtractName(text)
+    if name then
+        local isLeft = db.ilvlPosition == "left"
+        local tag = BuildTag(name, isLeft)
+        if tag then
+            isOurSetText = true
+            if isLeft then
+                -- Insert between rank prefix and name: "1. [272] Playername"
+                local rank, rest = text:match("^(%d+%.%s*)(.*)")
+                if rank then
+                    self:SetText(rank .. tag .. " " .. rest)
+                else
+                    self:SetText(tag .. " " .. text)
+                end
+            else
+                self:SetText(text .. tag)
+            end
+            isOurSetText = false
+        end
+    end
+end
+
 local function HookBarTextIfNeeded(bar)
     if not bar or not bar.lineText1 then return end
 
@@ -1043,121 +1173,7 @@ local function HookBarTextIfNeeded(bar)
         if detailsBarErrors >= DETAILS_BAR_ERROR_LIMIT then return end
         hookStats.calls = hookStats.calls + 1
         if hookStats.since == 0 then hookStats.since = GetTime() end
-        SafeCall(function()
-            -- Details! Itemlevelfinder passes "secret string" values to SetText.
-            if isSecretValue(text) then
-                hookStats.secret = hookStats.secret + 1
-                barCleanText[self] = nil
-                -- Keep it, unopened. This is the ONLY writer of barSecretText, and
-                -- our own re-emission runs with isOurSetText true (guard at the top
-                -- of this hook), so our tagged line can never be captured as
-                -- Details!' original and the tag can never double.
-                barSecretText[self] = text
-                if db.layout == "columns" then
-                    local cols = barColumns[bar]
-                    if cols then
-                        cols.ilvlFS:SetText("")
-                        cols.ilvlFS:Hide()
-                        cols.tierFS:SetText("")
-                        cols.tierFS:Hide()
-                    end
-                    return
-                end
-                -- Tag the sealed row HERE, inside Details!' own SetText call --
-                -- not only from the 2s ticker. Writing the tag in the same call
-                -- as the text means no frame ever shows the untagged version;
-                -- the ticker alone left sealed rows bare between redraws, which
-                -- is what "Details blinkt" was (live 20.08.2026).
-                --
-                -- Identity is BETTER here than on the ticker: Details! assigns
-                -- actorGUID (class_damage.lua:3129) and writes lineText1 (:3199)
-                -- in the same call, GUID first, so the GUID beside the secret is
-                -- the one that belongs to it.
-                --
-                -- isOurSetText is set around the call so our own SetText hits the
-                -- guard at the top of this hook and the tag cannot double.
-                -- SafeCall keeps a throw from stranding it as true, which would
-                -- kill tagging silently for the rest of the session.
-                -- Why: dev-docs/CODE_NOTES.md#inline-tagging
-                if not db.showInDetails then return end
-                if not IsDetailsWindowAllowed(bar.instance_id) then return end
-                -- Same combat rule as every other write to a Details! FontString.
-                -- Counted, because a raid produces thousands of these and the
-                -- report must be able to say "held back" rather than going silent.
-                if MayBeInCombat() then
-                    sealedStats.combatSkip = sealedStats.combatSkip + 1
-                    return
-                end
-                -- The renderer hook runs a few instructions later in this same
-                -- call and will place the tag properly between rank and name.
-                -- Writing the suffix form first would be two writes per row per
-                -- repaint for a result that is immediately overwritten. Keyed on
-                -- the row having been handled before, so a row the renderer hook
-                -- cannot serve still gets its fallback tag from here.
-                if db.ilvlPosition == "left" and barRankInfo[self] then return end
-                sealedStats.inline = sealedStats.inline + 1
-                isOurSetText = true
-                SafeCall(EmitSealedTag, self, text, bar, db.ilvlPosition == "left")
-                isOurSetText = false
-                return
-            end
-            -- A non-secret string arrived: this row is not sealed any more. This
-            -- MUST sit above the two guards below. Details! blanks a row with
-            -- SetText("") when it reuses it, and that empty string returns early;
-            -- clearing after the guards would strand the previous occupant's
-            -- secret and repaint their name onto a row Details! just emptied.
-            barSecretText[self] = nil
-            barRankInfo[self] = nil
-            hookStats.clean = hookStats.clean + 1
-            if not text or type(text) ~= "string" or text:match("^%s*$") then return end
-            if text:find("%[%d+%]") then return end
-
-            -- Cache Details!'s clean text before we inject anything.
-            local hasRank = text:match("^%d+%.%s") ~= nil
-            if hasRank or not barCleanText[self] then
-                barCleanText[self] = text
-            end
-            -- Learn the row layout from the rows we are allowed to read, so the
-            -- sealed rows can be placed to match. Only rows that carry OUR tag
-            -- already, or none, are evidence; a row we just wrote would report
-            -- our own formatting back to us, but those never reach here because
-            -- isOurSetText returns above.
-            detailsShowsRank = hasRank
-
-            if not db.showInDetails then return end
-            -- Per-window filter: this bar's window may be excluded (db.detailsWindowId).
-            -- Gate here covers both layouts — columns are also hidden in RefreshAllColumns.
-            if not IsDetailsWindowAllowed(bar.instance_id) then return end
-
-            if db.layout == "columns" then
-                ScheduleColumnRefresh()
-                return
-            end
-
-            -- Don't inject during combat (taint with secure UI elements)
-            if MayBeInCombat() then return end
-
-            local name = ExtractName(text)
-            if name then
-                local isLeft = db.ilvlPosition == "left"
-                local tag = BuildTag(name, isLeft)
-                if tag then
-                    isOurSetText = true
-                    if isLeft then
-                        -- Insert between rank prefix and name: "1. [272] Playername"
-                        local rank, rest = text:match("^(%d+%.%s*)(.*)")
-                        if rank then
-                            self:SetText(rank .. tag .. " " .. rest)
-                        else
-                            self:SetText(tag .. " " .. text)
-                        end
-                    else
-                        self:SetText(text .. tag)
-                    end
-                    isOurSetText = false
-                end
-            end
-        end)
+        SafeCall(BarSetTextBody, self, text, bar)
     end)
 
     -- 12.0.1 added FontString:ClearText() — hook it so barCleanText doesn't

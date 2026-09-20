@@ -27,11 +27,14 @@ def extract(start_pat, end_pat):
 
 
 EMIT = extract(r"^EmitSealedTag = function\(", r"\n    sealedStats\.emitted = sealedStats\.emitted \+ 1\nend")
-HOOK = extract(r"^        SafeCall\(function\(\)\n            -- Details! Itemlevelfinder",
-               r"\n        end\)\n    end\)")
-# strip the outer SafeCall(function() ... end) wrapper -> keep the body
-HOOK_BODY = HOOK.split("\n", 1)[1]
-HOOK_BODY = HOOK_BODY.rsplit("\n        end)", 1)[0]
+# The hook body used to be an anonymous SafeCall(function() ... end) and this
+# anchor matched that shape. It is a named file-scope function since the closure
+# was hoisted out of the per-call path, which makes the anchor both simpler and
+# harder to break: a rename now fails loudly here instead of silently matching
+# some other inline function.
+HOOK = extract(r"^local function BarSetTextBody\(self, text, bar\)$", r"^end$")
+# strip the declaration line and the closing `end` -> keep the body
+HOOK_BODY = HOOK.split("\n", 1)[1].rsplit("\nend", 1)[0]
 
 print("extrahiert: EmitSealedTag %d Zeilen, Hook-Body %d Zeilen"
       % (EMIT.count("\n") + 1, HOOK_BODY.count("\n") + 1))
@@ -237,7 +240,18 @@ for name, ok in checks:
         bad += 1
 
 # ---------------- Positivkontrolle: derselbe Test gegen kaputten Code ----------------
-broken = chunk.replace("sealedStats.inline = sealedStats.inline + 1\n                isOurSetText = true\n                SafeCall(EmitSealedTag, self, text, bar, db.ilvlPosition == \"left\")\n                isOurSetText = false\n", "")
+# Indentation-independent on purpose: the body was dedented by eight columns when
+# the closure moved to file scope, and this control silently stopped removing
+# anything — it printed a warning and every check still passed, which is the one
+# failure mode a positive control must never have. Matching on the statements
+# rather than their column survives the next reindent too.
+import re as _re
+_branch = _re.compile(
+    r"[ \t]*sealedStats\.inline = sealedStats\.inline \+ 1\n"
+    r"[ \t]*isOurSetText = true\n"
+    r"[ \t]*SafeCall\(EmitSealedTag, self, text, bar, db\.ilvlPosition == \"left\"\)\n"
+    r"[ \t]*isOurSetText = false\n")
+broken = _branch.sub("", chunk)
 if broken == chunk:
     print("\nWARNUNG: Positivkontrolle konnte den Zweig nicht entfernen")
 else:
