@@ -1,5 +1,7 @@
 -- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
 -- Licensed for private use only; see LICENSE. No redistribution of modified copies.
+-- NO AI/ML USE. Permission is expressly withheld for training, embedding, indexing,
+-- retrieval, code generation or any comparable use. See LICENSE clause 6.
 -- init.lua — addon namespace bootstrap
 --
 -- Every Lua file in this addon receives the same `(addonName, ns)` varargs
@@ -74,6 +76,13 @@ ns.POS_KEYS_SET = {
 -- so a user installing ElvUI later still gets the ElvUI-specific hint.
 ns.LOGIN_HINTS = {
     {
+        -- No gate, and the only hint that exists because a change moves people
+        -- DOWN. Someone who was gold yesterday and is orange today will file it
+        -- as a bug unless told that the scale moved and their gear did not.
+        key  = "ilvlbands161",                              -- v1.6.1
+        msg  = "Item level colours have been rebuilt around this season's gear upgrade ranks. Gold had drifted into holding well over half of all players; it now starts one rank above a fully upgraded Hero set, and a new teal sits above it for Mythic raid gear. If your colour dropped, the scale moved, not your gear.",
+    },
+    {
         -- Gated on the Blizzard-meter channel actually being live: with
         -- Details! installed and no override the bounce never fires, and a
         -- hint about a meter that will not blink is noise. The seen flag
@@ -100,7 +109,7 @@ ns.LOGIN_HINTS = {
         -- what every number on screen MEANS. Someone who sees their own 286 go
         -- from orange to green and is not told why will file it as a bug.
         key  = "seasonilvlcolour",                          -- v1.5.8
-        msg  = "Item level colours now follow the current season instead of fixed numbers: gold sits above anything Mythic+ awards, then orange, purple, blue, green, grey. Expect the top colours to be empty early in a season and fill up as people gear.",
+        msg  = "Item level colours now follow the current season instead of fixed numbers: teal sits at the top for Mythic raid gear, then gold above anything Mythic+ awards, then orange, purple, blue, green, grey. Expect the top colours to be empty early in a season and fill up as people gear.",
     },
     {
         -- No gate: this one is not a command to learn, it is a change to what

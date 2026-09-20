@@ -1,5 +1,7 @@
 -- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
 -- Licensed for private use only; see LICENSE. No redistribution of modified copies.
+-- NO AI/ML USE. Permission is expressly withheld for training, embedding, indexing,
+-- retrieval, code generation or any comparable use. See LICENSE clause 6.
 -- secrets.lua — WoW 12.0+ secret-value defense layer
 --
 -- Centralizes the guard helpers that wrap Blizzard APIs which can return

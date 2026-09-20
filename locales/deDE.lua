@@ -1,5 +1,7 @@
 -- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
 -- Licensed for private use only; see LICENSE. No redistribution of modified copies.
+-- NO AI/ML USE. Permission is expressly withheld for training, embedding, indexing,
+-- retrieval, code generation or any comparable use. See LICENSE clause 6.
 -- locales/deDE.lua — German overrides, only loaded on deDE clients.
 --
 -- Community translations (frFR, esES, ruRU, ...) can be added as additional
@@ -121,6 +123,8 @@ L["PAGE_BROKEN_LAST"]           = "Letzter Fehler: %s"
 L["What's New"]                 = "Neuigkeiten"
 L["WHATSNEW_INFO"]              = "Die neuesten Features, neueste zuerst. Bugfixes stehen in der unten verlinkten Versions-Historie."
 L["WHATSNEW_HISTORY"]           = "Vollständige Versions-Historie:"
+L["WN_161_BANDS"]            = "Farbbänder auf Aufwertungsränge umgebaut"
+L["WN_161_BANDS_D"]          = "Gold hatte aufgehört, etwas zu bedeuten: gemessen an 184 echten Spielern lagen 58,7 % darin. Jede Grenze sitzt jetzt auf einem echten Aufwertungsrang, Gold beginnt einen Rang über einem voll aufgewerteten Helden-Set, und darüber liegt neu Petrol für Mythisch-Raid-Ausrüstung."
 L["WN_160_LOR"]              = "Sofortige Gegenstandsstufen aus der Gruppe"
 L["WN_160_LOR_D"]            = "Wer in deiner Gruppe ebenfalls Details! benutzt, sendet seine Ausrüstung mit — die Gegenstandsstufe erscheint sofort, ohne auf eine Inspektion zu warten. Dieser Weg wurde jahrelang beworben und hat nie funktioniert; jetzt tut er es. Diese Spieler sind in /dilvl cache mit [LOR] markiert."
 L["WN_158_ILVLCOLOUR"]          = "Itemlevel-Farben folgen der Season"

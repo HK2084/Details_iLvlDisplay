@@ -1,5 +1,7 @@
 -- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
 -- Licensed for private use only; see LICENSE. No redistribution of modified copies.
+-- NO AI/ML USE. Permission is expressly withheld for training, embedding, indexing,
+-- retrieval, code generation or any comparable use. See LICENSE clause 6.
 -- util.lua — pure helpers (no addon state, no Blizzard side effects)
 --
 -- Functions in here read from arguments only and either return values
@@ -69,33 +71,54 @@ end
 -- iLvl colour by gear tier, DERIVED from Blizzard's mythic+ reward curve:
 -- those numbers ARE the season and Blizzard keeps them current, so we inherit
 -- that for free. A fixed table cannot survive a season change -- the old one
--- put 43 % of everyone into the top band. Five of six boundaries are theirs.
+-- put 43 % of everyone into the top band. Three boundaries come straight from
+-- the curve; the three above it are upgrade-rank offsets on its ceiling.
 -- Why: dev-docs/CODE_NOTES.md#ilvl-colors
 --
 -- U.ILVL_COLORS below is the FALLBACK for when the API says nothing, and it is
 -- A SNAPSHOT THAT WILL ROT. Refresh it at every season start:
---   /run for _,k in ipairs({2,4,7,10}) do print(k, C_MythicPlus.GetRewardLevelFromKeystoneLevel(k)) end
+--   /run for _,k in ipairs({2,6,10}) do print(k, C_MythicPlus.GetRewardLevelFromKeystoneLevel(k)) end
+--   /run for i=1,17 do local l=GetInventoryItemLink("player",i) local u=l and C_Item.GetItemUpgradeInfo(l) if u and u.trackString then print(u.trackString,u.currentLevel.."/"..u.maxLevel,(C_Item.GetDetailedItemLevelInfo(l))) end end
 --
 -- One table, two readers: text channels need the escape sequence, Grid2 needs
 -- numbers. Keep the thresholds in ONE place -- typing them twice is how the
 -- Grid2 channel ended up permanently white. High to low, last row catches all.
 ----------------------------------------------------------------
 U.ILVL_COLORS = {
-    {318, "E6CC80", 0.902, 0.800, 0.502}, -- artifact gold   (key +10)
-    {315, "FF8000", 1.000, 0.502, 0.000}, -- legendary orange (key +7)
-    {308, "A335EE", 0.639, 0.208, 0.933}, -- epic purple      (key +4)
-    {305, "0070DD", 0.000, 0.439, 0.867}, -- rare blue        (key +2, season floor)
-    {285, "1EFF00", 0.118, 1.000, 0.000}, -- uncommon green   (floor - 20)
+    {328, "00CCFF", 0.000, 0.800, 1.000}, -- heirloom cyan    (ceiling +10, myth 4/6)
+    {324, "E6CC80", 0.902, 0.800, 0.502}, -- artifact gold    (ceiling +6,  myth 3/6)
+    {321, "FF8000", 1.000, 0.502, 0.000}, -- legendary orange (ceiling +3,  hero 6/6)
+    {318, "A335EE", 0.639, 0.208, 0.933}, -- epic purple      (key +10, the ceiling)
+    {311, "0070DD", 0.000, 0.439, 0.867}, -- rare blue        (key +6)
+    {300, "1EFF00", 0.118, 1.000, 0.000}, -- uncommon green   (floor - 5)
     {0,   "9D9D9D", 0.616, 0.616, 0.616}, -- poor grey
 }
 
 -- Key levels the boundaries hang on, highest first, and the quality each maps
--- to. Enum.ItemQuality.Artifact (6) sits above Legendary and is the point of
--- the whole exercise: a band that stays EMPTY for weeks and only fills for
--- people whose gear provably did not come from mythic+.
-local BAND_KEYS = {10, 7, 4, 2}
-local BAND_QUALITY = {6, 5, 4, 3}   -- artifact, legendary, epic, rare
-local UNCOMMON_BELOW_FLOOR = 20     -- the only invented number in the scheme
+-- to. Never pick these freely: the reward table has holes -- measured
+-- 2026-09-17, key 8 returns 305, BELOW both key 7 and key 6.
+local BAND_KEYS = {10, 6}
+local BAND_QUALITY = {4, 3}         -- epic, rare
+
+-- THE CURVE ONLY COVERS THE BOTTOM HALF. Keys 11..20 all return the same 318 as
+-- key 10, so everything above the ceiling has to be placed by upgrade rank.
+-- Measured 2026-09-20 off equipped gear via C_Item.GetItemUpgradeInfo (it needs
+-- an itemLink; an item ID returns zeroes): hero 6/6 = 321 = ceiling + 3, and
+-- myth 6/6 = 334 = ceiling + 16. The reward curve itself IS the hero track --
+-- 305/308/311/315/318 are hero 1..5 -- so the rungs run +3,+3,+4 repeating.
+--
+-- That is why the old top band was wrong rather than merely generous: it sat at
+-- the ceiling and called itself "beyond mythic+", but hero 6/6 is 321 and comes
+-- out of mythic+ alone. Measured against 184 real cache entries it held 58.7 %.
+-- Offsets, highest first, each paired with its quality.
+local ABOVE_CEILING = {
+    {10, 7},    -- myth 4/6  -> heirloom, the aspirational band
+    { 6, 6},    -- myth 3/6  -> artifact, first rung above a full hero set
+    { 3, 5},    -- hero 6/6  -> legendary, the real mythic+ ceiling
+}
+
+local FLOOR_KEY = 2                 -- the season floor, hero 1/6
+local UNCOMMON_BELOW_FLOOR = 5      -- the only invented number left
 local PLAUSIBLE_MIN = 200           -- see validation below
 
 -- Nil until first use, then a table in U.ILVL_COLORS' shape, or `false`
@@ -119,7 +142,11 @@ local requested = false
 local function qualityColor(quality)
     if not (C_Item and C_Item.GetItemQualityColor) then return nil end
     local ok, r, g, b = pcall(C_Item.GetItemQualityColor, quality)
-    if not ok or type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" then
+    -- isSecretValue BEFORE the arithmetic below: pcall covers the call, not the
+    -- multiplication, and a secret number reports type "number" (see the same
+    -- rule spelled out at ilvlColorRow).
+    if not ok or type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number"
+       or isSecretValue(r) or isSecretValue(g) or isSecretValue(b) then
         return nil
     end
     return r, g, b, format("%02X%02X%02X", r * 255 + 0.5, g * 255 + 0.5, b * 255 + 0.5)
@@ -134,7 +161,10 @@ local function rewardFor(keyLevel)
     -- A zero ceiling would make every threshold negative and paint EVERY player
     -- artifact — the exact inverse of what this feature is for. An API that
     -- goes quiet must disable the feature, never flip it.
-    if not ok or type(lvl) ~= "number" or lvl < PLAUSIBLE_MIN then return nil end
+    -- isSecretValue BEFORE the comparison, same reason as in qualityColor: the
+    -- pcall guards the call, `lvl < PLAUSIBLE_MIN` sits outside it.
+    if not ok or type(lvl) ~= "number" or isSecretValue(lvl)
+       or lvl < PLAUSIBLE_MIN then return nil end
     return lvl
 end
 
@@ -152,7 +182,11 @@ local function buildBands()
         rows[i] = {lvl, hex, r, g, b}
     end
 
-    local floor = rows[#rows][1] - UNCOMMON_BELOW_FLOOR
+    -- The floor hangs on its own key rather than on the band above it: the
+    -- season floor is a number Blizzard sets, not an offset from our lowest band.
+    local floorLvl = rewardFor(FLOOR_KEY)
+    if not floorLvl or floorLvl >= prev then return false end
+    local floor = floorLvl - UNCOMMON_BELOW_FLOOR
     if floor <= 0 then return false end
     local r, g, b, hex = qualityColor(2)   -- uncommon
     if not hex then return false end
@@ -161,6 +195,19 @@ local function buildBands()
     r, g, b, hex = qualityColor(0)         -- poor, catch-all
     if not hex then return false end
     rows[#rows + 1] = {0, hex, r, g, b}
+
+    -- The above-ceiling bands, and DELIBERATELY NOT FATAL: they are refinements,
+    -- the curve-derived ones are the feature. A `return false` here would drop
+    -- the whole derived scale back to the rotting fallback over a missing colour.
+    -- Walked back to front so each insert at 1 leaves them descending.
+    local ceiling = rows[1][1]
+    for i = #ABOVE_CEILING, 1, -1 do
+        local offset, quality = ABOVE_CEILING[i][1], ABOVE_CEILING[i][2]
+        local ar, ag, ab, ahex = qualityColor(quality)
+        if ahex then
+            table.insert(rows, 1, {ceiling + offset, ahex, ar, ag, ab})
+        end
+    end
 
     return rows
 end

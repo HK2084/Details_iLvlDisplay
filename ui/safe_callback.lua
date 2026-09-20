@@ -1,5 +1,7 @@
 -- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
 -- Licensed for private use only; see LICENSE. No redistribution of modified copies.
+-- NO AI/ML USE. Permission is expressly withheld for training, embedding, indexing,
+-- retrieval, code generation or any comparable use. See LICENSE clause 6.
 -- ui/safe_callback.lua — 3-layer fault isolation for the Settings UI.
 -- A Lua error in one settings page must never take down the entire
 -- settings window or the addon proper.

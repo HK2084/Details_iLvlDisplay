@@ -102,17 +102,88 @@ Tagen wäre jeder einzelne Spieler für den Rest der Erweiterung orange gewesen.
 Eine feste Tabelle kann das nicht überleben, weil das Gemessene sich jede Season
 bewegt und die Tabelle nicht. Also werden die Bänder aus Blizzards eigener
 Mythic+-Belohnungskurve abgeleitet: diese Zahlen **sind** die Season, Blizzard
-hält sie aktuell, und wir erben das umsonst. Fünf der sechs Grenzen sind Werte,
-die Blizzard definiert, nicht Werte, die wir erfunden haben.
+hält sie aktuell, und wir erben das umsonst. Sechs der sieben Grenzen sind an
+Werte geknüpft, die Blizzard definiert, nicht an Werte, die wir erfunden haben.
 
-| Band | Grenze | Bedeutung |
-|---|---|---|
-| artifact | `>= reward(+10)` | jenseits dessen, was Mythic+ überhaupt ausgibt |
-| legendary | `>= reward(+7)` | |
-| epic | `>= reward(+4)` | |
-| rare | `>= reward(+2)` | der Season-Boden: aktueller Content begonnen |
-| uncommon | `>= reward(+2) - 20` | die eine erfundene Zahl, und die mildeste |
-| poor | darunter | |
+| Band | Grenze | Rang | Anteil (184 Eintraege, 20.09.) |
+|---|---|---|---|
+| heirloom (teal) | `>= reward(+10) + 10` | Myth 4/6 | 0,0 % |
+| artifact (gold) | `>= reward(+10) + 6` | Myth 3/6 | 11,4 % |
+| legendary (orange) | `>= reward(+10) + 3` | Hero 6/6 | 25,6 % |
+| epic (lila) | `>= reward(+10)` | Hero 5/6 | 21,7 % |
+| rare (blau) | `>= reward(+6)` | Hero 3/6 | 23,4 % |
+| uncommon (gruen) | `>= reward(+2) - 5` | Boden minus 5 | 13.6 % |
+| poor (grau) | darunter | | 4.3 % |
+
+#### Warum die halbe Skala die Kurve verlaesst
+
+Weil die Kurve aufhoert. Gemessen am 17.09.2026 ueber alle Schluesselstufen von
+2 bis 20: ab Stufe 10 liefert `GetRewardLevelFromKeystoneLevel` konstant **318**,
+Stufe 11 bis 20 aendern nichts mehr. `GetRewardLevelForDifficultyLevel` sieht
+nach einem Ausweg aus und ist keiner: die Funktion hat in Blizzards komplettem
+UI null Aufrufer und gab im Test fuer jedes Argument dieselbe 318 mit
+`endOfRunRewardLevel = 0` zurueck. Ueber den gesamten Addon-Bestand des Rechners
+(3.623 Lua-Dateien in 88 installierten Addons, plus neun Dev-Repos) nutzt **kein
+einziges anderes Addon** diese APIs zur Schwellenbildung. Die Luecke ist echt,
+nicht uebersehen.
+
+#### Die Belohnungskurve IST der Hero-Track
+
+Gemessen am 20.09.2026 mit `C_Item.GetItemUpgradeInfo` ueber die angelegte
+Ausruestung. **Wichtig: die API braucht einen `itemLink`** — mit einer blossen
+Item-ID liefert sie durchgehend Nullen, daran ist der erste Messversuch
+gescheitert.
+
+| gemessen | |
+|---|---|
+| Hero 2/6 = 308 · 3/6 = 311 · 6/6 = **321** | Champion 6/6 = 308 |
+| Myth 1/6 = **318** · 6/6 = **334** | `maxLevel` = 6 bei allen Tracks |
+
+Damit faellt die Leiter dieser Season zusammen: die Kurvenwerte 305/308/311/315/318
+sind exakt **Hero 1 bis 5**, und die Stufen laufen +3,+3,+4 im Wechsel:
+
+```
+305  308  311  315  318  321  324  328  331  334
+ H1   H2   H3   H4   H5   H6
+                     M1   M2   M3   M4   M5   M6
+```
+
+Die Tracks ueberlappen: Myth 1/6 und Hero 5/6 sind beide 318, und ein Spieler
+mit vollem Hero 6/6 (321) ist besser ausgeruestet als einer mit Myth 1/6.
+
+**Das war der eigentliche Fehler der alten Skala.** Das oberste Kurvenband sass
+auf der Decke (318) und nannte sich "jenseits dessen, was Mythic+ ausgibt" — aber
+Hero 6/6 ist 321 und kommt allein aus Mythic+. Gemessen an 184 echten
+Cache-Eintraegen am 20.09.2026 hielt Gold damit **58,7 %**, drei Tage zuvor waren
+es noch 32,6 %. Ein Band, in dem in jedem Run alle stehen, traegt keine
+Information mehr. Nicht die Schwelle war zu grosszuegig, die *Begruendung* war
+falsch.
+
+Deshalb haengen jetzt drei Baender als Rangabstand an der Decke (`ABOVE_CEILING`,
++3/+6/+10) statt an Schluesselstufen. 321 und 334 sind direkt gemessen, 324 und
+328 aus dem Stufenmuster interpoliert. Gold heisst damit zum ersten Mal wirklich
+"mehr als Mythic+ hergibt": 324 ist der erste Rang oberhalb eines vollen
+Hero-Sets.
+
+`UNCOMMON_BELOW_FLOOR` ist von 20 auf **5** gefallen, aus demselben Grund in die
+andere Richtung: bei einem Boden von 305 lag Grau bei 285 und war schlicht leer,
+der niedrigste beobachtete Wert ueberhaupt war 296. Mit 300 traegt Grau 4.3 % und
+Gruen 13.6 %, statt 0 % und 9,2 %.
+
+Kein Band haelt mehr als 25.5 % — vorher waren es 58,7 %.
+
+#### Was belegt ist und was nicht
+
+- **Belegt:** sechs Raenge pro Track (`maxLevel = 6` bei Hero, Myth *und*
+  Champion), Hero 6/6 = 321, Myth 1/6 = 318, Myth 6/6 = 334, Hero 2/6 = 308,
+  Hero 3/6 = 311.
+- **Interpoliert:** 324 und 328 als Myth 3/6 und 4/6. Die Spanne 318 bis 334
+  ueber fuenf Schritte ist gemessen, die Verteilung der +3/+4-Schritte darin
+  folgt dem Muster des Hero-Tracks.
+- **Unbrauchbar:** `ItemUpgradeInfo.maxItemLevel` liefert durchgehend 0, auch bei
+  Myth-6/6-Teilen. Als Quelle fuer die Decke faellt das Feld aus.
+- **Offen messbar:** Myth 2/6 oder 3/6 an einem echten Gegenstand wuerde die
+  Interpolation zur Messung machen.
 
 Die Farben kommen aus `C_Item.GetItemQualityColor`, aus demselben Grund: wenn
 Blizzard je die Palette nachjustiert, folgen wir, statt zu driften.
@@ -120,7 +191,9 @@ Blizzard je die Palette nachjustiert, folgen wir, statt zu driften.
 `U.ILVL_COLORS` im Code ist der **Fallback**, in derselben Zeilenform gehalten,
 damit jeder Konsument unverändert weiterläuft, wenn die API nichts sagt. Es ist
 eine Momentaufnahme und **wird verrotten**: die abgeleiteten Season-2-Werte,
-gemessen in-game am 18.08.2026 (Schlüssel 2/4/7/10 lieferten 305/308/315/318).
+gemessen in-game am 18.08.2026 (Schlüssel 2/4/7/10 lieferten 305/308/315/318),
+am 17.09.2026 unverändert bestätigt. Die drei Zeilen ueber der Decke (321/324/328)
+sind Rangabstaende darauf, nicht eigene Kurvenwerte.
 Hebt Season 3 die Belohnungskurve, wird diese Tabelle zu *großzügig* — alle gold
 — dasselbe Versagen wie die Season-1-Zahlen am Season-2-Starttag, nur umgekehrt.
 Auffrischen bei jedem Season-Start (die Anweisung steht auch im Code):

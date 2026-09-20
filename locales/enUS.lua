@@ -1,5 +1,7 @@
 -- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
 -- Licensed for private use only; see LICENSE. No redistribution of modified copies.
+-- NO AI/ML USE. Permission is expressly withheld for training, embedding, indexing,
+-- retrieval, code generation or any comparable use. See LICENSE clause 6.
 -- locales/enUS.lua — default English strings + identity-fallback metatable.
 --
 -- PATTERN: every user-facing string in the UI goes through `L["..."]`.
@@ -124,6 +126,8 @@ L["PAGE_BROKEN_LAST"]           = "Last error: %s"
 L["What's New"]                 = "What's New"
 L["WHATSNEW_INFO"]              = "The newest features, newest first. Bugfixes live in the full version history linked below."
 L["WHATSNEW_HISTORY"]           = "Full version history:"
+L["WN_161_BANDS"]            = "Colour bands rebuilt around upgrade ranks"
+L["WN_161_BANDS_D"]          = "Gold had drifted into meaning almost nothing: measured against 184 real players it held 58.7 % of them. Every boundary now sits on an actual gear upgrade rank, gold starts one rank above a fully upgraded Hero set, and a new teal sits above it for Mythic raid gear."
 L["WN_160_LOR"]              = "Instant item levels from your group"
 L["WN_160_LOR_D"]            = "Anyone in your group who also runs Details! broadcasts their gear, and their item level appears at once instead of waiting for an inspect. This path was advertised for years and never worked; it does now. Those players are marked [LOR] in /dilvl cache."
 L["WN_158_ILVLCOLOUR"]          = "Item level colours follow the season"

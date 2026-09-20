@@ -1,5 +1,7 @@
 -- Details! Item Level Display — Copyright (c) 2026 HK2084. All rights reserved.
 -- Licensed for private use only; see LICENSE. No redistribution of modified copies.
+-- NO AI/ML USE. Permission is expressly withheld for training, embedding, indexing,
+-- retrieval, code generation or any comparable use. See LICENSE clause 6.
 -- ui/page_whatsnew.lua — "What's New" overview tab.
 --
 -- Surfaces recent FEATURES (not bugfixes — those live in the linked version
@@ -28,6 +30,9 @@ local HISTORY_URL = "https://www.curseforge.com/wow/addons/details-item-level-pl
 -- version history, not here.
 local function buildEntries()
     return {
+        { ver = "1.6.1", items = {
+            { t = L["WN_161_BANDS"], d = L["WN_161_BANDS_D"] },
+        }},
         { ver = "1.6.0", items = {
             { t = L["WN_160_LOR"], d = L["WN_160_LOR_D"] },
         }},

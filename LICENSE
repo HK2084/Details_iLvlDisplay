@@ -22,6 +22,27 @@ rights:
 5. This copyright notice must be included in all copies or distributions where
    the AddOn is provided.
 
+6. No permission is granted to use this AddOn, in whole or in part, for
+   artificial intelligence or machine learning purposes. This expressly
+   includes: training, pre-training, fine-tuning, alignment, distillation,
+   evaluation or benchmarking of models; inclusion in datasets, training
+   corpora, embedding indexes, vector databases or retrieval indexes; use as
+   AI input, context, grounding data, reference or retrieved material;
+   processing through retrieval-augmented generation, automated code
+   completion, code generation or comparable AI-assisted systems; and
+   generating material intended to reproduce, imitate, derive from or
+   substitute for this AddOn. This applies to local and remote systems alike,
+   and to commercial and non-commercial use alike.
+
+   Ordinary local tooling — running the AddOn, searching files locally,
+   formatting, linting, packaging, debugging, security scanning, personal
+   backups — remains permitted, provided it does not transmit the AddOn's
+   contents to an artificial intelligence system or use them for any of the
+   purposes listed above.
+
+   Rights under this clause can only be granted by prior written permission
+   from the author.
+
 Contributions: by submitting a pull request, patch, or other contribution, you
 grant the author a perpetual, worldwide, irrevocable, royalty-free license to
 use, modify, and distribute that contribution as part of this AddOn under this
