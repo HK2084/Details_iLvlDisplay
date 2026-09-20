@@ -85,26 +85,26 @@ Where the game lifts its combat restriction and no keystone is active, rows that
 
 **Slash Commands**
 
-| Command |What it does |
-| ------- |------------ |
-| <code>/dilvl</code> |Open or close the Settings UI. In combat it opens by itself once the fight ends |
-| <code>/dilvl ui &lt;tab&gt;</code> |Open straight to a tab: <code>whatsnew</code>, <code>general</code>, <code>channels</code>, <code>diagnostics</code> |
-| <code>/dilvl on</code> / <code>off</code> |Enable / disable the addon |
-| <code>/dilvl details</code> |Toggle Details! bars |
-| <code>/dilvl details size &lt;n&gt;</code> |Text size on Details! bars (0 = match Details' own font, or 6-30; Columns layout) |
-| <code>/dilvl details window &lt;n&gt;</code> |Show item level on only one Details! window (<code>all</code> or 1-10) |
-| <code>/dilvl blizzdm</code> |Toggle Blizzard's Damage Meter overlay |
-| <code>/dilvl autorefresh</code> |Turn the automatic post-fight refresh (and its blink) off |
-| <code>/dilvl elvui</code> / <code>grid2</code> / <code>danders</code> |Toggle that channel — bare command means on, or add <code>on</code> / <code>off</code> |
-| <code>/dilvl danders pos &lt;opt&gt;</code> |Inside: <code>top</code>, <code>topright</code>, <code>topleft</code>, <code>bottom</code>, <code>bottomright</code>, <code>bottomleft</code>, <code>center</code>. Off-frame: <code>above</code>, <code>aboveleft</code>, <code>aboveright</code>, <code>below</code>, <code>belowleft</code>, <code>belowright</code> |
-| <code>/dilvl danders size &lt;n&gt;</code> |Danders text size, 6-30, live, no <code>/reload</code> |
-| <code>/dilvl layout</code> |Toggle inline / columns (Details! only) |
-| <code>/dilvl position</code> |Item level left or right of the name |
-| <code>/dilvl color</code> |Toggle the colour coding |
-| <code>/dilvl setbonus</code> |Toggle the 2P/4P mark |
-| <code>/dilvl inspect</code> |Re-inspect the group by hand |
-| <code>/dilvl cache</code> |List every cached item level and where it came from |
-| <code>/dilvl debug</code> |Full status report in a selectable window, ready to paste into a bug report |
+| Command | What it does |
+| --- | --- |
+| `/dilvl` | Open or close the Settings UI. In combat it opens by itself once the fight ends |
+| `/dilvl ui [tab]` | Open straight to a tab: `whatsnew`, `general`, `channels`, `diagnostics` |
+| `/dilvl on` / `off` | Enable / disable the addon |
+| `/dilvl details` | Toggle Details! bars |
+| `/dilvl details size [n]` | Text size on Details! bars (0 = match Details' own font, or 6-30; Columns layout) |
+| `/dilvl details window [n]` | Show item level on only one Details! window (`all` or 1-10) |
+| `/dilvl blizzdm` | Toggle Blizzard's Damage Meter overlay |
+| `/dilvl autorefresh` | Turn the automatic post-fight refresh (and its blink) off |
+| `/dilvl elvui` / `grid2` / `danders` | Toggle that channel — bare command means on, or add `on` / `off` |
+| `/dilvl danders pos [opt]` | Inside: `top`, `topright`, `topleft`, `bottom`, `bottomright`, `bottomleft`, `center`. Off-frame: `above`, `aboveleft`, `aboveright`, `below`, `belowleft`, `belowright` |
+| `/dilvl danders size [n]` | Danders text size, 6-30, live, no `/reload` |
+| `/dilvl layout` | Toggle inline / columns (Details! only) |
+| `/dilvl position` | Item level left or right of the name |
+| `/dilvl color` | Toggle the colour coding |
+| `/dilvl setbonus` | Toggle the 2P/4P mark |
+| `/dilvl inspect` | Re-inspect the group by hand |
+| `/dilvl cache` | List every cached item level and where it came from |
+| `/dilvl debug` | Full status report in a selectable window, ready to paste into a bug report |
 
 Any unrecognised command prints this list in chat, along with the remaining diagnostics.
 
