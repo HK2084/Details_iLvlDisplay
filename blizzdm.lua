@@ -668,9 +668,9 @@ end
 
 ---------------------------------------------------------------
 -- Hook: DamageMeterSourceEntryMixin:Init()
--- Captures sourceGUID from combatSource before secrets lock it.
--- sourceGUID has no Secret annotation in the Blizzard API docs
--- (unlike sourceName which is ConditionalSecret).
+-- Captures sourceGUID from combatSource as early as we can reach it.
+-- As of 12.1.5 sourceGUID is ConditionalSecret, exactly like name --
+-- see the longer note at the hook itself before relying on it.
 ---------------------------------------------------------------
 
 ---------------------------------------------------------------
@@ -1711,10 +1711,23 @@ local function RefreshAllFrames()
     end
 end
 
--- Take the row's identity straight from Blizzard's combatSource. sourceGUID
--- carries no secret annotation (DamageMeterDocumentation.lua:199), unlike
--- `name` which is ConditionalSecret — so identity stays readable exactly when
--- the name does not.
+-- Take the row's identity straight from Blizzard's combatSource.
+--
+-- THE PREMISE THIS WAS BUILT ON IS GONE. Until 12.1.5 sourceGUID carried no
+-- secret annotation while `name` was ConditionalSecret, so identity stayed
+-- readable exactly when the name did not — that asymmetry was the whole point
+-- of this path. On 2026-10-14 Blizzard annotated sourceGUID ConditionalSecret
+-- too (DamageMeterDocumentation.lua:199; the field was bare at 12.1.0.69875).
+--
+-- The code did not need changing: all seven read sites were already
+-- isSecret-guarded, so nothing throws. What changed is the YIELD. Inside
+-- restricted content this path now goes dark together with the name instead of
+-- surviving it, and we fall back to name resolution; expect guidSecret in
+-- /dilvl debug to climb where it used to stay at zero.
+--
+-- Keep the hook: outside restricted content it still delivers a bound GUID for
+-- free, and it is the earliest point we can reach one. But do not build new
+-- behaviour on the assumption that it answers when the name does not.
 --
 -- WHICH function to hook is not a detail, it decides whether this works at all:
 --
